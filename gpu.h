@@ -40,8 +40,71 @@ typedef struct Gpu_Size_And_Align {
 
 typedef enum Gpu_Format {
 	Gpu_Format_None,
+	
+	Gpu_Format_A8_Unorm,
+	Gpu_Format_R8_Unorm,
+	Gpu_Format_R8_Unorm_sRGB,
+	Gpu_Format_R8_Snorm,
+	Gpu_Format_R8_Uint,
+	Gpu_Format_R8_Sint,
+	
+	Gpu_Format_R16_Unorm,
+	Gpu_Format_R16_Snorm,
+	Gpu_Format_R16_Uint,
+	Gpu_Format_R16_Sint,
+	Gpu_Format_R16_Float,
+	
+	Gpu_Format_RG8_Unorm,
+	Gpu_Format_RG8_Unorm_sRGB,
+	Gpu_Format_RG8_Snorm,
+	Gpu_Format_RG8_Uint,
+	Gpu_Format_RG8_Sint,
+	
+	Gpu_Format_R32_Uint,
+	Gpu_Format_R32_Sint,
+	Gpu_Format_R32_Float,
+	
+	Gpu_Format_RG16_Unorm,
+	Gpu_Format_RG16_Snorm,
+	Gpu_Format_RG16_Uint,
+	Gpu_Format_RG16_Sint,
+	Gpu_Format_RG16_Float,
+	
 	Gpu_Format_RGBA8_Unorm,
-	// ...
+	Gpu_Format_RGBA8_Unorm_sRGB,
+	Gpu_Format_RGBA8_Snorm,
+	Gpu_Format_RGBA8_Uint,
+	Gpu_Format_RGBA8_Sint,
+	
+	Gpu_Format_BGRA8_Unorm,
+	Gpu_Format_BGRA8_Unorm_sRGB,
+	
+	Gpu_Format_RGB10A2_Unorm,
+	Gpu_Format_RGB10A2_Uint,
+	Gpu_Format_RG11B10_Float,
+	Gpu_Format_RGB9E5_Float,
+	Gpu_Format_BGR10A2_Unorm,
+	Gpu_Format_BGR10_XR,
+	Gpu_Format_BGR10_XR_sRGB,
+	
+	Gpu_Format_RG32_Uint,
+	Gpu_Format_RG32_Sint,
+	Gpu_Format_RG32_Float,
+	
+	Gpu_Format_RGBA16_Unorm,
+	Gpu_Format_RGBA16_Snorm,
+	Gpu_Format_RGBA16_Uint,
+	Gpu_Format_RGBA16_Sint,
+	Gpu_Format_RGBA16_Float,
+	
+	Gpu_Format_BGRA10_XR,
+	Gpu_Format_BGRA10_XR_sRGB,
+	Gpu_Format_RGBA32_Uint,
+	Gpu_Format_RGBA32_Sint,
+	Gpu_Format_RGBA32_Float,
+	Gpu_Format_Depth16_Unorm,
+	Gpu_Format_Depth32_Float,
+	Gpu_Format_Stencil8,
 } Gpu_Format;
 
 typedef enum Gpu_Texture_Usage {
@@ -105,6 +168,12 @@ typedef struct Gpu_Slice {
 	size_t size;
 } Gpu_Slice;
 
+#define GPU_SLICE_NULL ((Gpu_Slice) {})
+
+static inline bool gpu_slice_is_null(Gpu_Slice slice) {
+	return slice.heap.handle == 0;
+}
+
 typedef struct Gpu_Setup {
 	const char*_Nullable metal_library_path;
 } Gpu_Setup;
@@ -167,6 +236,11 @@ void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, Gpu_Slic
 void gpu_barrier(Gpu_Command_Buffer cb);
 
 // Swapchain
+typedef struct Gpu_Swapchain_Desc {
+	Gpu_Format format;
+	bool vsync;
+} Gpu_Swapchain_Desc;
+
 void gpu_swapchain_destroy(Gpu_Swapchain swapchain);
 Gpu_Swapchain_Image gpu_swapchain_get_next_image(Gpu_Swapchain swapchain);
 
@@ -177,23 +251,15 @@ void gpu_swapchain_image_signal(Gpu_Swapchain_Image swapchain_image, Gpu_Queue q
 void gpu_swapchain_image_present(Gpu_Swapchain_Image swapchain_image);
 
 // Metal
-#ifdef __APPLE__
-
-_Pragma("clang assume_nonnull end")
-#import <Metal/Metal.h>
-#import <QuartzCore/CAMetalLayer.h>
-_Pragma("clang assume_nonnull begin")
-id<MTLDevice> gpu_get_metal_device(void);
-
-Gpu_Texture gpu_texture_new_from_metal_texture(id<MTLTexture>_Nonnull metal_texture);
-Gpu_Swapchain gpu_swapchain_new_from_metal_layer(CAMetalLayer*_Nonnull metal_layer);
-
-#endif
+void* gpu_get_metal_device(void);
+Gpu_Texture gpu_texture_new_from_metal_texture(void* metal_texture);
+Gpu_Swapchain gpu_swapchain_new_from_metal_layer(void* metal_layer, Gpu_Swapchain_Desc swapchain_desc);
 
 #if GPU_IMPLEMENTATION
 
 _Pragma("clang assume_nonnull end")
 #import <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
 _Pragma("clang assume_nonnull begin")
 
 static inline void gpu_assert(bool condition, const char*_Nonnull message) {
@@ -334,6 +400,7 @@ void gpu_init(Gpu_Setup setup) {
 	_context = (Gpu_Context) {};
 	_context.device = MTLCreateSystemDefaultDevice();
 	_context.library = [_context.device newLibraryWithURL:[NSURL URLWithString:[NSString stringWithCString:setup.metal_library_path encoding:NSUTF8StringEncoding]] error:nil];
+	gpu_assert(_context.library != nil, "Failed to load library.");
 	_context.fence = [_context.device newFence];
 	
 	MTLResidencySetDescriptor* desc = [MTLResidencySetDescriptor new];
@@ -435,7 +502,60 @@ Gpu_Address gpu_slice_get_gpu_ptr(Gpu_Slice slice) {
 MTLPixelFormat gpu_format_get_metal_format(Gpu_Format format) {
 	switch (format) {
 		case Gpu_Format_None: return MTLPixelFormatInvalid;
+		case Gpu_Format_A8_Unorm: return MTLPixelFormatA8Unorm;
+		case Gpu_Format_R8_Unorm: return MTLPixelFormatR8Unorm;
+		case Gpu_Format_R8_Unorm_sRGB: return MTLPixelFormatR8Unorm_sRGB;
+		case Gpu_Format_R8_Snorm: return MTLPixelFormatR8Snorm;
+		case Gpu_Format_R8_Uint: return MTLPixelFormatR8Uint;
+		case Gpu_Format_R8_Sint: return MTLPixelFormatR8Sint;
+		case Gpu_Format_R16_Unorm: return MTLPixelFormatR16Unorm;
+		case Gpu_Format_R16_Snorm: return MTLPixelFormatR16Snorm;
+		case Gpu_Format_R16_Uint: return MTLPixelFormatR16Uint;
+		case Gpu_Format_R16_Sint: return MTLPixelFormatR16Sint;
+		case Gpu_Format_R16_Float: return MTLPixelFormatR16Float;
+		case Gpu_Format_RG8_Unorm: return MTLPixelFormatRG8Unorm;
+		case Gpu_Format_RG8_Unorm_sRGB: return MTLPixelFormatRG8Unorm_sRGB;
+		case Gpu_Format_RG8_Snorm: return MTLPixelFormatRG8Snorm;
+		case Gpu_Format_RG8_Uint: return MTLPixelFormatRG8Uint;
+		case Gpu_Format_RG8_Sint: return MTLPixelFormatRG8Sint;
+		case Gpu_Format_R32_Uint: return MTLPixelFormatR32Uint;
+		case Gpu_Format_R32_Sint: return MTLPixelFormatR32Sint;
+		case Gpu_Format_R32_Float: return MTLPixelFormatR32Float;
+		case Gpu_Format_RG16_Unorm: return MTLPixelFormatRG16Unorm;
+		case Gpu_Format_RG16_Snorm: return MTLPixelFormatRG16Snorm;
+		case Gpu_Format_RG16_Uint: return MTLPixelFormatRG16Uint;
+		case Gpu_Format_RG16_Sint: return MTLPixelFormatRG16Sint;
+		case Gpu_Format_RG16_Float: return MTLPixelFormatRG16Float;
 		case Gpu_Format_RGBA8_Unorm: return MTLPixelFormatRGBA8Unorm;
+		case Gpu_Format_RGBA8_Unorm_sRGB: return MTLPixelFormatRGBA8Unorm_sRGB;
+		case Gpu_Format_RGBA8_Snorm: return MTLPixelFormatRGBA8Snorm;
+		case Gpu_Format_RGBA8_Uint: return MTLPixelFormatRGBA8Uint;
+		case Gpu_Format_RGBA8_Sint: return MTLPixelFormatRGBA8Sint;
+		case Gpu_Format_BGRA8_Unorm: return MTLPixelFormatBGRA8Unorm;
+		case Gpu_Format_BGRA8_Unorm_sRGB: return MTLPixelFormatBGRA8Unorm_sRGB;
+		case Gpu_Format_RGB10A2_Unorm: return MTLPixelFormatRGB10A2Unorm;
+		case Gpu_Format_RGB10A2_Uint: return MTLPixelFormatRGB10A2Uint;
+		case Gpu_Format_RG11B10_Float: return MTLPixelFormatRG11B10Float;
+		case Gpu_Format_RGB9E5_Float: return MTLPixelFormatRGB9E5Float;
+		case Gpu_Format_BGR10A2_Unorm: return MTLPixelFormatBGR10A2Unorm;
+		case Gpu_Format_BGR10_XR: return MTLPixelFormatBGR10_XR;
+		case Gpu_Format_BGR10_XR_sRGB: return MTLPixelFormatBGR10_XR_sRGB;
+		case Gpu_Format_RG32_Uint: return MTLPixelFormatRG32Uint;
+		case Gpu_Format_RG32_Sint: return MTLPixelFormatRG32Sint;
+		case Gpu_Format_RG32_Float: return MTLPixelFormatRG32Float;
+		case Gpu_Format_RGBA16_Unorm: return MTLPixelFormatRGBA16Unorm;
+		case Gpu_Format_RGBA16_Snorm: return MTLPixelFormatRGBA16Snorm;
+		case Gpu_Format_RGBA16_Uint: return MTLPixelFormatRGBA16Uint;
+		case Gpu_Format_RGBA16_Sint: return MTLPixelFormatRGBA16Sint;
+		case Gpu_Format_RGBA16_Float: return MTLPixelFormatRGBA16Float;
+		case Gpu_Format_BGRA10_XR: return MTLPixelFormatBGRA10_XR;
+		case Gpu_Format_BGRA10_XR_sRGB: return MTLPixelFormatBGRA10_XR_sRGB;
+		case Gpu_Format_RGBA32_Uint: return MTLPixelFormatRGBA32Uint;
+		case Gpu_Format_RGBA32_Sint: return MTLPixelFormatRGBA32Sint;
+		case Gpu_Format_RGBA32_Float: return MTLPixelFormatRGBA32Float;
+		case Gpu_Format_Depth16_Unorm: return MTLPixelFormatDepth16Unorm;
+		case Gpu_Format_Depth32_Float: return MTLPixelFormatDepth32Float;
+		case Gpu_Format_Stencil8: return MTLPixelFormatStencil8;
 	}
 }
 MTLTextureType gpu_texture_kind_get_metal_texture_type(Gpu_Texture_Kind kind) {
@@ -788,7 +908,13 @@ void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, Gpu_Render_Pip
 	}
 	
 	id<MTL4ArgumentTable> metal_argument_table = (__bridge id<MTL4ArgumentTable>)cb_data->argument_table;
-	[metal_argument_table setAddress:gpu_slice_get_gpu_ptr(data) atIndex:0];
+	
+	if (gpu_slice_is_null(data)) {
+		[metal_argument_table setAddress:0 atIndex:0];
+	} else {
+		[metal_argument_table setAddress:gpu_slice_get_gpu_ptr(data) atIndex:0];
+	}
+	
 	[metal_encoder drawPrimitives:gpu_primitive_kind_get_metal_primitive_type(primitive_kind) vertexStart:0 vertexCount:vertex_count instanceCount:instance_count];
 }
 
@@ -842,7 +968,7 @@ Gpu_Swapchain_Image gpu_swapchain_get_next_image(Gpu_Swapchain swapchain) {
 	};
 	Gpu_Swapchain_Image_Data* image_data = &gpu_pool_get_entry(&_context.pool, image_handle.handle)->swapchain_image;
 	image_data->drawable = (__bridge_retained void*)metal_drawable;
-	image_data->texture = gpu_texture_new_from_metal_texture(metal_drawable.texture);
+	image_data->texture = gpu_texture_new_from_metal_texture((__bridge void*)metal_drawable.texture);
 	
 	return image_handle;
 }
@@ -872,26 +998,35 @@ void gpu_swapchain_image_present(Gpu_Swapchain_Image swapchain_image) {
 	gpu_pool_return_handle(&_context.pool, swapchain_image.handle);
 }
 
-id<MTLDevice> gpu_get_metal_device(void) {
-	return _context.device;
+void* gpu_get_metal_device(void) {
+	return (__bridge void*)_context.device;
 }
-Gpu_Texture gpu_texture_new_from_metal_texture(id<MTLTexture> metal_texture) {
+Gpu_Texture gpu_texture_new_from_metal_texture(void* metal_texture) {
+	id<MTLTexture> bridged_texture = (__bridge id<MTLTexture>)metal_texture;
+	
 	const Gpu_Texture texture_handle = {
 		.handle = gpu_pool_borrow_handle(&_context.pool),
 	};
 	Gpu_Texture_Data* texture_data = &gpu_pool_get_entry(&_context.pool, texture_handle.handle)->texture;
 	*texture_data = (Gpu_Texture_Data) {
-		.texture = (__bridge_retained void*)metal_texture,
-		.gpu_address = metal_texture.gpuResourceID._impl,
+		.texture = (void*)CFRetain(metal_texture),
+		.gpu_address = bridged_texture.gpuResourceID._impl,
 	};
 	return texture_handle;
 }
-Gpu_Swapchain gpu_swapchain_new_from_metal_layer(CAMetalLayer*_Nonnull metal_layer) {
+Gpu_Swapchain gpu_swapchain_new_from_metal_layer(void* metal_layer, Gpu_Swapchain_Desc swapchain_desc) {
+	gpu_assert(metal_layer != NULL, "metal_layer can't be null.");
+	
+	CAMetalLayer* bridged_layer = (__bridge CAMetalLayer*)metal_layer;
+	bridged_layer.device = _context.device;
+	bridged_layer.displaySyncEnabled = swapchain_desc.vsync;
+	bridged_layer.pixelFormat = gpu_format_get_metal_format(swapchain_desc.format);
+	
 	const Gpu_Swapchain swapchain_handle = {
 		.handle = gpu_pool_borrow_handle(&_context.pool),
 	};
 	Gpu_Swapchain_Data* swapchain_data = &gpu_pool_get_entry(&_context.pool, swapchain_handle.handle)->swapchain;
-	swapchain_data->metal_layer = (__bridge_retained void*)metal_layer;
+	swapchain_data->metal_layer = (void*)CFRetain(metal_layer);
 	return swapchain_handle;
 }
 
