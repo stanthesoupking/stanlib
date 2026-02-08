@@ -6,8 +6,7 @@
 /// #include "gpu.h"
 /// ```
 
-#include <stdint.h>
-#include <stdbool.h>
+#include "core.h"
 
 _Pragma("clang assume_nonnull begin")
 
@@ -16,26 +15,22 @@ typedef enum Gpu_Memory {
 	Gpu_Memory_Private,
 } Gpu_Memory;
 
-typedef struct Gpu_Vec3 {
-	uint32_t x, y, z;
-} Gpu_Vec3;
-
-typedef struct Gpu_Queue { uint64_t handle; } Gpu_Queue;
-typedef struct Gpu_Command_Buffer { uint64_t handle; } Gpu_Command_Buffer;
-typedef struct Gpu_Compute_Pipeline { uint64_t handle; } Gpu_Compute_Pipeline;
-typedef struct Gpu_Render_Pipeline { uint64_t handle; } Gpu_Render_Pipeline;
-typedef struct Gpu_Heap { uint64_t handle; } Gpu_Heap;
-typedef struct Gpu_Semaphore { uint64_t handle; } Gpu_Semaphore;
-typedef struct Gpu_Texture { uint64_t handle; } Gpu_Texture;
-typedef struct Gpu_Swapchain { uint64_t handle; } Gpu_Swapchain;
-typedef struct Gpu_Swapchain_Image { uint64_t handle; } Gpu_Swapchain_Image;
-typedef uint64_t Gpu_Address;
+typedef struct Gpu_Queue { u64 handle; } Gpu_Queue;
+typedef struct Gpu_Command_Buffer { u64 handle; } Gpu_Command_Buffer;
+typedef struct Gpu_Compute_Pipeline { u64 handle; } Gpu_Compute_Pipeline;
+typedef struct Gpu_Render_Pipeline { u64 handle; } Gpu_Render_Pipeline;
+typedef struct Gpu_Heap { u64 handle; } Gpu_Heap;
+typedef struct Gpu_Semaphore { u64 handle; } Gpu_Semaphore;
+typedef struct Gpu_Texture { u64 handle; } Gpu_Texture;
+typedef struct Gpu_Swapchain { u64 handle; } Gpu_Swapchain;
+typedef struct Gpu_Swapchain_Image { u64 handle; } Gpu_Swapchain_Image;
+typedef u64 Gpu_Address;
 
 #define GPU_TEXTURE_NULL ((GPU_Texture) { .handle = 0 })
 
 typedef struct Gpu_Size_And_Align {
-	size_t size;
-	size_t align;
+	u64 size;
+	u64 align;
 } Gpu_Size_And_Align;
 
 typedef enum Gpu_Format {
@@ -128,9 +123,9 @@ typedef struct Gpu_Texture_Desc {
 	Gpu_Texture_Kind kind;
 	Gpu_Format format;
 	Gpu_Texture_Usage usage;
-	Gpu_Vec3 size;
-	uint32_t array_length;
-	uint32_t mip_count;
+	vec3_u32 size;
+	u32 array_length;
+	u32 mip_count;
 } Gpu_Texture_Desc;
 
 typedef enum Gpu_Primitive_Kind {
@@ -159,13 +154,13 @@ typedef struct Gpu_Render_Pipeline_Desc {
 
 typedef struct Gpu_Heap_Address {
 	Gpu_Heap heap;
-	size_t offset;
+	u64 offset;
 } Gpu_Heap_Address;
 
 typedef struct Gpu_Slice {
 	Gpu_Heap heap;
-	size_t offset;
-	size_t size;
+	u64 offset;
+	u64 size;
 } Gpu_Slice;
 
 #define GPU_SLICE_NULL ((Gpu_Slice) {})
@@ -183,11 +178,11 @@ void gpu_init(Gpu_Setup setup);
 void gpu_deinit(void);
 
 // Heap
-Gpu_Heap gpu_heap_new(size_t bytes, Gpu_Memory memory);
+Gpu_Heap gpu_heap_new(u64 bytes, Gpu_Memory memory);
 void gpu_heap_destroy(Gpu_Heap allocator);
 
 // Slice
-static inline Gpu_Slice gpu_slice(Gpu_Heap heap, size_t offset, size_t size) {
+static inline Gpu_Slice gpu_slice(Gpu_Heap heap, u64 offset, u64 size) {
 	return (Gpu_Slice) {
 		.heap = heap,
 		.offset = offset,
@@ -202,14 +197,14 @@ Gpu_Size_And_Align gpu_texture_desc_get_size_and_align(Gpu_Texture_Desc texture_
 
 Gpu_Texture gpu_texture_new(Gpu_Slice slice, Gpu_Texture_Desc texture_desc);
 Gpu_Address gpu_texture_get_gpu_ptr(Gpu_Texture texture);
-void gpu_texture_replace_contents(Gpu_Texture texture, void*_Nonnull bytes, uint32_t row_length);
+void gpu_texture_replace_contents(Gpu_Texture texture, void*_Nonnull bytes, u32 row_length);
 void gpu_texture_destroy(Gpu_Texture texture);
 
 // Semaphore
-Gpu_Semaphore gpu_semaphore_new(uint64_t init_value);
+Gpu_Semaphore gpu_semaphore_new(u64 init_value);
 void gpu_semaphore_destroy(Gpu_Semaphore semaphore);
-void gpu_semaphore_wait(Gpu_Semaphore semaphore, uint64_t value);
-void gpu_semaphore_signal(Gpu_Semaphore semaphore, Gpu_Queue queue, uint64_t value);
+void gpu_semaphore_wait(Gpu_Semaphore semaphore, u64 value);
+void gpu_semaphore_signal(Gpu_Semaphore semaphore, Gpu_Queue queue, u64 value);
 
 // Queue
 Gpu_Queue gpu_queue_new(void);
@@ -229,9 +224,9 @@ void gpu_submit(Gpu_Command_Buffer cb, Gpu_Queue queue);
 
 void gpu_copy(Gpu_Command_Buffer cb, Gpu_Slice src, Gpu_Slice dst);
 
-void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass*_Nonnull pass, Gpu_Render_Pipeline pipeline, Gpu_Slice data, Gpu_Primitive_Kind primitive_kind, uint32_t vertex_count, uint32_t instance_count);
+void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass*_Nonnull pass, Gpu_Render_Pipeline pipeline, Gpu_Slice data, Gpu_Primitive_Kind primitive_kind, u32 vertex_count, u32 instance_count);
 
-void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, Gpu_Slice data, Gpu_Vec3 threadsPerThreadgroup, Gpu_Vec3 threadgroupCount);
+void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, Gpu_Slice data, vec3_u32 threadsPerThreadgroup, vec3_u32 threadgroupCount);
 
 void gpu_barrier(Gpu_Command_Buffer cb);
 
@@ -282,8 +277,8 @@ typedef struct Gpu_Heap_Data {
 	void*_Nullable buffer_cpu_ptr;
 	Gpu_Address buffer_gpu_ptr;
 	
-	size_t position;
-	size_t length;
+	u64 position;
+	u64 length;
 } Gpu_Heap_Data;
 
 typedef struct Gpu_Queue_Data {
@@ -316,7 +311,7 @@ typedef struct Gpu_Semaphore_Data {
 
 typedef struct Gpu_Texture_Data {
 	void* texture; // id<MTLTexture>
-	uint64_t gpu_address;
+	u64 gpu_address;
 } Gpu_Texture_Data;
 
 typedef struct Gpu_Swapchain_Data {
@@ -341,27 +336,27 @@ typedef struct Gpu_Pool_Entry {
 		Gpu_Semaphore_Data semaphore;
 	};
 	
-	uint32_t generation;
+	u32 generation;
 } Gpu_Pool_Entry;
 
 #define GPU_POOL_CAPACITY 512
 
 typedef struct Gpu_Pool {
 	Gpu_Pool_Entry entries[GPU_POOL_CAPACITY];
-	uint32_t entry_free_list[GPU_POOL_CAPACITY];
-	uint32_t entry_free_list_length;
+	u32 entry_free_list[GPU_POOL_CAPACITY];
+	u32 entry_free_list_length;
 } Gpu_Pool;
 
 static inline void gpu_pool_init(Gpu_Pool* pool) {
-	for (uint32_t i = 0; i < GPU_POOL_CAPACITY; i++) {
+	for (u32 i = 0; i < GPU_POOL_CAPACITY; i++) {
 		pool->entries[i].generation = 0;
 		pool->entry_free_list[i] = (GPU_POOL_CAPACITY - 1) - i;
 	}
 	pool->entry_free_list_length = GPU_POOL_CAPACITY;
 }
-static inline Gpu_Pool_Entry*_Nullable gpu_pool_get_entry(Gpu_Pool* pool, uint64_t handle) {
-	const uint32_t entry_index = (uint32_t)(handle & UINT32_MAX);
-	const uint32_t entry_generation = (uint32_t)((handle >> 32ULL) & UINT32_MAX);
+static inline Gpu_Pool_Entry*_Nullable gpu_pool_get_entry(Gpu_Pool* pool, u64 handle) {
+	const u32 entry_index = (u32)(handle & u32_max);
+	const u32 entry_generation = (u32)((handle >> 32ULL) & u32_max);
 	Gpu_Pool_Entry* entry = pool->entries + entry_index;
 	if (entry->generation == entry_generation) {
 		return entry;
@@ -369,18 +364,18 @@ static inline Gpu_Pool_Entry*_Nullable gpu_pool_get_entry(Gpu_Pool* pool, uint64
 		return NULL;
 	}
 }
-static inline uint64_t gpu_pool_borrow_handle(Gpu_Pool* pool) {
+static inline u64 gpu_pool_borrow_handle(Gpu_Pool* pool) {
 	gpu_assert(pool->entry_free_list_length > 0, "Exhausted pool of GPU objects.");
-	uint32_t entry_index = pool->entry_free_list[--pool->entry_free_list_length];
-	uint32_t entry_generation = ++pool->entries[entry_index].generation;
-	return (uint64_t)entry_index | ((uint64_t)entry_generation << 32ULL);
+	u32 entry_index = pool->entry_free_list[--pool->entry_free_list_length];
+	u32 entry_generation = ++pool->entries[entry_index].generation;
+	return (u64)entry_index | ((u64)entry_generation << 32ULL);
 }
-static inline void gpu_pool_return_handle(Gpu_Pool* pool, uint64_t handle) {
+static inline void gpu_pool_return_handle(Gpu_Pool* pool, u64 handle) {
 	Gpu_Pool_Entry* entry = gpu_pool_get_entry(pool, handle);
 	gpu_assert(entry != NULL, "Attempted to return invalid/deallocated handle.");
 	++entry->generation;
 	
-	const uint32_t entry_index = (uint32_t)(handle & UINT32_MAX);
+	const u32 entry_index = (u32)(handle & u32_max);
 	pool->entry_free_list[pool->entry_free_list_length++] = entry_index;
 }
 
@@ -423,7 +418,7 @@ static inline MTLResourceOptions gpu_memory_get_metal_resource_options(Gpu_Memor
 	}
 }
 
-Gpu_Heap gpu_heap_new(size_t bytes, Gpu_Memory memory) {
+Gpu_Heap gpu_heap_new(u64 bytes, Gpu_Memory memory) {
 	const Gpu_Heap heap_handle = (Gpu_Heap) {
 		.handle = gpu_pool_borrow_handle(&_context.pool),
 	};
@@ -632,7 +627,7 @@ Gpu_Address gpu_texture_get_gpu_ptr(Gpu_Texture texture) {
 	Gpu_Texture_Data* texture_data = &gpu_pool_get_entry(&_context.pool, texture.handle)->texture;
 	return texture_data->gpu_address;
 }
-void gpu_texture_replace_contents(Gpu_Texture texture, void* bytes, uint32_t row_length) {
+void gpu_texture_replace_contents(Gpu_Texture texture, void* bytes, u32 row_length) {
 	Gpu_Texture_Data* texture_data = &gpu_pool_get_entry(&_context.pool, texture.handle)->texture;
 	id<MTLTexture> metal_texture = (__bridge id<MTLTexture>)texture_data->texture;
 	gpu_assert(metal_texture.storageMode == MTLStorageModeShared, "Can only replace contents of shared textures.");
@@ -644,7 +639,7 @@ void gpu_texture_destroy(Gpu_Texture texture) {
 	gpu_pool_return_handle(&_context.pool, texture.handle);
 }
 
-Gpu_Semaphore gpu_semaphore_new(uint64_t init_value) {
+Gpu_Semaphore gpu_semaphore_new(u64 init_value) {
 	const Gpu_Semaphore semaphore_handle = {
 		.handle = gpu_pool_borrow_handle(&_context.pool),
 	};
@@ -658,12 +653,12 @@ Gpu_Semaphore gpu_semaphore_new(uint64_t init_value) {
 	
 	return semaphore_handle;
 }
-void gpu_semaphore_wait(Gpu_Semaphore semaphore, uint64_t value) {
+void gpu_semaphore_wait(Gpu_Semaphore semaphore, u64 value) {
 	Gpu_Semaphore_Data* semaphore_data = &gpu_pool_get_entry(&_context.pool, semaphore.handle)->semaphore;
 	id<MTLSharedEvent> metal_event = (__bridge id<MTLSharedEvent>)semaphore_data->event;
 	[metal_event waitUntilSignaledValue:value timeoutMS:UINT64_MAX];
 }
-void gpu_semaphore_signal(Gpu_Semaphore semaphore, Gpu_Queue queue, uint64_t value) {
+void gpu_semaphore_signal(Gpu_Semaphore semaphore, Gpu_Queue queue, u64 value) {
 	Gpu_Semaphore_Data* semaphore_data = &gpu_pool_get_entry(&_context.pool, semaphore.handle)->semaphore;
 	Gpu_Queue_Data* queue_data = &gpu_pool_get_entry(&_context.pool, queue.handle)->queue;
 	id<MTLSharedEvent> metal_event = (__bridge id<MTLSharedEvent>)semaphore_data->event;
@@ -760,7 +755,7 @@ static inline void gpu_begin_render_encoder(Gpu_Command_Buffer cb, const Gpu_Ren
 	gpu_end_encoder(cb);
 	
 	MTL4RenderPassDescriptor* metal_pass_desc = [MTL4RenderPassDescriptor new];
-	for (uint32_t i = 0; i < GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS; i++) {
+	for (u32 i = 0; i < GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS; i++) {
 		Gpu_Texture target = pass->color_targets[i];
 		if (target.handle > 0) {
 			Gpu_Texture_Data* texture_data = &gpu_pool_get_entry(&_context.pool, target.handle)->texture;
@@ -843,7 +838,7 @@ Gpu_Render_Pipeline gpu_render_pipeline_new(Gpu_Render_Pipeline_Desc desc) {
 	metal_pipeline_desc.vertexFunctionDescriptor = vertex_function_desc;
 	metal_pipeline_desc.fragmentFunctionDescriptor = fragment_function_desc;
 	
-	for (uint32_t i = 0; i < GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS; i++) {
+	for (u32 i = 0; i < GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS; i++) {
 		metal_pipeline_desc.colorAttachments[i].pixelFormat = gpu_format_get_metal_format(desc.color_targets[i].format);
 	}
 	
@@ -889,7 +884,7 @@ void gpu_copy(Gpu_Command_Buffer cb, Gpu_Slice src, Gpu_Slice dst) {
 	[compute_encoder copyFromBuffer:src_buffer sourceOffset:src.offset toBuffer:dst_buffer destinationOffset:dst.offset size:src.size];
 }
 
-void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, Gpu_Render_Pipeline pipeline, Gpu_Slice data, Gpu_Primitive_Kind primitive_kind, uint32_t vertex_count, uint32_t instance_count) {
+void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, Gpu_Render_Pipeline pipeline, Gpu_Slice data, Gpu_Primitive_Kind primitive_kind, u32 vertex_count, u32 instance_count) {
 	Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
 
 	// Start render encoder, if not already started.
@@ -918,7 +913,7 @@ void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, Gpu_Render_Pip
 	[metal_encoder drawPrimitives:gpu_primitive_kind_get_metal_primitive_type(primitive_kind) vertexStart:0 vertexCount:vertex_count instanceCount:instance_count];
 }
 
-void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, Gpu_Slice data, Gpu_Vec3 threadsPerThreadgroup, Gpu_Vec3 threadgroupCount) {
+void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, Gpu_Slice data, vec3_u32 threads_per_threadgroup, vec3_u32 threadgroup_count) {
 	Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
 	gpu_begin_compute_encoder(cb);
 
@@ -930,7 +925,7 @@ void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, Gpu_Slic
 	
 	[metal_compute_encoder setComputePipelineState:metal_pipeline_state];
 	[metal_argument_table setAddress:gpu_slice_get_gpu_ptr(data) atIndex:0];
-	[metal_compute_encoder dispatchThreadgroups:MTLSizeMake(threadsPerThreadgroup.x, threadsPerThreadgroup.y, threadsPerThreadgroup.z) threadsPerThreadgroup:MTLSizeMake(threadgroupCount.x, threadgroupCount.y, threadgroupCount.z)];
+	[metal_compute_encoder dispatchThreadgroups:MTLSizeMake(threadgroup_count.x, threadgroup_count.y, threadgroup_count.z) threadsPerThreadgroup:MTLSizeMake(threads_per_threadgroup.x, threads_per_threadgroup.y, threads_per_threadgroup.z)];
 }
 
 void gpu_barrier(Gpu_Command_Buffer cb) {
