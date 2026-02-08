@@ -712,6 +712,330 @@ sl_inline vec3_f64 mul_vec3_f64(vec3_f64 a, vec3_f64 b) {
 	};
 }
 
+sl_inline vec4_u8 add_vec4_u8(vec4_u8 a, vec4_u8 b) {
+	return (vec4_u8) {
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+		.z = a.z + b.z,
+		.w = a.w + b.w,
+	};
+}
+sl_inline vec4_u16 add_vec4_u16(vec4_u16 a, vec4_u16 b) {
+	return (vec4_u16) {
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+		.z = a.z + a.z,
+		.w = a.w + b.w,
+	};
+}
+sl_inline vec4_u32 add_vec4_u32(vec4_u32 a, vec4_u32 b) {
+	return (vec4_u32) {
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+		.z = a.z + b.z,
+		.w = a.w + b.w,
+	};
+}
+sl_inline vec4_u64 add_vec4_u64(vec4_u64 a, vec4_u64 b) {
+	return (vec4_u64) {
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+		.z = a.z + b.z,
+		.w = a.w + b.w,
+	};
+}
+sl_inline vec4_s8 add_vec4_s8(vec4_s8 a, vec4_s8 b) {
+	return (vec4_s8) {
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+		.z = a.z + b.z,
+		.w = a.w + b.w,
+	};
+}
+sl_inline vec4_s16 add_vec4_s16(vec4_s16 a, vec4_s16 b) {
+	return (vec4_s16) {
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+		.z = a.z + b.z,
+		.w = a.w + b.w,
+	};
+}
+sl_inline vec4_s32 add_vec4_s32(vec4_s32 a, vec4_s32 b) {
+	return (vec4_s32) {
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+		.z = a.z + b.z,
+		.w = a.w + b.w,
+	};
+}
+sl_inline vec4_s64 add_vec4_s64(vec4_s64 a, vec4_s64 b) {
+	return (vec4_s64) {
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+		.z = a.z + b.z,
+		.w = a.w + b.w,
+	};
+}
+sl_inline vec4_f32 add_vec4_f32(vec4_f32 a, vec4_f32 b) {
+	return (vec4_f32) {
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+		.z = a.z + b.z,
+		.w = a.w + b.w,
+	};
+}
+sl_inline vec4_f64 add_vec4_f64(vec4_f64 a, vec4_f64 b) {
+	return (vec4_f64) {
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+		.z = a.z + b.z,
+		.w = a.w + b.w,
+	};
+}
+
+sl_inline vec4_u8 sub_vec4_u8(vec4_u8 a, vec4_u8 b) {
+	return (vec4_u8) {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+		.z = a.z - b.z,
+		.w = a.w - b.w,
+	};
+}
+sl_inline vec4_u16 sub_vec4_u16(vec4_u16 a, vec4_u16 b) {
+	return (vec4_u16) {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+		.z = a.z - b.z,
+		.w = a.w - b.w,
+	};
+}
+sl_inline vec4_u32 sub_vec4_u32(vec4_u32 a, vec4_u32 b) {
+	return (vec4_u32) {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+		.z = a.z - b.z,
+		.w = a.w - b.w,
+	};
+}
+sl_inline vec4_u64 sub_vec4_u64(vec4_u64 a, vec4_u64 b) {
+	return (vec4_u64) {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+		.z = a.z - b.z,
+		.w = a.w - b.w,
+	};
+}
+sl_inline vec4_s8 sub_vec4_s8(vec4_s8 a, vec4_s8 b) {
+	return (vec4_s8) {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+		.z = a.z - b.z,
+		.w = a.w - b.w,
+	};
+}
+sl_inline vec4_s16 sub_vec4_s16(vec4_s16 a, vec4_s16 b) {
+	return (vec4_s16) {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+		.z = a.z - b.z,
+		.w = a.w - b.w,
+	};
+}
+sl_inline vec4_s32 sub_vec4_s32(vec4_s32 a, vec4_s32 b) {
+	return (vec4_s32) {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+		.z = a.z - b.z,
+		.w = a.w - b.w,
+	};
+}
+sl_inline vec4_s64 sub_vec4_s64(vec4_s64 a, vec4_s64 b) {
+	return (vec4_s64) {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+		.z = a.z - b.z,
+		.w = a.w - b.w,
+	};
+}
+sl_inline vec4_f32 sub_vec4_f32(vec4_f32 a, vec4_f32 b) {
+	return (vec4_f32) {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+		.z = a.z - b.z,
+		.w = a.w - b.w,
+	};
+}
+sl_inline vec4_f64 sub_vec4_f64(vec4_f64 a, vec4_f64 b) {
+	return (vec4_f64) {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+		.z = a.z - b.z,
+		.w = a.w - b.w,
+	};
+}
+
+sl_inline vec4_u8 div_vec4_u8(vec4_u8 a, vec4_u8 b) {
+	return (vec4_u8) {
+		.x = a.x / b.x,
+		.y = a.y / b.y,
+		.z = a.z / b.z,
+		.w = a.w / b.w,
+	};
+}
+sl_inline vec4_u16 div_vec4_u16(vec4_u16 a, vec4_u16 b) {
+	return (vec4_u16) {
+		.x = a.x / b.x,
+		.y = a.y / b.y,
+		.z = a.z / b.z,
+		.w = a.w / b.w,
+	};
+}
+sl_inline vec4_u32 div_vec4_u32(vec4_u32 a, vec4_u32 b) {
+	return (vec4_u32) {
+		.x = a.x / b.x,
+		.y = a.y / b.y,
+		.z = a.z / b.z,
+		.w = a.w / b.w,
+	};
+}
+sl_inline vec4_u64 div_vec4_u64(vec4_u64 a, vec4_u64 b) {
+	return (vec4_u64) {
+		.x = a.x / b.x,
+		.y = a.y / b.y,
+		.z = a.z / b.z,
+		.w = a.w / b.w,
+	};
+}
+sl_inline vec4_s8 div_vec4_s8(vec4_s8 a, vec4_s8 b) {
+	return (vec4_s8) {
+		.x = a.x / b.x,
+		.y = a.y / b.y,
+		.z = a.z / b.z,
+		.w = a.w / b.w,
+	};
+}
+sl_inline vec4_s16 div_vec4_s16(vec4_s16 a, vec4_s16 b) {
+	return (vec4_s16) {
+		.x = a.x / b.x,
+		.y = a.y / b.y,
+		.z = a.z / b.z,
+		.w = a.w / b.w,
+	};
+}
+sl_inline vec4_s32 div_vec4_s32(vec4_s32 a, vec4_s32 b) {
+	return (vec4_s32) {
+		.x = a.x / b.x,
+		.y = a.y / b.y,
+		.z = a.z / b.z,
+		.w = a.w / b.w,
+	};
+}
+sl_inline vec4_s64 div_vec4_s64(vec4_s64 a, vec4_s64 b) {
+	return (vec4_s64) {
+		.x = a.x / b.x,
+		.y = a.y / b.y,
+		.z = a.z / b.z,
+		.w = a.w / b.w,
+	};
+}
+sl_inline vec4_f32 div_vec4_f32(vec4_f32 a, vec4_f32 b) {
+	return (vec4_f32) {
+		.x = a.x / b.x,
+		.y = a.y / b.y,
+		.z = a.z / b.z,
+		.w = a.w / b.w,
+	};
+}
+sl_inline vec4_f64 div_vec4_f64(vec4_f64 a, vec4_f64 b) {
+	return (vec4_f64) {
+		.x = a.x / b.x,
+		.y = a.y / b.y,
+		.z = a.z / b.z,
+		.w = a.w / b.w,
+	};
+}
+
+sl_inline vec4_u8 mul_vec4_u8(vec4_u8 a, vec4_u8 b) {
+	return (vec4_u8) {
+		.x = a.x * b.x,
+		.y = a.y * b.y,
+		.z = a.z * b.z,
+		.w = a.w * b.w,
+	};
+}
+sl_inline vec4_u16 mul_vec4_u16(vec4_u16 a, vec4_u16 b) {
+	return (vec4_u16) {
+		.x = a.x * b.x,
+		.y = a.y * b.y,
+		.z = a.z * b.z,
+		.w = a.w * b.w,
+	};
+}
+sl_inline vec4_u32 mul_vec4_u32(vec4_u32 a, vec4_u32 b) {
+	return (vec4_u32) {
+		.x = a.x * b.x,
+		.y = a.y * b.y,
+		.z = a.z * b.z,
+		.w = a.w * b.w,
+	};
+}
+sl_inline vec4_u64 mul_vec4_u64(vec4_u64 a, vec4_u64 b) {
+	return (vec4_u64) {
+		.x = a.x * b.x,
+		.y = a.y * b.y,
+		.z = a.z * b.z,
+		.w = a.w * b.w,
+	};
+}
+sl_inline vec4_s8 mul_vec4_s8(vec4_s8 a, vec4_s8 b) {
+	return (vec4_s8) {
+		.x = a.x * b.x,
+		.y = a.y * b.y,
+		.z = a.z * b.z,
+		.w = a.w * b.w,
+	};
+}
+sl_inline vec4_s16 mul_vec4_s16(vec4_s16 a, vec4_s16 b) {
+	return (vec4_s16) {
+		.x = a.x * b.x,
+		.y = a.y * b.y,
+		.z = a.z * b.z,
+		.w = a.w * b.w,
+	};
+}
+sl_inline vec4_s32 mul_vec4_s32(vec4_s32 a, vec4_s32 b) {
+	return (vec4_s32) {
+		.x = a.x * b.x,
+		.y = a.y * b.y,
+		.z = a.z * b.z,
+		.w = a.w * b.w,
+	};
+}
+sl_inline vec4_s64 mul_vec4_s64(vec4_s64 a, vec4_s64 b) {
+	return (vec4_s64) {
+		.x = a.x * b.x,
+		.y = a.y * b.y,
+		.z = a.z * b.z,
+		.w = a.w * b.w,
+	};
+}
+sl_inline vec4_f32 mul_vec4_f32(vec4_f32 a, vec4_f32 b) {
+	return (vec4_f32) {
+		.x = a.x * b.x,
+		.y = a.y * b.y,
+		.z = a.z * b.z,
+		.w = a.w * b.w,
+	};
+}
+sl_inline vec4_f64 mul_vec4_f64(vec4_f64 a, vec4_f64 b) {
+	return (vec4_f64) {
+		.x = a.x * b.x,
+		.y = a.y * b.y,
+		.z = a.z * b.z,
+		.w = a.w * b.w,
+	};
+}
+
 sl_inline vec4_f32 mul_mat4x4_vec4_f32(mat4x4_f32 m, vec4_f32 v) {
 	return (vec4_f32) {
 		m.x.x*v.x + m.y.x*v.y + m.z.x*v.z + m.w.x*v.w,
