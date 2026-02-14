@@ -8,6 +8,7 @@
 #define sl_concat(a, b) a ## b
 #define sl_min(a, b) ((a) < (b) ? (a) : (b))
 #define sl_max(a, b) ((a) > (b) ? (a) : (b))
+#define sl_array_count(x) (sizeof(x) / sizeof(*x))
 
 
 #ifdef __METAL_VERSION__
