@@ -4,6 +4,11 @@
 
 #define sl_aligned_struct(alignment) struct __attribute__((aligned(alignment)))
 #define sl_inline static inline
+#define sl_align_of(x) alignof(typeof(x))
+#define sl_concat(a, b) a ## b
+#define sl_min(a, b) ((a) < (b) ? (a) : (b))
+#define sl_max(a, b) ((a) > (b) ? (a) : (b))
+
 
 #ifdef __METAL_VERSION__
 typedef uchar u8;
@@ -56,6 +61,10 @@ typedef float4x4 mat4x4_f32;
 #include <stdbool.h>
 #include <stdalign.h>
 #include <math.h>
+#include <stdalign.h>
+#include <stdlib.h>
+#include <stdio.h>
+
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
@@ -67,35 +76,56 @@ typedef int64_t s64;
 typedef float f32;
 typedef double f64;
 
+sl_inline void sl_assert(bool condition, const char* message) {
+	if (!condition) {
+		printf("sl_assert: %s\n", message);
+		abort();
+	}
+}
+
+sl_inline void sl_abort(const char* message) {
+	printf("sl_abort: %s\n", message);
+	abort();
+}
+
+sl_inline u32 sl_next_pow2_exp_u32(u32 x) {
+	if (x <= 1) return 0;
+	return (u32)(32u - __builtin_clz(x - 1));
+}
+sl_inline u64 sl_next_pow2_exp_u64(u64 x) {
+	if (x <= 1) return 0;
+	return (u64)(64u - __builtin_clzll(x - 1));
+}
+
 // vec2
-typedef sl_aligned_struct(4) vec2_u8 {
+typedef sl_aligned_struct(2) vec2_u8 {
 	u8 x, y;
 } vec2_u8;
-typedef sl_aligned_struct(8) vec2_u16 {
+typedef sl_aligned_struct(4) vec2_u16 {
 	u16 x, y;
 } vec2_u16;
-typedef sl_aligned_struct(16) vec2_u32 {
+typedef sl_aligned_struct(8) vec2_u32 {
 	u32 x, y;
 } vec2_u32;
-typedef sl_aligned_struct(32) vec2_u64 {
+typedef sl_aligned_struct(16) vec2_u64 {
 	u64 x, y;
 } vec2_u64;
-typedef sl_aligned_struct(4) vec2_s8 {
+typedef sl_aligned_struct(2) vec2_s8 {
 	s8 x, y;
 } vec2_s8;
-typedef sl_aligned_struct(8) vec2_s16 {
+typedef sl_aligned_struct(4) vec2_s16 {
 	s16 x, y;
 } vec2_s16;
-typedef sl_aligned_struct(16) vec2_s32 {
+typedef sl_aligned_struct(8) vec2_s32 {
 	s32 x, y;
 } vec2_s32;
-typedef sl_aligned_struct(32) vec2_s64 {
+typedef sl_aligned_struct(16) vec2_s64 {
 	s64 x, y;
 } vec2_s64;
-typedef sl_aligned_struct(16) vec2_f32 {
+typedef sl_aligned_struct(8) vec2_f32 {
 	f32 x, y;
 } vec2_f32;
-typedef sl_aligned_struct(32) vec2_f64 {
+typedef sl_aligned_struct(16) vec2_f64 {
 	f64 x, y;
 } vec2_f64;
 
@@ -1337,6 +1367,193 @@ sl_inline mat4x4_f64 rotate_z_mat4x4_f64(f64 angle) {
 		.w = { 0, 0, 0, 1 },
 	};
 }
+
+typedef struct Mutable_Buffer {
+	void* data;
+	u64 size;
+} Mutable_Buffer;
+
+typedef struct Immutable_Buffer {
+	const void* data;
+	u64 size;
+} Immutable_Buffer;
+
+#define MUTABLE_BUFFER_NULL ((Mutable_Buffer) {})
+#define IMMUTABLE_BUFFER_NULL ((Immutable_Buffer) {})
+
+sl_inline bool mutable_buffer_is_null(Mutable_Buffer buf) {
+	return (buf.data == NULL);
+}
+sl_inline bool immutable_buffer_is_null(Immutable_Buffer buf) {
+	return (buf.data == NULL);
+}
+sl_inline Immutable_Buffer sl_immutable_buffer_from_mutable(Mutable_Buffer buf) {
+	return (Immutable_Buffer) {
+		.data = buf.data,
+		.size = buf.size
+	};
+}
+
+typedef void* (*Allocator_New_Fn)(void* ctx, u64 size, u64 alignment);
+typedef void* (*Allocator_Resize_Fn)(void* ctx, void* ptr, u64 old_size, u64 new_size, u64 alignment);
+typedef void (*Allocator_Free_Fn)(void* ctx, void* ptr, u64 size, u64 alignment);
+
+typedef struct Allocator {
+	void* ctx;
+	Allocator_New_Fn new;
+	Allocator_Resize_Fn resize;
+	Allocator_Free_Fn free;
+} Allocator;
+
+#define allocator_new(allocator, ptr, count)\
+	ptr = allocator->new(allocator->ctx, sizeof(*ptr) * (u64)(count), sl_align_of(*ptr))
+#define allocator_resize(allocator, ptr, old_count, new_count)\
+	ptr = allocator->resize(allocator->ctx, ptr, sizeof(*ptr) * (u64)(old_count), sizeof(*ptr) * (u64)(new_count), sl_align_of(*ptr))
+#define allocator_free(allocator, ptr, count)\
+	allocator->free(allocator->ctx, ptr, sizeof(*ptr) * (u64)(count), sl_align_of(*ptr))
+
+static void* allocator_libc_new(void* ctx, u64 size, u64 alignment) {
+	return malloc(size);
+}
+static void* allocator_libc_resize(void* ctx, void* ptr, u64 old_size, u64 new_size, u64 alignment) {
+	return realloc(ptr, new_size);
+}
+static void allocator_libc_free(void* ctx, void* ptr, u64 size, u64 alignment) {
+	free(ptr);
+}
+static Allocator allocator_libc = {
+	.ctx = NULL,
+	.new = allocator_libc_new,
+	.resize = allocator_libc_resize,
+	.free = allocator_libc_free,
+};
+
+#define sl_seq(element, type, function_prefix)\
+	typedef struct type {\
+		Allocator* allocator;\
+		element** chunks;\
+		u64 chunk_size_exp;\
+		u64 chunk_count;\
+		u64 element_count;\
+	} type;\
+	\
+	sl_inline u64 sl_concat(function_prefix, _chunk_storage_for_count)(u64 chunk_count) {\
+		if (chunk_count == 0) {\
+			return 0;\
+		}\
+		return 1 << sl_next_pow2_exp_u64(chunk_count);\
+	}\
+	sl_inline void sl_concat(function_prefix, _ensure_capacity)(type* s, u64 capacity) {\
+		const u64 new_chunk_count = (capacity + (1ull << s->chunk_size_exp)) >> s->chunk_size_exp;\
+		if (s->chunk_count < new_chunk_count) {\
+			const u64 old_storage_count = sl_concat(function_prefix, _chunk_storage_for_count)(s->chunk_count);\
+			const u64 new_storage_count = sl_concat(function_prefix, _chunk_storage_for_count)(new_chunk_count);\
+			if (old_storage_count != new_storage_count) {\
+				allocator_resize(s->allocator, s->chunks, old_storage_count, new_storage_count);\
+			}\
+			\
+			for (u64 chunk_idx = s->chunk_count; chunk_idx < new_chunk_count; chunk_idx++) {\
+				allocator_new(s->allocator, s->chunks[chunk_idx], 1ull << s->chunk_size_exp);\
+			}\
+			s->chunk_count = new_chunk_count;\
+		}\
+	}\
+	sl_inline type sl_concat(function_prefix, _new)(Allocator* allocator, u64 initial_capacity) {\
+		const u64 chunk_size_exp = sl_next_pow2_exp_u64(sl_max(4096 / sizeof(type), 1));\
+		type s = {\
+			.allocator = allocator,\
+			.chunks = NULL,\
+			.chunk_size_exp = chunk_size_exp,\
+			.chunk_count = 0,\
+			.element_count = 0,\
+		};\
+		sl_concat(function_prefix, _ensure_capacity)(&s, initial_capacity);\
+		return s;\
+	}\
+	sl_inline void sl_concat(function_prefix, _destroy)(type* s) {\
+		for (u32 chunk_idx = 0; chunk_idx < s->chunk_count; chunk_idx++) {\
+			allocator_free(s->allocator, s->chunks[chunk_idx], 1ull << s->chunk_size_exp);\
+		}\
+		const u64 storage_count = sl_concat(function_prefix, _chunk_storage_for_count)(s->chunk_count);\
+		allocator_free(s->allocator, s->chunks, storage_count);\
+		*s = (type) {};\
+	}\
+	sl_inline element* sl_concat(function_prefix, _get_ptr)(type* s, u64 idx) {\
+		sl_assert(idx < s->element_count, "Index exceeds count of sequence.");\
+		return &s->chunks[idx >> s->chunk_size_exp][idx & ((1ull << s->chunk_size_exp) - 1)];\
+	}\
+	sl_inline element sl_concat(function_prefix, _get)(type* s, u64 idx) {\
+		return *sl_concat(function_prefix, _get_ptr)(s, idx);\
+	}\
+	sl_inline void sl_concat(function_prefix, _push)(type* s, element e) {\
+		sl_concat(function_prefix, _ensure_capacity)(s, s->element_count + 1);\
+		const u64 idx = s->element_count++;\
+		*sl_concat(function_prefix, _get_ptr)(s, idx) = e;\
+	}\
+	sl_inline bool sl_concat(function_prefix, _pop)(type* s, element* out_e) {\
+		if (s->element_count == 0) {\
+			return false;\
+		}\
+		*out_e = *sl_concat(function_prefix, _get_ptr)(s, --s->element_count);\
+		return true;\
+	}\
+	sl_inline u64 sl_concat(function_prefix, _get_count)(type* s) {\
+		return s->element_count;\
+	}\
+	sl_inline void sl_concat(function_prefix, _remove)(type* s, u64 idx) {\
+		sl_assert(idx < s->element_count, "Index exceeds count of sequence.");\
+		for (u64 i = idx; i < s->element_count - 1; i++) {\
+			*sl_concat(function_prefix, _get_ptr)(s, i) = *sl_concat(function_prefix, _get_ptr)(s, i + 1);\
+		}\
+		--s->element_count;\
+	}
+
+sl_seq(u8, Seq_u8, seq_u8);
+sl_seq(u16, Seq_u16, seq_u16);
+sl_seq(u32, Seq_u32, seq_u32);
+sl_seq(u64, Seq_u64, seq_u64);
+sl_seq(s8, Seq_s8, seq_s8);
+sl_seq(s16, Seq_s16, seq_s16);
+sl_seq(s32, Seq_s32, seq_s32);
+sl_seq(s64, Seq_s64, seq_s64);
+sl_seq(f32, Seq_f32, seq_f32);
+sl_seq(f64, Seq_f64, seq_f64);
+
+sl_seq(vec2_u8, Seq_Vec2_u8, seq_vec2_u8);
+sl_seq(vec2_u16, Seq_Vec2_u16, seq_vec2_u16);
+sl_seq(vec2_u32, Seq_Vec2_u32, seq_vec2_u32);
+sl_seq(vec2_u64, Seq_Vec2_u64, seq_vec2_u64);
+sl_seq(vec2_s8, Seq_Vec2_s8, seq_vec2_s8);
+sl_seq(vec2_s16, Seq_Vec2_s16, seq_vec2_s16);
+sl_seq(vec2_s32, Seq_Vec2_s32, seq_vec2_s32);
+sl_seq(vec2_s64, Seq_Vec2_s64, seq_vec2_s64);
+sl_seq(vec2_f32, Seq_Vec2_f32, seq_vec2_f32);
+sl_seq(vec2_f64, Seq_Vec2_f64, seq_vec2_f64);
+
+sl_seq(vec3_u8, Seq_Vec3_u8, seq_vec3_u8);
+sl_seq(vec3_u16, Seq_Vec3_u16, seq_vec3_u16);
+sl_seq(vec3_u32, Seq_Vec3_u32, seq_vec3_u32);
+sl_seq(vec3_u64, Seq_Vec3_u64, seq_vec3_u64);
+sl_seq(vec3_s8, Seq_Vec3_s8, seq_vec3_s8);
+sl_seq(vec3_s16, Seq_Vec3_s16, seq_vec3_s16);
+sl_seq(vec3_s32, Seq_Vec3_s32, seq_vec3_s32);
+sl_seq(vec3_s64, Seq_Vec3_s64, seq_vec3_s64);
+sl_seq(vec3_f32, Seq_Vec3_f32, seq_vec3_f32);
+sl_seq(vec3_f64, Seq_Vec3_f64, seq_vec3_f64);
+
+sl_seq(vec4_u8, Seq_Vec4_u8, seq_vec4_u8);
+sl_seq(vec4_u16, Seq_Vec4_u16, seq_vec4_u16);
+sl_seq(vec4_u32, Seq_Vec4_u32, seq_vec4_u32);
+sl_seq(vec4_u64, Seq_Vec4_u64, seq_vec4_u64);
+sl_seq(vec4_s8, Seq_Vec4_s8, seq_vec4_s8);
+sl_seq(vec4_s16, Seq_Vec4_s16, seq_vec4_s16);
+sl_seq(vec4_s32, Seq_Vec4_s32, seq_vec4_s32);
+sl_seq(vec4_s64, Seq_Vec4_s64, seq_vec4_s64);
+sl_seq(vec4_f32, Seq_Vec4_f32, seq_vec4_f32);
+sl_seq(vec4_f64, Seq_Vec4_f64, seq_vec4_f64);
+
+sl_seq(mat4x4_f32, Seq_Mat4x4_f32, seq_mat4x4_f32);
+sl_seq(mat4x4_f64, Seq_Mat4x4_f64, seq_mat4x4_f64);
 
 #endif
 

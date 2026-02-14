@@ -8,8 +8,6 @@
 
 #include "core.h"
 
-_Pragma("clang assume_nonnull begin")
-
 typedef enum Gpu_Memory {
 	Gpu_Memory_Shared,
 	Gpu_Memory_Private,
@@ -136,8 +134,8 @@ typedef enum Gpu_Primitive_Kind {
 #define GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS 8
 
 typedef struct Gpu_Render_Pass {
-	Gpu_Texture color_targets[GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS];
-	Gpu_Texture depth_target;
+	Gpu_Texture color[GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS];
+	Gpu_Texture depth;
 } Gpu_Render_Pass;
 
 typedef struct Gpu_Render_Pipeline_Desc_Target {
@@ -145,32 +143,39 @@ typedef struct Gpu_Render_Pipeline_Desc_Target {
 } Gpu_Render_Pipeline_Desc_Target;
 
 typedef struct Gpu_Render_Pipeline_Desc {
-	const char*_Nonnull vertex_function_name;
-	const char*_Nonnull fragment_function_name;
+	const char* vertex_function_name;
+	const char* fragment_function_name;
 	
 	Gpu_Render_Pipeline_Desc_Target color_targets[GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS];
 	Gpu_Render_Pipeline_Desc_Target depth_target;
 } Gpu_Render_Pipeline_Desc;
+
+typedef enum Gpu_Compare_Function {
+	GPU_Compare_Function_Always,
+	GPU_Compare_Function_Never,
+	GPU_Compare_Function_Less,
+	GPU_Compare_Function_Equal,
+	GPU_Compare_Function_Less_Equal,
+	GPU_Compare_Function_Greater,
+	GPU_Compare_Function_Not_Equal,
+	GPU_Compare_Function_Greater_Equal,
+} Gpu_Compare_Function;
+
+typedef struct Gpu_Depth_Stencil_State {
+	Gpu_Compare_Function depth_compare;
+	bool depth_write;
+} Gpu_Depth_Stencil_State;
+
+#define GPU_DEPTH_STENCIL_STATE_DEFAULT ((Gpu_Depth_Stencil_State) { .depth_compare = GPU_Compare_Function_Always, .depth_write = false, })
 
 typedef struct Gpu_Heap_Address {
 	Gpu_Heap heap;
 	u64 offset;
 } Gpu_Heap_Address;
 
-typedef struct Gpu_Slice {
-	Gpu_Heap heap;
-	u64 offset;
-	u64 size;
-} Gpu_Slice;
-
-#define GPU_SLICE_NULL ((Gpu_Slice) {})
-
-static inline bool gpu_slice_is_null(Gpu_Slice slice) {
-	return slice.heap.handle == 0;
-}
 
 typedef struct Gpu_Setup {
-	const char*_Nullable metal_library_path;
+	const char* metal_library_path;
 } Gpu_Setup;
 
 // Init/deinit
@@ -179,25 +184,57 @@ void gpu_deinit(void);
 
 // Heap
 Gpu_Heap gpu_heap_new(u64 bytes, Gpu_Memory memory);
-void gpu_heap_destroy(Gpu_Heap allocator);
+void gpu_heap_destroy(Gpu_Heap heap);
+u64 gpu_heap_get_size(Gpu_Heap heap);
 
 // Slice
-static inline Gpu_Slice gpu_slice(Gpu_Heap heap, u64 offset, u64 size) {
+typedef struct Gpu_Slice {
+	Gpu_Heap heap;
+	u64 offset;
+	u64 size;
+} Gpu_Slice;
+
+#define GPU_SLICE_NULL ((Gpu_Slice) {})
+
+sl_inline bool gpu_slice_is_null(Gpu_Slice slice) {
+	return slice.heap.handle == 0;
+}
+
+sl_inline Gpu_Slice gpu_slice_subrange(Gpu_Slice slice, u64 offset, u64 size) {
+	return (Gpu_Slice) {
+		.heap = slice.heap,
+		.offset = slice.offset + offset,
+		.size = size,
+	};
+}
+
+sl_inline Gpu_Slice gpu_slice(Gpu_Heap heap, u64 offset, u64 size) {
 	return (Gpu_Slice) {
 		.heap = heap,
 		.offset = offset,
 		.size = size,
 	};
 }
-void* _Nullable gpu_slice_get_cpu_ptr(Gpu_Slice slice);
+void* gpu_slice_get_cpu_ptr(Gpu_Slice slice);
 Gpu_Address gpu_slice_get_gpu_ptr(Gpu_Slice slice);
+Mutable_Buffer gpu_slice_get_cpu_buffer(Gpu_Slice slice);
+
+// Ring Allocator
+typedef struct Gpu_Ring_Allocator {
+	Gpu_Slice basis;
+	u64 offset;
+} Gpu_Ring_Allocator;
+Gpu_Ring_Allocator gpu_ring_allocator_new(Gpu_Slice basis);
+void gpu_ring_allocator_destroy(Gpu_Ring_Allocator* allocator);
+Gpu_Slice gpu_ring_allocator_allocate(Gpu_Ring_Allocator* allocator, u64 size, u64 alignment);
 
 // Texture
 Gpu_Size_And_Align gpu_texture_desc_get_size_and_align(Gpu_Texture_Desc texture_desc, Gpu_Heap heap);
 
 Gpu_Texture gpu_texture_new(Gpu_Slice slice, Gpu_Texture_Desc texture_desc);
 Gpu_Address gpu_texture_get_gpu_ptr(Gpu_Texture texture);
-void gpu_texture_replace_contents(Gpu_Texture texture, void*_Nonnull bytes, u32 row_length);
+Gpu_Texture_Desc gpu_texture_get_desc(Gpu_Texture texture);
+void gpu_texture_replace_contents(Gpu_Texture texture, void* bytes, u32 row_length);
 void gpu_texture_destroy(Gpu_Texture texture);
 
 // Semaphore
@@ -211,7 +248,7 @@ Gpu_Queue gpu_queue_new(void);
 void gpu_queue_destroy(Gpu_Queue queue);
 
 // Compute Pipeline
-Gpu_Compute_Pipeline gpu_compute_pipeline_new(const char*_Nonnull function_name);
+Gpu_Compute_Pipeline gpu_compute_pipeline_new(const char* function_name);
 void gpu_compute_pipeline_destroy(Gpu_Compute_Pipeline pipeline);
 
 // Render Pipeline
@@ -224,7 +261,24 @@ void gpu_submit(Gpu_Command_Buffer cb, Gpu_Queue queue);
 
 void gpu_copy(Gpu_Command_Buffer cb, Gpu_Slice src, Gpu_Slice dst);
 
-void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass*_Nonnull pass, Gpu_Render_Pipeline pipeline, Gpu_Slice data, Gpu_Primitive_Kind primitive_kind, u32 vertex_count, u32 instance_count);
+typedef struct Gpu_Render_Pass_Clear_Color_Target {
+	bool clear;
+	vec4_f32 clear_color;
+} Gpu_Render_Pass_Clear_Color_Target;
+
+typedef struct Gpu_Render_Pass_Clear_Depth_Target {
+	bool clear;
+	f32 clear_depth;
+} Gpu_Render_Pass_Clear_Depth_Target;
+	
+typedef struct Gpu_Render_Pass_Clear {
+	Gpu_Render_Pass_Clear_Color_Target color[GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS];
+	Gpu_Render_Pass_Clear_Depth_Target depth;
+} Gpu_Render_Pass_Clear;
+
+void gpu_clear_render_pass(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, const Gpu_Render_Pass_Clear* clear);
+
+void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, Gpu_Depth_Stencil_State depth_stencil_state, Gpu_Render_Pipeline pipeline, Gpu_Slice data, Gpu_Primitive_Kind primitive_kind, u32 vertex_count, u32 instance_count);
 
 void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, Gpu_Slice data, vec3_u32 threadsPerThreadgroup, vec3_u32 threadgroupCount);
 
@@ -252,19 +306,17 @@ Gpu_Swapchain gpu_swapchain_new_from_metal_layer(void* metal_layer, Gpu_Swapchai
 
 #if GPU_IMPLEMENTATION
 
-_Pragma("clang assume_nonnull end")
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
-_Pragma("clang assume_nonnull begin")
 
-static inline void gpu_assert(bool condition, const char*_Nonnull message) {
+static inline void gpu_assert(bool condition, const char* message) {
 	if (!condition) {
 		printf("gpu_assert: %s\n", message);
 		abort();
 	}
 }
 
-static inline void gpu_abort(const char*_Nonnull message) {
+static inline void gpu_abort(const char* message) {
 	printf("gpu_abort: %s\n", message);
 	abort();
 }
@@ -274,7 +326,7 @@ typedef struct Gpu_Heap_Data {
 	void* buffer; // id<MTLBuffer>
 	Gpu_Memory memory;
 	
-	void*_Nullable buffer_cpu_ptr;
+	void* buffer_cpu_ptr;
 	Gpu_Address buffer_gpu_ptr;
 	
 	u64 position;
@@ -285,16 +337,31 @@ typedef struct Gpu_Queue_Data {
 	void* queue; // id<MTL4CommandQueue>
 } Gpu_Queue_Data;
 
+void gpu_deferred_free_objc(void* ctx) {
+	CFRelease(ctx);
+}
+
+typedef void (*Gpu_Deferred_Free_Fn)(void* ctx);
+typedef struct Gpu_Deferred_Free {
+	u64 command_buffer_idx;
+	
+	void* ctx;
+	Gpu_Deferred_Free_Fn fn;
+} Gpu_Deferred_Free;
+sl_seq(Gpu_Deferred_Free, Gpu_Seq_Deferred_Free, gpu_seq_deferred_free);
+
 typedef struct Gpu_Command_Buffer_Data {
 	void* cb; // id<MTL4CommandBuffer>
 	void* command_allocator; // id<MTL4CommandAllocator>
 	void* argument_table; // id<MTL4ArgumentTable>
 	
+	Gpu_Seq_Deferred_Free deferred_free_list;
+	
 	bool has_current_render_pass;
 	Gpu_Render_Pass current_render_pass;
 	Gpu_Render_Pipeline current_render_pipeline;
 	
-	void* _Nullable encoder; // id<MTL4CommandEncoder>
+	void*  encoder; // id<MTL4CommandEncoder>
 } Gpu_Command_Buffer_Data;
 
 typedef struct Gpu_Compute_Pipeline_Data {
@@ -311,6 +378,7 @@ typedef struct Gpu_Semaphore_Data {
 
 typedef struct Gpu_Texture_Data {
 	void* texture; // id<MTLTexture>
+	Gpu_Texture_Desc desc;
 	u64 gpu_address;
 } Gpu_Texture_Data;
 
@@ -354,7 +422,7 @@ static inline void gpu_pool_init(Gpu_Pool* pool) {
 	}
 	pool->entry_free_list_length = GPU_POOL_CAPACITY;
 }
-static inline Gpu_Pool_Entry*_Nullable gpu_pool_get_entry(Gpu_Pool* pool, u64 handle) {
+static inline Gpu_Pool_Entry* gpu_pool_get_entry(Gpu_Pool* pool, u64 handle) {
 	const u32 entry_index = (u32)(handle & u32_max);
 	const u32 entry_generation = (u32)((handle >> 32ULL) & u32_max);
 	Gpu_Pool_Entry* entry = pool->entries + entry_index;
@@ -386,6 +454,11 @@ typedef struct Gpu_Context {
 	id<MTLResidencySet> residency_set;
 	id<MTLFence> fence;
 	
+	// For tracking command buffer completion
+	id<MTLSharedEvent> global_event;
+	Gpu_Seq_Deferred_Free deferred_free_list;
+	u64 next_command_buffer_idx;
+	
 	Gpu_Pool pool;
 } Gpu_Context;
 
@@ -404,11 +477,29 @@ void gpu_init(Gpu_Setup setup) {
 	MTL4CompilerDescriptor* compilerDescriptor = [MTL4CompilerDescriptor new];
 	_context.compiler = [_context.device newCompilerWithDescriptor:compilerDescriptor error:nil];
 	
+	_context.global_event = [_context.device newSharedEvent];
+	_context.global_event.signaledValue = 0;
+	_context.deferred_free_list = gpu_seq_deferred_free_new(&allocator_libc, 8);
+	_context.next_command_buffer_idx = 1;
+	
 	gpu_pool_init(&_context.pool);
 }
 void gpu_deinit(void) {
 	_context.device = nil;
 	_context = (Gpu_Context) {};
+}
+
+void gpu_flush_deferred_free_list(void) {
+	const u64 global_event_value = _context.global_event.signaledValue;
+	while (gpu_seq_deferred_free_get_count(&_context.deferred_free_list) > 0) {
+		Gpu_Deferred_Free free = gpu_seq_deferred_free_get(&_context.deferred_free_list, 0);
+		if (free.command_buffer_idx <= global_event_value) {
+			free.fn(free.ctx);
+			gpu_seq_deferred_free_remove(&_context.deferred_free_list, 0);
+		} else {
+			break;
+		}
+	}
 }
 
 static inline MTLResourceOptions gpu_memory_get_metal_resource_options(Gpu_Memory memory) {
@@ -477,8 +568,12 @@ void gpu_heap_destroy(Gpu_Heap heap) {
 	[_context.residency_set commit];
 	gpu_pool_return_handle(&_context.pool, heap.handle);
 }
+u64 gpu_heap_get_size(Gpu_Heap heap) {
+	Gpu_Heap_Data* heap_data = &gpu_pool_get_entry(&_context.pool, heap.handle)->heap;
+	return heap_data->length;
+}
 
-void* _Nullable gpu_slice_get_cpu_ptr(Gpu_Slice slice) {
+void* gpu_slice_get_cpu_ptr(Gpu_Slice slice) {
 	Gpu_Heap_Data* heap_data = &gpu_pool_get_entry(&_context.pool, slice.heap.handle)->heap;
 	switch (heap_data->memory) {
 		case Gpu_Memory_Shared:
@@ -492,6 +587,12 @@ void* _Nullable gpu_slice_get_cpu_ptr(Gpu_Slice slice) {
 Gpu_Address gpu_slice_get_gpu_ptr(Gpu_Slice slice) {
 	Gpu_Heap_Data* heap_data = &gpu_pool_get_entry(&_context.pool, slice.heap.handle)->heap;
 	return heap_data->buffer_gpu_ptr + slice.offset;
+}
+Mutable_Buffer gpu_slice_get_cpu_buffer(Gpu_Slice slice) {
+	return (Mutable_Buffer) {
+		.data = gpu_slice_get_cpu_ptr(slice),
+		.size = slice.size,
+	};
 }
 
 MTLPixelFormat gpu_format_get_metal_format(Gpu_Format format) {
@@ -619,6 +720,7 @@ Gpu_Texture gpu_texture_new(Gpu_Slice slice, Gpu_Texture_Desc texture_desc) {
 	*texture_data = (Gpu_Texture_Data) {
 		.texture = (__bridge_retained void*)texture,
 		.gpu_address = texture.gpuResourceID._impl,
+		.desc = texture_desc,
 	};
 	
 	return texture_handle;
@@ -626,6 +728,10 @@ Gpu_Texture gpu_texture_new(Gpu_Slice slice, Gpu_Texture_Desc texture_desc) {
 Gpu_Address gpu_texture_get_gpu_ptr(Gpu_Texture texture) {
 	Gpu_Texture_Data* texture_data = &gpu_pool_get_entry(&_context.pool, texture.handle)->texture;
 	return texture_data->gpu_address;
+}
+Gpu_Texture_Desc gpu_texture_get_desc(Gpu_Texture texture) {
+	Gpu_Texture_Data* texture_data = &gpu_pool_get_entry(&_context.pool, texture.handle)->texture;
+	return texture_data->desc;
 }
 void gpu_texture_replace_contents(Gpu_Texture texture, void* bytes, u32 row_length) {
 	Gpu_Texture_Data* texture_data = &gpu_pool_get_entry(&_context.pool, texture.handle)->texture;
@@ -715,6 +821,7 @@ Gpu_Command_Buffer gpu_command_buffer_new(void) {
 		.cb = (__bridge_retained void*)metal_cb,
 		.command_allocator = (__bridge_retained void*)metal_command_allocator,
 		.argument_table = (__bridge_retained void*)argument_table,
+		.deferred_free_list = gpu_seq_deferred_free_new(&allocator_libc, 8),
 	};
 	
 	[metal_cb beginCommandBufferWithAllocator:metal_command_allocator];
@@ -733,48 +840,74 @@ static inline void gpu_end_encoder(Gpu_Command_Buffer cb) {
 	}
 }
 static inline void gpu_begin_compute_encoder(Gpu_Command_Buffer cb) {
-	Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
-	
-	if ((cb_data->encoder != NULL) && [((__bridge id)cb_data->encoder) conformsToProtocol:@protocol(MTL4ComputeCommandEncoder)]) {
-		// Already encoding compute.
-		return;
-	}
-	
-	gpu_end_encoder(cb);
-	
-	id<MTL4CommandBuffer> metal_cb = (__bridge id<MTL4CommandBuffer>)cb_data->cb;
-	id<MTL4ComputeCommandEncoder> metal_compute_encoder = [metal_cb computeCommandEncoder];
-	[metal_compute_encoder waitForFence:_context.fence beforeEncoderStages:(MTLStageDispatch | MTLStageBlit)];
-	[metal_compute_encoder updateFence:_context.fence afterEncoderStages:(MTLStageDispatch | MTLStageBlit)];
-	[metal_compute_encoder setArgumentTable:(__bridge id<MTL4ArgumentTable>)cb_data->argument_table];
-	cb_data->encoder = (__bridge_retained void*)metal_compute_encoder;
-}
-static inline void gpu_begin_render_encoder(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass) {
-	Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
-	
-	gpu_end_encoder(cb);
-	
-	MTL4RenderPassDescriptor* metal_pass_desc = [MTL4RenderPassDescriptor new];
-	for (u32 i = 0; i < GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS; i++) {
-		Gpu_Texture target = pass->color_targets[i];
-		if (target.handle > 0) {
-			Gpu_Texture_Data* texture_data = &gpu_pool_get_entry(&_context.pool, target.handle)->texture;
-			metal_pass_desc.colorAttachments[i].texture = (__bridge id<MTLTexture>)texture_data->texture;
-			metal_pass_desc.colorAttachments[i].loadAction = MTLLoadActionLoad;
-			metal_pass_desc.colorAttachments[i].storeAction = MTLStoreActionStore;
+	@autoreleasepool {
+		Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
+		
+		if ((cb_data->encoder != NULL) && [((__bridge id)cb_data->encoder) conformsToProtocol:@protocol(MTL4ComputeCommandEncoder)]) {
+			// Already encoding compute.
+			return;
 		}
+		
+		gpu_end_encoder(cb);
+		
+		id<MTL4CommandBuffer> metal_cb = (__bridge id<MTL4CommandBuffer>)cb_data->cb;
+		id<MTL4ComputeCommandEncoder> metal_compute_encoder = [metal_cb computeCommandEncoder];
+		[metal_compute_encoder waitForFence:_context.fence beforeEncoderStages:(MTLStageDispatch | MTLStageBlit)];
+		[metal_compute_encoder updateFence:_context.fence afterEncoderStages:(MTLStageDispatch | MTLStageBlit)];
+		[metal_compute_encoder setArgumentTable:(__bridge id<MTL4ArgumentTable>)cb_data->argument_table];
+		cb_data->encoder = (__bridge_retained void*)metal_compute_encoder;
 	}
-	
-	id<MTL4CommandBuffer> metal_cb = (__bridge id<MTL4CommandBuffer>)cb_data->cb;
-	id<MTL4RenderCommandEncoder> metal_encoder = [metal_cb renderCommandEncoderWithDescriptor:metal_pass_desc];
-	[metal_encoder setArgumentTable:(__bridge id<MTL4ArgumentTable>)cb_data->argument_table atStages:(MTLRenderStageVertex | MTLRenderStageFragment)];
-	[metal_encoder waitForFence:_context.fence beforeEncoderStages:(MTLRenderStageVertex | MTLRenderStageFragment)];
-	[metal_encoder updateFence:_context.fence afterEncoderStages:(MTLRenderStageVertex | MTLRenderStageFragment)];
-	cb_data->encoder = (__bridge_retained void*)metal_encoder;
-	
-	cb_data->has_current_render_pass = pass;
-	cb_data->current_render_pass = *pass;
-	cb_data->current_render_pipeline = (Gpu_Render_Pipeline) {};
+}
+static inline void gpu_begin_render_encoder(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, const Gpu_Render_Pass_Clear* clear) {
+	@autoreleasepool {
+		Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
+		
+		gpu_end_encoder(cb);
+		
+		MTL4RenderPassDescriptor* metal_pass_desc = [MTL4RenderPassDescriptor new];
+		for (u32 i = 0; i < GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS; i++) {
+			Gpu_Texture target = pass->color[i];
+			if (target.handle > 0) {
+				Gpu_Texture_Data* texture_data = &gpu_pool_get_entry(&_context.pool, target.handle)->texture;
+				metal_pass_desc.colorAttachments[i].texture = (__bridge id<MTLTexture>)texture_data->texture;
+				
+				if (clear->color[i].clear) {
+					metal_pass_desc.colorAttachments[i].loadAction = MTLLoadActionClear;
+					const vec4_f32 clear_color = clear->color[i].clear_color;
+					metal_pass_desc.colorAttachments[i].clearColor = MTLClearColorMake(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
+				} else {
+					metal_pass_desc.colorAttachments[i].loadAction = MTLLoadActionLoad;
+				}
+				
+				metal_pass_desc.colorAttachments[i].storeAction = MTLStoreActionStore;
+			}
+		}
+		
+		if (pass->depth.handle > 0) {
+			Gpu_Texture_Data* texture_data = &gpu_pool_get_entry(&_context.pool, pass->depth.handle)->texture;
+			metal_pass_desc.depthAttachment.texture = (__bridge id<MTLTexture>)texture_data->texture;
+			
+			if (clear->depth.clear) {
+				metal_pass_desc.depthAttachment.loadAction = MTLLoadActionClear;
+				metal_pass_desc.depthAttachment.clearDepth = clear->depth.clear_depth;
+			} else {
+				metal_pass_desc.depthAttachment.loadAction = MTLLoadActionLoad;
+			}
+			
+			metal_pass_desc.depthAttachment.storeAction = MTLStoreActionStore;
+		}
+		
+		id<MTL4CommandBuffer> metal_cb = (__bridge id<MTL4CommandBuffer>)cb_data->cb;
+		id<MTL4RenderCommandEncoder> metal_encoder = [metal_cb renderCommandEncoderWithDescriptor:metal_pass_desc];
+		[metal_encoder setArgumentTable:(__bridge id<MTL4ArgumentTable>)cb_data->argument_table atStages:(MTLRenderStageVertex | MTLRenderStageFragment)];
+		[metal_encoder waitForFence:_context.fence beforeEncoderStages:(MTLRenderStageVertex | MTLRenderStageFragment)];
+		[metal_encoder updateFence:_context.fence afterEncoderStages:(MTLRenderStageVertex | MTLRenderStageFragment)];
+		cb_data->encoder = (__bridge_retained void*)metal_encoder;
+		
+		cb_data->has_current_render_pass = pass;
+		cb_data->current_render_pass = *pass;
+		cb_data->current_render_pipeline = (Gpu_Render_Pipeline) {};
+	}
 }
 
 
@@ -788,10 +921,32 @@ void gpu_submit(Gpu_Command_Buffer cb, Gpu_Queue queue) {
 	id<MTL4CommandQueue> metal_queue = (__bridge id<MTL4CommandQueue>)queue_data->queue;
 	
 	[metal_cb endCommandBuffer];
+	
+	const u64 command_buffer_idx = _context.next_command_buffer_idx++;
+	[metal_queue signalEvent:_context.global_event value:command_buffer_idx];
+	
 	[metal_queue commit:&metal_cb count:1];
 	
-	(void)(__bridge_transfer id<MTL4CommandAllocator>)cb_data->command_allocator;
-	(void)(__bridge_transfer id<MTL4ArgumentTable>)cb_data->argument_table;
+	// Free once command buffer completes
+	gpu_seq_deferred_free_push(&cb_data->deferred_free_list, (Gpu_Deferred_Free) {
+		.ctx = cb_data->command_allocator,
+		.fn = gpu_deferred_free_objc,
+	});
+	gpu_seq_deferred_free_push(&cb_data->deferred_free_list, (Gpu_Deferred_Free) {
+		.ctx = cb_data->argument_table,
+		.fn = gpu_deferred_free_objc,
+	});
+	
+	gpu_flush_deferred_free_list();
+	const u64 free_count = gpu_seq_deferred_free_get_count(&cb_data->deferred_free_list);
+	for (u64 free_idx = 0; free_idx < free_count; free_idx++) {
+		Gpu_Deferred_Free free = gpu_seq_deferred_free_get(&cb_data->deferred_free_list, free_idx);
+		free.command_buffer_idx = command_buffer_idx;
+		gpu_seq_deferred_free_push(&_context.deferred_free_list, free);
+	}
+	
+	gpu_seq_deferred_free_destroy(&cb_data->deferred_free_list);
+	
 	gpu_pool_return_handle(&_context.pool, cb.handle);
 }
 
@@ -884,33 +1039,73 @@ void gpu_copy(Gpu_Command_Buffer cb, Gpu_Slice src, Gpu_Slice dst) {
 	[compute_encoder copyFromBuffer:src_buffer sourceOffset:src.offset toBuffer:dst_buffer destinationOffset:dst.offset size:src.size];
 }
 
-void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, Gpu_Render_Pipeline pipeline, Gpu_Slice data, Gpu_Primitive_Kind primitive_kind, u32 vertex_count, u32 instance_count) {
-	Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
+MTLCompareFunction gpu_compare_function_get_metal_compare_function(Gpu_Compare_Function function) {
+	switch (function) {
+		case GPU_Compare_Function_Always: return MTLCompareFunctionAlways;
+		case GPU_Compare_Function_Never: return MTLCompareFunctionNever;
+		case GPU_Compare_Function_Less: return MTLCompareFunctionLess;
+		case GPU_Compare_Function_Equal: return MTLCompareFunctionEqual;
+		case GPU_Compare_Function_Less_Equal: return MTLCompareFunctionLessEqual;
+		case GPU_Compare_Function_Greater: return MTLCompareFunctionGreater;
+		case GPU_Compare_Function_Not_Equal: return MTLCompareFunctionNotEqual;
+		case GPU_Compare_Function_Greater_Equal: return MTLCompareFunctionGreaterEqual;
+	}
+}
 
-	// Start render encoder, if not already started.
-	if (!cb_data->has_current_render_pass || !gpu_render_pass_equals(&cb_data->current_render_pass, pass)) {
-		gpu_begin_render_encoder(cb, pass);
+id<MTLDepthStencilState> gpu_depth_stencil_state_get_metal_depth_stencil_state(Gpu_Depth_Stencil_State depth_stencil_state) {
+	MTLDepthStencilDescriptor* desc = [MTLDepthStencilDescriptor new];
+	[desc setDepthWriteEnabled:depth_stencil_state.depth_write];
+	[desc setDepthCompareFunction:gpu_compare_function_get_metal_compare_function(depth_stencil_state.depth_compare)];
+	return [_context.device newDepthStencilStateWithDescriptor:desc];
+}
+
+void gpu_clear_render_pass(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, const Gpu_Render_Pass_Clear* clear) {
+	@autoreleasepool {
+		gpu_begin_render_encoder(cb, pass, clear);
+	};
+}
+
+void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, Gpu_Depth_Stencil_State depth_stencil_state, Gpu_Render_Pipeline pipeline, Gpu_Slice data, Gpu_Primitive_Kind primitive_kind, u32 vertex_count, u32 instance_count) {
+	@autoreleasepool {
+		Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
+		
+		// Start render encoder, if not already started.
+		if (!cb_data->has_current_render_pass || !gpu_render_pass_equals(&cb_data->current_render_pass, pass)) {
+			const Gpu_Render_Pass_Clear clear = {};
+			gpu_begin_render_encoder(cb, pass, &clear);
+		}
+		
+		id<MTL4RenderCommandEncoder> metal_encoder = (__bridge id<MTL4RenderCommandEncoder>)cb_data->encoder;
+		
+		// Bind pipeline, if not already bound.
+		if (cb_data->current_render_pipeline.handle != pipeline.handle) {
+			cb_data->current_render_pipeline = pipeline;
+			Gpu_Render_Pipeline_Data* pipeline_data = &gpu_pool_get_entry(&_context.pool, pipeline.handle)->render_pipeline;
+			id<MTLRenderPipelineState> metal_pipeline_state = (__bridge id<MTLRenderPipelineState>)pipeline_data->pipeline_state;
+			[metal_encoder setRenderPipelineState:metal_pipeline_state];
+		}
+		
+		// Apply depth stencil state
+		// TODO: reuse
+		id<MTLDepthStencilState> metal_depth_stencil_state = gpu_depth_stencil_state_get_metal_depth_stencil_state(depth_stencil_state);
+		[metal_encoder setDepthStencilState:metal_depth_stencil_state];
+		
+		// Free once command buffer completes
+		gpu_seq_deferred_free_push(&cb_data->deferred_free_list, (Gpu_Deferred_Free) {
+			.ctx = (__bridge_retained void*)metal_depth_stencil_state,
+			.fn = gpu_deferred_free_objc,
+		});
+		
+		id<MTL4ArgumentTable> metal_argument_table = (__bridge id<MTL4ArgumentTable>)cb_data->argument_table;
+		
+		if (gpu_slice_is_null(data)) {
+			[metal_argument_table setAddress:0 atIndex:0];
+		} else {
+			[metal_argument_table setAddress:gpu_slice_get_gpu_ptr(data) atIndex:0];
+		}
+		
+		[metal_encoder drawPrimitives:gpu_primitive_kind_get_metal_primitive_type(primitive_kind) vertexStart:0 vertexCount:vertex_count instanceCount:instance_count];
 	}
-	
-	id<MTL4RenderCommandEncoder> metal_encoder = (__bridge id<MTL4RenderCommandEncoder>)cb_data->encoder;
-	
-	// Bind pipeline, if not already bound.
-	if (cb_data->current_render_pipeline.handle != pipeline.handle) {
-		cb_data->current_render_pipeline = pipeline;
-		Gpu_Render_Pipeline_Data* pipeline_data = &gpu_pool_get_entry(&_context.pool, pipeline.handle)->render_pipeline;
-		id<MTLRenderPipelineState> metal_pipeline_state = (__bridge id<MTLRenderPipelineState>)pipeline_data->pipeline_state;
-		[metal_encoder setRenderPipelineState:metal_pipeline_state];
-	}
-	
-	id<MTL4ArgumentTable> metal_argument_table = (__bridge id<MTL4ArgumentTable>)cb_data->argument_table;
-	
-	if (gpu_slice_is_null(data)) {
-		[metal_argument_table setAddress:0 atIndex:0];
-	} else {
-		[metal_argument_table setAddress:gpu_slice_get_gpu_ptr(data) atIndex:0];
-	}
-	
-	[metal_encoder drawPrimitives:gpu_primitive_kind_get_metal_primitive_type(primitive_kind) vertexStart:0 vertexCount:vertex_count instanceCount:instance_count];
 }
 
 void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, Gpu_Slice data, vec3_u32 threads_per_threadgroup, vec3_u32 threadgroup_count) {
@@ -954,43 +1149,51 @@ void gpu_swapchain_destroy(Gpu_Swapchain swapchain) {
 	gpu_pool_return_handle(&_context.pool, swapchain.handle);
 }
 Gpu_Swapchain_Image gpu_swapchain_get_next_image(Gpu_Swapchain swapchain) {
-	Gpu_Swapchain_Data* swapchain_data = &gpu_pool_get_entry(&_context.pool, swapchain.handle)->swapchain;
-	CAMetalLayer* metal_layer = (__bridge CAMetalLayer*)swapchain_data->metal_layer;
-	id<CAMetalDrawable> metal_drawable = [metal_layer nextDrawable];
-	
-	const Gpu_Swapchain_Image image_handle = {
-		.handle = gpu_pool_borrow_handle(&_context.pool),
-	};
-	Gpu_Swapchain_Image_Data* image_data = &gpu_pool_get_entry(&_context.pool, image_handle.handle)->swapchain_image;
-	image_data->drawable = (__bridge_retained void*)metal_drawable;
-	image_data->texture = gpu_texture_new_from_metal_texture((__bridge void*)metal_drawable.texture);
-	
-	return image_handle;
+	@autoreleasepool {
+		Gpu_Swapchain_Data* swapchain_data = &gpu_pool_get_entry(&_context.pool, swapchain.handle)->swapchain;
+		CAMetalLayer* metal_layer = (__bridge CAMetalLayer*)swapchain_data->metal_layer;
+		id<CAMetalDrawable> metal_drawable = [metal_layer nextDrawable];
+		
+		const Gpu_Swapchain_Image image_handle = {
+			.handle = gpu_pool_borrow_handle(&_context.pool),
+		};
+		Gpu_Swapchain_Image_Data* image_data = &gpu_pool_get_entry(&_context.pool, image_handle.handle)->swapchain_image;
+		image_data->drawable = (__bridge_retained void*)metal_drawable;
+		image_data->texture = gpu_texture_new_from_metal_texture((__bridge void*)metal_drawable.texture);
+		
+		return image_handle;
+	}
 }
 Gpu_Texture gpu_swapchain_image_get_texture(Gpu_Swapchain_Image swapchain_image) {
 	Gpu_Swapchain_Image_Data* image_data = &gpu_pool_get_entry(&_context.pool, swapchain_image.handle)->swapchain_image;
 	return image_data->texture;
 }
 void gpu_swapchain_image_wait(Gpu_Swapchain_Image swapchain_image, Gpu_Queue queue) {
-	Gpu_Swapchain_Image_Data* image_data = &gpu_pool_get_entry(&_context.pool, swapchain_image.handle)->swapchain_image;
-	Gpu_Queue_Data* queue_data = &gpu_pool_get_entry(&_context.pool, queue.handle)->queue;
-	id<MTL4CommandQueue> metal_queue = (__bridge id<MTL4CommandQueue>)queue_data->queue;
-	id<CAMetalDrawable> metal_drawable = (__bridge id<CAMetalDrawable>)image_data->drawable;
-	[metal_queue waitForDrawable:metal_drawable];
+	@autoreleasepool {
+		Gpu_Swapchain_Image_Data* image_data = &gpu_pool_get_entry(&_context.pool, swapchain_image.handle)->swapchain_image;
+		Gpu_Queue_Data* queue_data = &gpu_pool_get_entry(&_context.pool, queue.handle)->queue;
+		id<MTL4CommandQueue> metal_queue = (__bridge id<MTL4CommandQueue>)queue_data->queue;
+		id<CAMetalDrawable> metal_drawable = (__bridge id<CAMetalDrawable>)image_data->drawable;
+		[metal_queue waitForDrawable:metal_drawable];
+	}
 }
 void gpu_swapchain_image_signal(Gpu_Swapchain_Image swapchain_image, Gpu_Queue queue) {
-	Gpu_Swapchain_Image_Data* image_data = &gpu_pool_get_entry(&_context.pool, swapchain_image.handle)->swapchain_image;
-	Gpu_Queue_Data* queue_data = &gpu_pool_get_entry(&_context.pool, queue.handle)->queue;
-	id<MTL4CommandQueue> metal_queue = (__bridge id<MTL4CommandQueue>)queue_data->queue;
-	id<CAMetalDrawable> metal_drawable = (__bridge id<CAMetalDrawable>)image_data->drawable;
-	[metal_queue signalDrawable:metal_drawable];
+	@autoreleasepool {
+		Gpu_Swapchain_Image_Data* image_data = &gpu_pool_get_entry(&_context.pool, swapchain_image.handle)->swapchain_image;
+		Gpu_Queue_Data* queue_data = &gpu_pool_get_entry(&_context.pool, queue.handle)->queue;
+		id<MTL4CommandQueue> metal_queue = (__bridge id<MTL4CommandQueue>)queue_data->queue;
+		id<CAMetalDrawable> metal_drawable = (__bridge id<CAMetalDrawable>)image_data->drawable;
+		[metal_queue signalDrawable:metal_drawable];
+	}
 }
 void gpu_swapchain_image_present(Gpu_Swapchain_Image swapchain_image) {
-	Gpu_Swapchain_Image_Data* image_data = &gpu_pool_get_entry(&_context.pool, swapchain_image.handle)->swapchain_image;
-	id<CAMetalDrawable> metal_drawable = (__bridge_transfer id<CAMetalDrawable>)image_data->drawable;
-	[metal_drawable present];
-	gpu_texture_destroy(image_data->texture);
-	gpu_pool_return_handle(&_context.pool, swapchain_image.handle);
+	@autoreleasepool {
+		Gpu_Swapchain_Image_Data* image_data = &gpu_pool_get_entry(&_context.pool, swapchain_image.handle)->swapchain_image;
+		id<CAMetalDrawable> metal_drawable = (__bridge_transfer id<CAMetalDrawable>)image_data->drawable;
+		[metal_drawable present];
+		gpu_texture_destroy(image_data->texture);
+		gpu_pool_return_handle(&_context.pool, swapchain_image.handle);
+	}
 }
 
 void* gpu_get_metal_device(void) {
@@ -999,6 +1202,14 @@ void* gpu_get_metal_device(void) {
 Gpu_Texture gpu_texture_new_from_metal_texture(void* metal_texture) {
 	id<MTLTexture> bridged_texture = (__bridge id<MTLTexture>)metal_texture;
 	
+	Gpu_Texture_Desc desc = {
+		.size = {
+			(u32)bridged_texture.width,
+			(u32)bridged_texture.height,
+			(u32)bridged_texture.depth,
+		},
+	};
+	
 	const Gpu_Texture texture_handle = {
 		.handle = gpu_pool_borrow_handle(&_context.pool),
 	};
@@ -1006,6 +1217,7 @@ Gpu_Texture gpu_texture_new_from_metal_texture(void* metal_texture) {
 	*texture_data = (Gpu_Texture_Data) {
 		.texture = (void*)CFRetain(metal_texture),
 		.gpu_address = bridged_texture.gpuResourceID._impl,
+		.desc = desc,
 	};
 	return texture_handle;
 }
@@ -1025,6 +1237,34 @@ Gpu_Swapchain gpu_swapchain_new_from_metal_layer(void* metal_layer, Gpu_Swapchai
 	return swapchain_handle;
 }
 
-#endif
+// Ring Allocator
+Gpu_Ring_Allocator gpu_ring_allocator_new(Gpu_Slice basis) {
+	return (Gpu_Ring_Allocator) {
+		.basis = basis,
+		.offset = basis.offset,
+	};
+}
+void gpu_ring_allocator_destroy(Gpu_Ring_Allocator* allocator) {
+	*allocator = (Gpu_Ring_Allocator) {};
+}
+Gpu_Slice gpu_ring_allocator_allocate(Gpu_Ring_Allocator* allocator, u64 size, u64 alignment) {
+	if ((allocator->offset + size + alignment) > (allocator->basis.offset + allocator->basis.size)) {
+		allocator->offset = allocator->basis.offset;
+	}
+	
+	allocator->offset += alignment - (allocator->offset % alignment);
+	
+	Gpu_Slice result = {
+		.heap = allocator->basis.heap,
+		.offset = allocator->offset,
+		.size = size,
+	};
+	
+	allocator->offset += size;
+	
+	sl_assert(allocator->offset <= (allocator->basis.offset + allocator->basis.size), "Requested allocation can't fit on allocator.");
+	
+	return result;
+}
 
-_Pragma("clang assume_nonnull end")
+#endif
