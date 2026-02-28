@@ -2,13 +2,23 @@
 
 #pragma once
 
-#define sl_aligned_struct(alignment) struct __attribute__((aligned(alignment)))
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
 #define sl_inline static inline
-#define sl_align_of(x) alignof(typeof(x))
 #define sl_concat(a, b) a ## b
 #define sl_min(a, b) ((a) < (b) ? (a) : (b))
 #define sl_max(a, b) ((a) > (b) ? (a) : (b))
 #define sl_array_count(x) (sizeof(x) / sizeof(*x))
+
+#if defined(_MSC_VER)
+#define sl_aligned_struct(alignment) __declspec(align(alignment)) struct
+#define sl_align_of(type) __alignof(__typeof__(type))
+#else
+#define sl_aligned_struct(alignment) struct __attribute__((aligned(alignment)))
+#define sl_align_of(x) alignof(typeof(x))
+#endif
 
 
 #ifdef __METAL_VERSION__
@@ -91,11 +101,23 @@ sl_inline void sl_abort(const char* message) {
 
 sl_inline u32 sl_next_pow2_exp_u32(u32 x) {
 	if (x <= 1) return 0;
+#if defined(_MSC_VER)
+	unsigned long index;
+	_BitScanReverse(&index, x - 1);
+	return (u32)(index + 1);
+#else
 	return (u32)(32u - __builtin_clz(x - 1));
+#endif
 }
 sl_inline u64 sl_next_pow2_exp_u64(u64 x) {
 	if (x <= 1) return 0;
+#if defined(_MSC_VER)
+	unsigned long index;
+	_BitScanReverse64(&index, x - 1);
+	return (u64)(index + 1);
+#else
 	return (u64)(64u - __builtin_clzll(x - 1));
+#endif
 }
 
 // vec2
@@ -1379,8 +1401,8 @@ typedef struct Immutable_Buffer {
 	u64 size;
 } Immutable_Buffer;
 
-#define MUTABLE_BUFFER_NULL ((Mutable_Buffer) {})
-#define IMMUTABLE_BUFFER_NULL ((Immutable_Buffer) {})
+#define MUTABLE_BUFFER_NULL ((Mutable_Buffer) {0})
+#define IMMUTABLE_BUFFER_NULL ((Immutable_Buffer) {0})
 
 sl_inline bool mutable_buffer_is_null(Mutable_Buffer buf) {
 	return (buf.data == NULL);
@@ -1442,7 +1464,7 @@ static Allocator allocator_libc = {
 		if (chunk_count == 0) {\
 			return 0;\
 		}\
-		return 1 << sl_next_pow2_exp_u64(chunk_count);\
+		return 1ULL << sl_next_pow2_exp_u64(chunk_count);\
 	}\
 	sl_inline void sl_concat(function_prefix, _ensure_capacity)(type* s, u64 capacity) {\
 		const u64 new_chunk_count = (capacity + (1ull << s->chunk_size_exp)) >> s->chunk_size_exp;\
@@ -1477,7 +1499,7 @@ static Allocator allocator_libc = {
 		}\
 		const u64 storage_count = sl_concat(function_prefix, _chunk_storage_for_count)(s->chunk_count);\
 		allocator_free(s->allocator, s->chunks, storage_count);\
-		*s = (type) {};\
+		*s = (type) {0};\
 	}\
 	sl_inline element* sl_concat(function_prefix, _get_ptr)(type* s, u64 idx) {\
 		sl_assert(idx < s->element_count, "Index exceeds count of sequence.");\
@@ -1509,7 +1531,43 @@ static Allocator allocator_libc = {
 		--s->element_count;\
 	}
 
-sl_seq(u8, Seq_u8, seq_u8);
+typedef struct Seq_u8 {
+	Allocator* allocator; u8** chunks; u64 chunk_size_exp; u64 chunk_count; u64 element_count;
+} Seq_u8; static inline u64 seq_u8_chunk_storage_for_count(u64 chunk_count) {
+	if (chunk_count == 0) {
+		return 0;
+	} return 1ULL << sl_next_pow2_exp_u64(chunk_count);
+} static inline void seq_u8_ensure_capacity(Seq_u8* s, u64 capacity) {
+	const u64 new_chunk_count = (capacity + (1ull << s->chunk_size_exp)) >> s->chunk_size_exp; if (s->chunk_count < new_chunk_count) {
+		const u64 old_storage_count = seq_u8_chunk_storage_for_count(s->chunk_count); const u64 new_storage_count = seq_u8_chunk_storage_for_count(new_chunk_count); if (old_storage_count != new_storage_count) {
+			s->chunks = s->allocator->resize(s->allocator->ctx, s->chunks, sizeof(*s->chunks) * (u64)(old_storage_count), sizeof(*s->chunks) * (u64)(new_storage_count), __alignof(__typeof__(*s->chunks)));
+		} for (u64 chunk_idx = s->chunk_count; chunk_idx < new_chunk_count; chunk_idx++) {
+			s->chunks[chunk_idx] = s->allocator->new(s->allocator->ctx, sizeof(*s->chunks[chunk_idx]) * (u64)(1ull << s->chunk_size_exp), __alignof(__typeof__(*s->chunks[chunk_idx])));
+		} s->chunk_count = new_chunk_count;
+	}
+} static inline Seq_u8 seq_u8_new(Allocator* allocator, u64 initial_capacity) {
+	const u64 chunk_size_exp = sl_next_pow2_exp_u64(((4096 / sizeof(Seq_u8)) > (1) ? (4096 / sizeof(Seq_u8)) : (1))); Seq_u8 s = { .allocator = allocator, .chunks = ((void*)0), .chunk_size_exp = chunk_size_exp, .chunk_count = 0, .element_count = 0, }; seq_u8_ensure_capacity(&s, initial_capacity); return s;
+} static inline void seq_u8_destroy(Seq_u8* s) {
+	for (u32 chunk_idx = 0; chunk_idx < s->chunk_count; chunk_idx++) {
+		s->allocator->free(s->allocator->ctx, s->chunks[chunk_idx], sizeof(*s->chunks[chunk_idx]) * (u64)(1ull << s->chunk_size_exp), __alignof(__typeof__(*s->chunks[chunk_idx])));
+	} const u64 storage_count = seq_u8_chunk_storage_for_count(s->chunk_count); s->allocator->free(s->allocator->ctx, s->chunks, sizeof(*s->chunks) * (u64)(storage_count), __alignof(__typeof__(*s->chunks))); *s = (Seq_u8){ 0 };
+} static inline u8* seq_u8_get_ptr(Seq_u8* s, u64 idx) {
+	sl_assert(idx < s->element_count, "Index exceeds count of sequence."); return &s->chunks[idx >> s->chunk_size_exp][idx & ((1ull << s->chunk_size_exp) - 1)];
+} static inline u8 seq_u8_get(Seq_u8* s, u64 idx) {
+	return *seq_u8_get_ptr(s, idx);
+} static inline void seq_u8_push(Seq_u8* s, u8 e) {
+	seq_u8_ensure_capacity(s, s->element_count + 1); const u64 idx = s->element_count++; *seq_u8_get_ptr(s, idx) = e;
+} static inline _Bool seq_u8_pop(Seq_u8* s, u8* out_e) {
+	if (s->element_count == 0) {
+		return 0;
+	} *out_e = *seq_u8_get_ptr(s, --s->element_count); return 1;
+} static inline u64 seq_u8_get_count(Seq_u8* s) {
+	return s->element_count;
+} static inline void seq_u8_remove(Seq_u8* s, u64 idx) {
+	sl_assert(idx < s->element_count, "Index exceeds count of sequence."); for (u64 i = idx; i < s->element_count - 1; i++) {
+		*seq_u8_get_ptr(s, i) = *seq_u8_get_ptr(s, i + 1);
+	} --s->element_count;
+};
 sl_seq(u16, Seq_u16, seq_u16);
 sl_seq(u32, Seq_u32, seq_u32);
 sl_seq(u64, Seq_u64, seq_u64);
