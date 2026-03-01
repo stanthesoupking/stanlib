@@ -20,6 +20,7 @@
 #define sl_align_of(x) alignof(typeof(x))
 #endif
 
+#define SL_PI 3.14159265359f
 
 #ifdef __METAL_VERSION__
 typedef uchar u8;
@@ -1089,6 +1090,23 @@ sl_inline vec4_f64 mul_vec4_f64(vec4_f64 a, vec4_f64 b) {
 	};
 }
 
+sl_inline vec2_f32 rotate_vec2_f32(vec2_f32 v, f32 a) {
+	f32 cos_a = cosf(a);
+	f32 sin_a = sinf(a);
+	return (vec2_f32) {
+		.x = v.x * cos_a - v.y * sin_a,
+		.y = v.x * sin_a + v.y * cos_a,
+	};
+}
+sl_inline vec2_f64 rotate_vec2_f64(vec2_f64 v, f64 a) {
+	f64 cos_a = cos(a);
+	f64 sin_a = sin(a);
+	return (vec2_f64) {
+		.x = v.x * cos_a - v.y * sin_a,
+		.y = v.x * sin_a + v.y * cos_a,
+	};
+}
+
 sl_inline vec4_f32 mul_mat4x4_vec4_f32(mat4x4_f32 m, vec4_f32 v) {
 	return (vec4_f32) {
 		m.x.x*v.x + m.y.x*v.y + m.z.x*v.z + m.w.x*v.w,
@@ -1512,6 +1530,15 @@ static Allocator allocator_libc = {
 		sl_concat(function_prefix, _ensure_capacity)(s, s->element_count + 1);\
 		const u64 idx = s->element_count++;\
 		*sl_concat(function_prefix, _get_ptr)(s, idx) = e;\
+	}\
+	sl_inline element* sl_concat(function_prefix, _push_reserve)(type* s) {\
+		sl_concat(function_prefix, _ensure_capacity)(s, s->element_count + 1);\
+		const u64 idx = s->element_count++;\
+		return sl_concat(function_prefix, _get_ptr)(s, idx);\
+	}\
+	sl_inline void sl_concat(function_prefix, _reserve_count)(type* s, u32 count) {\
+		sl_concat(function_prefix, _ensure_capacity)(s, s->element_count + count);\
+		s->element_count += count;\
 	}\
 	sl_inline bool sl_concat(function_prefix, _pop)(type* s, element* out_e) {\
 		if (s->element_count == 0) {\
