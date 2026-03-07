@@ -10,7 +10,37 @@
 #define sl_concat(a, b) a ## b
 #define sl_min(a, b) ((a) < (b) ? (a) : (b))
 #define sl_max(a, b) ((a) > (b) ? (a) : (b))
+#define sl_clamp(v, min_v, max_v) (sl_min(sl_max(v, min_v), max_v))
 #define sl_array_count(x) (sizeof(x) / sizeof(*x))
+
+#define sl_lru_make_newest(entry, lru) do { \
+	(entry)->lru_newer = NULL; \
+	if ((lru)->newest != NULL) { \
+		(lru)->newest->lru_newer = (entry); \
+		(entry)->lru_older = (lru)->newest; \
+	} else { \
+		(entry)->lru_older = NULL; \
+	} \
+	(lru)->newest = (entry); \
+	if ((lru)->oldest == NULL) { \
+		(lru)->oldest = (entry); \
+	} \
+} while(0)
+
+#define sl_lru_remove(entry, lru) do { \
+	if ((entry)->lru_older != NULL) { \
+		(entry)->lru_older->lru_newer = (entry)->lru_newer; \
+	} else { \
+		(lru)->oldest = (entry)->lru_newer; \
+	} \
+	if ((entry)->lru_newer != NULL) { \
+		(entry)->lru_newer->lru_older = (entry)->lru_older; \
+	} else { \
+		(lru)->newest = (entry)->lru_older; \
+	} \
+	(entry)->lru_newer = NULL; \
+	(entry)->lru_older = NULL; \
+} while(0)
 
 #if defined(_MSC_VER)
 #define sl_aligned_struct(alignment) __declspec(align(alignment)) struct
@@ -482,6 +512,43 @@ sl_inline vec2_f64 mul_vec2_f64(vec2_f64 a, vec2_f64 b) {
 	};
 }
 
+sl_inline vec2_s8 neg_vec2_s8(vec2_s8 a) {
+	return (vec2_s8) {
+		.x = -a.x,
+		.y = -a.y,
+	};
+}
+sl_inline vec2_s16 neg_vec2_s16(vec2_s16 a) {
+	return (vec2_s16) {
+		.x = -a.x,
+		.y = -a.y,
+	};
+}
+sl_inline vec2_s32 neg_vec2_s32(vec2_s32 a) {
+	return (vec2_s32) {
+		.x = -a.x,
+		.y = -a.y,
+	};
+}
+sl_inline vec2_s64 neg_vec2_s64(vec2_s64 a) {
+	return (vec2_s64) {
+		.x = -a.x,
+		.y = -a.y,
+	};
+}
+sl_inline vec2_f32 neg_vec2_f32(vec2_f32 a) {
+	return (vec2_f32) {
+		.x = -a.x ,
+		.y = -a.y,
+	};
+}
+sl_inline vec2_f64 neg_vec2_f64(vec2_f64 a) {
+	return (vec2_f64) {
+		.x = -a.x,
+		.y = -a.y,
+	};
+}
+
 sl_inline vec3_u8 add_vec3_u8(vec3_u8 a, vec3_u8 b) {
 	return (vec3_u8) {
 		.x = a.x + b.x,
@@ -763,6 +830,49 @@ sl_inline vec3_f64 mul_vec3_f64(vec3_f64 a, vec3_f64 b) {
 		.x = a.x * b.x,
 		.y = a.y * b.y,
 		.z = a.z * b.z,
+	};
+}
+
+sl_inline vec3_s8 neg_vec3_s8(vec3_s8 a) {
+	return (vec3_s8) {
+		.x = -a.x,
+		.y = -a.y,
+		.z = -a.z,
+	};
+}
+sl_inline vec3_s16 neg_vec3_s16(vec3_s16 a) {
+	return (vec3_s16) {
+		.x = -a.x,
+		.y = -a.y,
+		.z = -a.z,
+	};
+}
+sl_inline vec3_s32 neg_vec3_s32(vec3_s32 a) {
+	return (vec3_s32) {
+		.x = -a.x,
+		.y = -a.y,
+		.z = -a.z,
+	};
+}
+sl_inline vec3_s64 neg_vec_s64(vec3_s64 a) {
+	return (vec3_s64) {
+		.x = -a.x,
+		.y = -a.y,
+		.z = -a.z,
+	};
+}
+sl_inline vec3_f32 neg_vec3_f32(vec3_f32 a) {
+	return (vec3_f32) {
+		.x = -a.x ,
+		.y = -a.y,
+		.z = -a.z,
+	};
+}
+sl_inline vec3_f64 neg_vec3_f64(vec3_f64 a) {
+	return (vec3_f64) {
+		.x = -a.x,
+		.y = -a.y,
+		.z = -a.z,
 	};
 }
 
@@ -1090,6 +1200,55 @@ sl_inline vec4_f64 mul_vec4_f64(vec4_f64 a, vec4_f64 b) {
 	};
 }
 
+sl_inline vec4_s8 neg_vec4_s8(vec4_s8 a) {
+	return (vec4_s8) {
+		.x = -a.x,
+		.y = -a.y,
+		.z = -a.z,
+		.w = -a.w,
+	};
+}
+sl_inline vec4_s16 neg_vec4_s16(vec4_s16 a) {
+	return (vec4_s16) {
+		.x = -a.x,
+		.y = -a.y,
+		.z = -a.z,
+		.w = -a.w,
+	};
+}
+sl_inline vec4_s32 neg_vec4_s32(vec4_s32 a) {
+	return (vec4_s32) {
+		.x = -a.x,
+		.y = -a.y,
+		.z = -a.z,
+		.w = -a.w,
+	};
+}
+sl_inline vec4_s64 neg_vec4_s64(vec4_s64 a) {
+	return (vec4_s64) {
+		.x = -a.x,
+		.y = -a.y,
+		.z = -a.z,
+		.w = -a.w,
+	};
+}
+sl_inline vec4_f32 neg_vec4_f32(vec4_f32 a) {
+	return (vec4_f32) {
+		.x = -a.x ,
+		.y = -a.y,
+		.z = -a.z,
+		.w = -a.w,
+	};
+}
+sl_inline vec4_f64 neg_vec4_f64(vec4_f64 a) {
+	return (vec4_f64) {
+		.x = -a.x,
+		.y = -a.y,
+		.z = -a.z,
+		.w = -a.w,
+	};
+}
+
 sl_inline vec2_f32 rotate_vec2_f32(vec2_f32 v, f32 a) {
 	f32 cos_a = cosf(a);
 	f32 sin_a = sinf(a);
@@ -1409,6 +1568,19 @@ sl_inline mat4x4_f64 rotate_z_mat4x4_f64(f64 angle) {
 	};
 }
 
+typedef struct Box_f32 {
+	vec3_f32 start;
+	vec3_f32 end;
+} Box_f32;
+
+sl_inline vec3_f32 box_f32_get_center(Box_f32 b) {
+	return mul_vec3_f32(add_vec3_f32(b.start, b.end), (vec3_f32) { 0.5f, 0.5f, 0.5f });
+}
+
+typedef struct Quad_f32 {
+	vec2_f32 v[4];
+} Quad_f32;
+
 typedef struct Mutable_Buffer {
 	void* data;
 	u64 size;
@@ -1556,6 +1728,9 @@ static Allocator allocator_libc = {
 			*sl_concat(function_prefix, _get_ptr)(s, i) = *sl_concat(function_prefix, _get_ptr)(s, i + 1);\
 		}\
 		--s->element_count;\
+	}\
+	sl_inline void sl_concat(function_prefix, _clear)(type* s) {\
+		s->element_count = 0;\
 	}
 
 typedef struct Seq_u8 {
