@@ -1545,10 +1545,6 @@ sl_inline vec3_f32 box_f32_get_center(Box_f32 b) {
 	return mul_vec3_f32(add_vec3_f32(b.start, b.end), (vec3_f32) { 0.5f, 0.5f, 0.5f });
 }
 
-typedef struct Quad_f32 {
-	vec2_f32 v[4];
-} Quad_f32;
-
 typedef struct Mutable_Buffer {
 	void* data;
 	u64 size;
@@ -1785,6 +1781,10 @@ sl_seq(mat4x4_f32, Seq_Mat4x4_f32, seq_mat4x4_f32);
 sl_seq(mat4x4_f64, Seq_Mat4x4_f64, seq_mat4x4_f64);
 
 #endif
+
+typedef struct Quad_f32 {
+	vec2_f32 v[4];
+} Quad_f32;
 
 #define u8_max 255u
 #define u16_max 65535u
