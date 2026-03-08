@@ -1300,109 +1300,77 @@ sl_inline mat4x4_f64 mul_mat4x4_f64(mat4x4_f64 a, mat4x4_f64 b) {
 	};
 }
 
-sl_inline mat4x4_f32 invert_mat4x4_f32(mat4x4_f32 m) {
-	f32 a00 = m.x.x, a01 = m.y.x, a02 = m.z.x, a03 = m.w.x;
-	f32 a10 = m.x.y, a11 = m.y.y, a12 = m.z.y, a13 = m.w.y;
-	f32 a20 = m.x.z, a21 = m.y.z, a22 = m.z.z, a23 = m.w.z;
-	f32 a30 = m.x.w, a31 = m.y.w, a32 = m.z.w, a33 = m.w.w;
+sl_inline mat4x4_f32 invert_mat4x4_f32(mat4x4_f32 mat) {
+	f32 a = mat.x.x, b = mat.x.y, c = mat.x.z, d = mat.x.w,
+		e = mat.y.x, f = mat.y.y, g = mat.y.z, h = mat.y.w,
+		i = mat.z.x, j = mat.z.y, k = mat.z.z, l = mat.z.w,
+		m = mat.w.x, n = mat.w.y, o = mat.w.z, p = mat.w.w,
 
-	f32 b00 = a00*a11 - a01*a10;
-	f32 b01 = a00*a12 - a02*a10;
-	f32 b02 = a00*a13 - a03*a10;
-	f32 b03 = a01*a12 - a02*a11;
-	f32 b04 = a01*a13 - a03*a11;
-	f32 b05 = a02*a13 - a03*a12;
-	f32 b06 = a20*a31 - a21*a30;
-	f32 b07 = a20*a32 - a22*a30;
-	f32 b08 = a20*a33 - a23*a30;
-	f32 b09 = a21*a32 - a22*a31;
-	f32 b10 = a21*a33 - a23*a31;
-	f32 b11 = a22*a33 - a23*a32;
+		c1 = k * p - l * o, c2 = c * h - d * g, c3 = i * p - l * m,
+		c4 = a * h - d * e, c5 = j * p - l * n, c6 = b * h - d * f,
+		c7 = i * n - j * m, c8 = a * f - b * e, c9 = j * o - k * n,
+		c10 = b * g - c * f, c11 = i * o - k * m, c12 = a * g - c * e,
 
-	f32 det =
-		b00*b11 - b01*b10 + b02*b09 +
-		b03*b08 - b04*b07 + b05*b06;
+		idt = 1.0f / (c8 * c1 + c4 * c9 + c10 * c3 + c2 * c7 - c12 * c5 - c6 * c11), ndt = -idt;
 
-	f32 inv_det = 1.0f / det;
+	mat4x4_f32 dest;
+	dest.x.x = (f * c1 - g * c5 + h * c9) * idt;
+	dest.x.y = (b * c1 - c * c5 + d * c9) * ndt;
+	dest.x.z = (n * c2 - o * c6 + p * c10) * idt;
+	dest.x.w = (j * c2 - k * c6 + l * c10) * ndt;
 
-	return (mat4x4_f32){
-		(vec4_f32) {
-			( a11*b11 - a12*b10 + a13*b09) * inv_det,
-			(-a10*b11 + a12*b08 - a13*b07) * inv_det,
-			( a31*b05 - a32*b04 + a33*b03) * inv_det,
-			(-a30*b05 + a32*b02 - a33*b01) * inv_det
-		},
-		(vec4_f32) {
-			(-a01*b11 + a02*b10 - a03*b09) * inv_det,
-			( a00*b11 - a02*b08 + a03*b07) * inv_det,
-			(-a21*b05 + a22*b04 - a23*b03) * inv_det,
-			( a20*b05 - a22*b02 + a23*b01) * inv_det
-		},
-		(vec4_f32) {
-			( a01*b10 - a02*b09 + a03*b08) * inv_det,
-			(-a00*b10 + a02*b06 - a03*b06) * inv_det,
-			( a21*b04 - a22*b03 + a23*b02) * inv_det,
-			(-a20*b04 + a22*b01 - a23*b00) * inv_det
-		},
-		(vec4_f32) {
-			(-a01*b09 + a02*b08 - a03*b07) * inv_det,
-			( a00*b09 - a02*b07 + a03*b06) * inv_det,
-			(-a21*b03 + a22*b01 - a23*b00) * inv_det,
-			( a20*b03 - a22*b01 + a23*b00) * inv_det
-		},
-	};
+	dest.y.x = (e * c1 - g * c3 + h * c11) * ndt;
+	dest.y.y = (a * c1 - c * c3 + d * c11) * idt;
+	dest.y.z = (m * c2 - o * c4 + p * c12) * ndt;
+	dest.y.w = (i * c2 - k * c4 + l * c12) * idt;
+
+	dest.z.x = (e * c5 - f * c3 + h * c7) * idt;
+	dest.z.y = (a * c5 - b * c3 + d * c7) * ndt;
+	dest.z.z = (m * c6 - n * c4 + p * c8) * idt;
+	dest.z.w = (i * c6 - j * c4 + l * c8) * ndt;
+
+	dest.w.x = (e * c9 - f * c11 + g * c7) * ndt;
+	dest.w.y = (a * c9 - b * c11 + c * c7) * idt;
+	dest.w.z = (m * c10 - n * c12 + o * c8) * ndt;
+	dest.w.w = (i * c10 - j * c12 + k * c8) * idt;
+
+	return dest;
 }
-sl_inline mat4x4_f64 invert_mat4x4_f64(mat4x4_f64 m) {
-	f64 a00 = m.x.x, a01 = m.y.x, a02 = m.z.x, a03 = m.w.x;
-	f64 a10 = m.x.y, a11 = m.y.y, a12 = m.z.y, a13 = m.w.y;
-	f64 a20 = m.x.z, a21 = m.y.z, a22 = m.z.z, a23 = m.w.z;
-	f64 a30 = m.x.w, a31 = m.y.w, a32 = m.z.w, a33 = m.w.w;
+sl_inline mat4x4_f64 invert_mat4x4_f64(mat4x4_f64 mat) {
+	f64 a = mat.x.x, b = mat.x.y, c = mat.x.z, d = mat.x.w,
+		e = mat.y.x, f = mat.y.y, g = mat.y.z, h = mat.y.w,
+		i = mat.z.x, j = mat.z.y, k = mat.z.z, l = mat.z.w,
+		m = mat.w.x, n = mat.w.y, o = mat.w.z, p = mat.w.w,
 
-	f64 b00 = a00*a11 - a01*a10;
-	f64 b01 = a00*a12 - a02*a10;
-	f64 b02 = a00*a13 - a03*a10;
-	f64 b03 = a01*a12 - a02*a11;
-	f64 b04 = a01*a13 - a03*a11;
-	f64 b05 = a02*a13 - a03*a12;
-	f64 b06 = a20*a31 - a21*a30;
-	f64 b07 = a20*a32 - a22*a30;
-	f64 b08 = a20*a33 - a23*a30;
-	f64 b09 = a21*a32 - a22*a31;
-	f64 b10 = a21*a33 - a23*a31;
-	f64 b11 = a22*a33 - a23*a32;
+		c1 = k * p - l * o, c2 = c * h - d * g, c3 = i * p - l * m,
+		c4 = a * h - d * e, c5 = j * p - l * n, c6 = b * h - d * f,
+		c7 = i * n - j * m, c8 = a * f - b * e, c9 = j * o - k * n,
+		c10 = b * g - c * f, c11 = i * o - k * m, c12 = a * g - c * e,
 
-	f64 det =
-		b00*b11 - b01*b10 + b02*b09 +
-		b03*b08 - b04*b07 + b05*b06;
+		idt = 1.0f / (c8 * c1 + c4 * c9 + c10 * c3 + c2 * c7 - c12 * c5 - c6 * c11), ndt = -idt;
 
-	f64 inv_det = 1.0 / det;
+	mat4x4_f64 dest;
+	dest.x.x = (f * c1 - g * c5 + h * c9) * idt;
+	dest.x.y = (b * c1 - c * c5 + d * c9) * ndt;
+	dest.x.z = (n * c2 - o * c6 + p * c10) * idt;
+	dest.x.w = (j * c2 - k * c6 + l * c10) * ndt;
 
-	return (mat4x4_f64) {
-		(vec4_f64) {
-			( a11*b11 - a12*b10 + a13*b09) * inv_det,
-			(-a10*b11 + a12*b08 - a13*b07) * inv_det,
-			( a31*b05 - a32*b04 + a33*b03) * inv_det,
-			(-a30*b05 + a32*b02 - a33*b01) * inv_det
-		},
-		(vec4_f64) {
-			(-a01*b11 + a02*b10 - a03*b09) * inv_det,
-			( a00*b11 - a02*b08 + a03*b07) * inv_det,
-			(-a21*b05 + a22*b04 - a23*b03) * inv_det,
-			( a20*b05 - a22*b02 + a23*b01) * inv_det
-		},
-		(vec4_f64) {
-			( a01*b10 - a02*b09 + a03*b08) * inv_det,
-			(-a00*b10 + a02*b06 - a03*b06) * inv_det,
-			( a21*b04 - a22*b03 + a23*b02) * inv_det,
-			(-a20*b04 + a22*b01 - a23*b00) * inv_det
-		},
-		(vec4_f64) {
-			(-a01*b09 + a02*b08 - a03*b07) * inv_det,
-			( a00*b09 - a02*b07 + a03*b06) * inv_det,
-			(-a21*b03 + a22*b01 - a23*b00) * inv_det,
-			( a20*b03 - a22*b01 + a23*b00) * inv_det
-		},
-	};
+	dest.y.x = (e * c1 - g * c3 + h * c11) * ndt;
+	dest.y.y = (a * c1 - c * c3 + d * c11) * idt;
+	dest.y.z = (m * c2 - o * c4 + p * c12) * ndt;
+	dest.y.w = (i * c2 - k * c4 + l * c12) * idt;
+
+	dest.z.x = (e * c5 - f * c3 + h * c7) * idt;
+	dest.z.y = (a * c5 - b * c3 + d * c7) * ndt;
+	dest.z.z = (m * c6 - n * c4 + p * c8) * idt;
+	dest.z.w = (i * c6 - j * c4 + l * c8) * ndt;
+
+	dest.w.x = (e * c9 - f * c11 + g * c7) * ndt;
+	dest.w.y = (a * c9 - b * c11 + c * c7) * idt;
+	dest.w.z = (m * c10 - n * c12 + o * c8) * ndt;
+	dest.w.w = (i * c10 - j * c12 + k * c8) * idt;
+
+	return dest;
 }
 
 sl_inline mat4x4_f32 ortho_mat4x4_f32(f32 left, f32 right, f32 bottom, f32 top, f32 near, f32 far) {
