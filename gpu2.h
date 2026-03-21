@@ -742,20 +742,20 @@ Gpu_Command_Buffer gpu_command_buffer_new(void) {
 static inline void gpu_end_encoder(Gpu_Command_Buffer cb) {
 	Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
 	if (cb_data->encoder != NULL) {
-		id<MTL4CommandEncoder> current_encoder = (__bridge_transfer id<MTL4CommandEncoder>)cb_data->encoder;
+		id<MTLCommandEncoder> current_encoder = (__bridge_transfer id<MTLCommandEncoder>)cb_data->encoder;
 		[current_encoder endEncoding];
 		cb_data->encoder = NULL;
 		cb_data->has_current_render_pass = false;
 		cb_data->current_render_pipeline = (Gpu_Render_Pipeline) {};
 	}
 }
-static inline void gpu_begin_compute_encoder(Gpu_Command_Buffer cb) {
+static inline id<MTLComputeCommandEncoder> gpu_get_compute_encoder(Gpu_Command_Buffer cb) {
 	@autoreleasepool {
 		Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
 		
-		if ((cb_data->encoder != NULL) && [((__bridge id)cb_data->encoder) conformsToProtocol:@protocol(MTL4ComputeCommandEncoder)]) {
+		if ((cb_data->encoder != NULL) && [((__bridge id)cb_data->encoder) conformsToProtocol:@protocol(MTLComputeCommandEncoder)]) {
 			// Already encoding compute.
-			return;
+			return (__bridge id<MTLComputeCommandEncoder>)cb_data->encoder;
 		}
 		
 		gpu_end_encoder(cb);
@@ -765,11 +765,40 @@ static inline void gpu_begin_compute_encoder(Gpu_Command_Buffer cb) {
 		[metal_compute_encoder waitForFence:_context.fence];
 		[metal_compute_encoder updateFence:_context.fence];
 		cb_data->encoder = (__bridge_retained void*)metal_compute_encoder;
+		return metal_compute_encoder;
 	}
 }
-static inline void gpu_begin_render_encoder(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, const Gpu_Render_Pass_Clear* clear) {
+static inline id<MTLBlitCommandEncoder> gpu_get_blit_encoder(Gpu_Command_Buffer cb) {
 	@autoreleasepool {
 		Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
+		
+		if ((cb_data->encoder != NULL) && [((__bridge id)cb_data->encoder) conformsToProtocol:@protocol(MTLBlitCommandEncoder)]) {
+			// Already encoding blit.
+			return (__bridge id<MTLBlitCommandEncoder>)cb_data->encoder;
+		}
+		
+		gpu_end_encoder(cb);
+		
+		id<MTLCommandBuffer> metal_cb = (__bridge id<MTLCommandBuffer>)cb_data->cb;
+		id<MTLBlitCommandEncoder> metal_blit_encoder = [metal_cb blitCommandEncoder];
+		[metal_blit_encoder waitForFence:_context.fence];
+		[metal_blit_encoder updateFence:_context.fence];
+		cb_data->encoder = (__bridge_retained void*)metal_blit_encoder;
+		return metal_blit_encoder;
+	}
+}
+static inline bool gpu_render_pass_equals(const Gpu_Render_Pass* a, const Gpu_Render_Pass* b) {
+	// Trivially comparable
+	return (memcmp(a, b, sizeof(Gpu_Render_Pass)) == 0);
+}
+static inline id<MTLRenderCommandEncoder> gpu_get_render_encoder(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, const Gpu_Render_Pass_Clear* clear) {
+	@autoreleasepool {
+		Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
+		
+		// Start render encoder, if not already started.
+		if (cb_data->has_current_render_pass && gpu_render_pass_equals(&cb_data->current_render_pass, pass)) {
+			return (__bridge id<MTLRenderCommandEncoder>)cb_data->encoder;
+		}
 		
 		gpu_end_encoder(cb);
 		
@@ -815,6 +844,8 @@ static inline void gpu_begin_render_encoder(Gpu_Command_Buffer cb, const Gpu_Ren
 		cb_data->has_current_render_pass = pass;
 		cb_data->current_render_pass = *pass;
 		cb_data->current_render_pipeline = (Gpu_Render_Pipeline) {};
+		
+		return metal_encoder;
 	}
 }
 
@@ -886,25 +917,17 @@ static inline MTLPrimitiveType gpu_primitive_kind_get_metal_primitive_type(Gpu_P
 	}
 }
 
-static inline bool gpu_render_pass_equals(const Gpu_Render_Pass* a, const Gpu_Render_Pass* b) {
-	// Trivially comparable
-	return (memcmp(a, b, sizeof(Gpu_Render_Pass)) == 0);
-}
-
 
 void gpu_copy(Gpu_Command_Buffer cb, Gpu_Slice src, Gpu_Slice dst) {
-	Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
 	gpu_assert(src.size == dst.size, "Size of src and dst must match.");
-	
-	gpu_begin_compute_encoder(cb);
 	
 	Gpu_Heap_Data* src_heap = &gpu_pool_get_entry(&_context.pool, src.heap.handle)->heap;
 	Gpu_Heap_Data* dst_heap = &gpu_pool_get_entry(&_context.pool, dst.heap.handle)->heap;
 	
 	id<MTLBuffer> src_buffer = (__bridge id<MTLBuffer>)src_heap->buffer;
 	id<MTLBuffer> dst_buffer = (__bridge id<MTLBuffer>)dst_heap->buffer;
-	id<MTL4ComputeCommandEncoder> compute_encoder = (__bridge id<MTL4ComputeCommandEncoder>)cb_data->encoder;
-	[compute_encoder copyFromBuffer:src_buffer sourceOffset:src.offset toBuffer:dst_buffer destinationOffset:dst.offset size:src.size];
+	id<MTLBlitCommandEncoder> blit_encoder = gpu_get_blit_encoder(cb);
+	[blit_encoder copyFromBuffer:src_buffer sourceOffset:src.offset toBuffer:dst_buffer destinationOffset:dst.offset size:src.size];
 }
 
 MTLCompareFunction gpu_compare_function_get_metal_compare_function(Gpu_Compare_Function function) {
@@ -929,7 +952,8 @@ id<MTLDepthStencilState> gpu_depth_stencil_state_get_metal_depth_stencil_state(G
 
 void gpu_clear_render_pass(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, const Gpu_Render_Pass_Clear* clear) {
 	@autoreleasepool {
-		gpu_begin_render_encoder(cb, pass, clear);
+		gpu_end_encoder(cb);
+		gpu_get_render_encoder(cb, pass, clear);
 	};
 }
 
@@ -937,13 +961,8 @@ void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, Gpu_Depth_Sten
 	@autoreleasepool {
 		Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
 		
-		// Start render encoder, if not already started.
-		if (!cb_data->has_current_render_pass || !gpu_render_pass_equals(&cb_data->current_render_pass, pass)) {
-			const Gpu_Render_Pass_Clear clear = {};
-			gpu_begin_render_encoder(cb, pass, &clear);
-		}
-		
-		id<MTLRenderCommandEncoder> metal_encoder = (__bridge id<MTLRenderCommandEncoder>)cb_data->encoder;
+		const Gpu_Render_Pass_Clear clear = {};
+		id<MTLRenderCommandEncoder> metal_encoder = gpu_get_render_encoder(cb, pass, &clear);;
 		
 		// Bind pipeline, if not already bound.
 		if (cb_data->current_render_pipeline.handle != pipeline.handle) {
@@ -975,13 +994,10 @@ void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, Gpu_Depth_Sten
 	}
 }
 
-void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, Gpu_Bindings bindings, vec3_u32 threads_per_threadgroup, vec3_u32 threadgroup_count) {
-	Gpu_Command_Buffer_Data* cb_data = &gpu_pool_get_entry(&_context.pool, cb.handle)->command_buffer;
-	gpu_begin_compute_encoder(cb);
-
+void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, Gpu_Bindings bindings, vec3_u32 threads_per_threadgroup, vec3_u32 threadgroup_count) {	
 	Gpu_Compute_Pipeline_Data* pipeline_data = &gpu_pool_get_entry(&_context.pool, pipeline.handle)->compute_pipeline;
 	
-	id<MTLComputeCommandEncoder> metal_compute_encoder = (__bridge id<MTLComputeCommandEncoder>)cb_data->encoder;
+	id<MTLComputeCommandEncoder> metal_compute_encoder = gpu_get_compute_encoder(cb);
 	id<MTLComputePipelineState> metal_pipeline_state = (__bridge id<MTLComputePipelineState>)pipeline_data->pipeline_state;
 	
 	[metal_compute_encoder setComputePipelineState:metal_pipeline_state];
@@ -1067,7 +1083,9 @@ Gpu_Swapchain gpu_swapchain_new_from_metal_layer(void* metal_layer, Gpu_Swapchai
 	
 	CAMetalLayer* bridged_layer = (__bridge CAMetalLayer*)metal_layer;
 	bridged_layer.device = _context.device;
+#ifndef TARGET_OS_IPHONE
 	bridged_layer.displaySyncEnabled = swapchain_desc.vsync;
+#endif
 	bridged_layer.pixelFormat = gpu_format_get_metal_format(swapchain_desc.format);
 	
 	const Gpu_Swapchain swapchain_handle = {
