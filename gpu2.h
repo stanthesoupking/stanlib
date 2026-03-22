@@ -1,3 +1,5 @@
+#pragma once
+
 /// GPU
 ///
 /// In at least `.c` or `.m` file:
@@ -169,12 +171,15 @@ typedef struct Gpu_Render_Pipeline_Desc_Target {
 	Gpu_Format format;
 } Gpu_Render_Pipeline_Desc_Target;
 
+typedef struct Gpu_Render_Pipeline_Targets {
+	Gpu_Render_Pipeline_Desc_Target color_targets[GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS];
+	Gpu_Render_Pipeline_Desc_Target depth_target;
+} Gpu_Render_Pipeline_Targets;
+
 typedef struct Gpu_Render_Pipeline_Desc {
 	const char* vertex_function_name;
 	const char* fragment_function_name;
-	
-	Gpu_Render_Pipeline_Desc_Target color_targets[GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS];
-	Gpu_Render_Pipeline_Desc_Target depth_target;
+	Gpu_Render_Pipeline_Targets targets;
 } Gpu_Render_Pipeline_Desc;
 
 typedef enum Gpu_Compare_Function {
@@ -231,15 +236,14 @@ Gpu_Heap gpu_heap_new(u64 bytes, Gpu_Memory memory);
 void gpu_heap_destroy(Gpu_Heap heap);
 u64 gpu_heap_get_size(Gpu_Heap heap);
 
-// Ring Allocator
-typedef struct Gpu_Ring_Allocator {
+// Arena Allocator
+typedef struct Gpu_Arena_Allocator {
 	Gpu_Slice basis;
-	u64 offset;
-} Gpu_Ring_Allocator;
-Gpu_Ring_Allocator gpu_ring_allocator_new(Gpu_Slice basis);
-void gpu_ring_allocator_destroy(Gpu_Ring_Allocator* allocator);
-Gpu_Slice gpu_ring_allocator_allocate(Gpu_Ring_Allocator* allocator, Gpu_Size_And_Align size_and_align);
-Gpu_Texture gpu_ring_allocator_allocate_texture(Gpu_Ring_Allocator* allocator, Gpu_Texture_Desc texture_desc);
+	u64 absolute_offset;
+} Gpu_Arena_Allocator;
+Gpu_Arena_Allocator gpu_arena_allocator_new(Gpu_Slice basis);
+Gpu_Slice gpu_arena_allocator_allocate(Gpu_Arena_Allocator* allocator, Gpu_Size_And_Align size_and_align);
+Gpu_Texture gpu_arena_allocator_allocate_texture(Gpu_Arena_Allocator* allocator, Gpu_Texture_Desc texture_desc);
 
 // Texture
 Gpu_Size_And_Align gpu_texture_desc_get_size_and_align(Gpu_Texture_Desc texture_desc, Gpu_Heap heap);
@@ -292,8 +296,15 @@ void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Render_Pass* pass, Gpu_Depth_Sten
 void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, Gpu_Bindings bindings, vec3_u32 threadsPerThreadgroup, vec3_u32 threadgroupCount);
 
 // Swapchain
+
+typedef enum Gpu_Swapchain_Colorspace {
+	Gpu_Swapchain_Colorspace_sRGB,
+	Gpu_Swapchain_Colorspace_sRGB_Extended_Range,
+} Gpu_Swapchain_Colorspace;
+
 typedef struct Gpu_Swapchain_Desc {
 	Gpu_Format format;
+	Gpu_Swapchain_Colorspace colorspace;
 	bool vsync;
 } Gpu_Swapchain_Desc;
 
@@ -893,7 +904,7 @@ Gpu_Render_Pipeline gpu_render_pipeline_new(Gpu_Render_Pipeline_Desc desc) {
 	metal_pipeline_desc.fragmentFunction = metal_fragment_function;
 	
 	for (u32 i = 0; i < GPU_RENDER_PASS_MAXIMUM_COLOR_TARGETS; i++) {
-		metal_pipeline_desc.colorAttachments[i].pixelFormat = gpu_format_get_metal_format(desc.color_targets[i].format);
+		metal_pipeline_desc.colorAttachments[i].pixelFormat = gpu_format_get_metal_format(desc.targets.color_targets[i].format);
 	}
 	
 	id<MTLRenderPipelineState> metal_pipeline = [_context.device newRenderPipelineStateWithDescriptor:metal_pipeline_desc error:nil];
@@ -1088,6 +1099,18 @@ Gpu_Swapchain gpu_swapchain_new_from_metal_layer(void* metal_layer, Gpu_Swapchai
 #endif
 	bridged_layer.pixelFormat = gpu_format_get_metal_format(swapchain_desc.format);
 	
+	switch (swapchain_desc.colorspace) {
+		case Gpu_Swapchain_Colorspace_sRGB: {
+			bridged_layer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+			bridged_layer.wantsExtendedDynamicRangeContent = NO;
+		} break;
+			
+		case Gpu_Swapchain_Colorspace_sRGB_Extended_Range: {
+			bridged_layer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
+			bridged_layer.wantsExtendedDynamicRangeContent = YES;
+		} break;
+	}
+	
 	const Gpu_Swapchain swapchain_handle = {
 		.handle = gpu_pool_borrow_handle(&_context.pool),
 	};
@@ -1097,37 +1120,30 @@ Gpu_Swapchain gpu_swapchain_new_from_metal_layer(void* metal_layer, Gpu_Swapchai
 }
 
 // Ring Allocator
-Gpu_Ring_Allocator gpu_ring_allocator_new(Gpu_Slice basis) {
-	return (Gpu_Ring_Allocator) {
+Gpu_Arena_Allocator gpu_arena_allocator_new(Gpu_Slice basis) {
+	return (Gpu_Arena_Allocator) {
 		.basis = basis,
-		.offset = basis.offset,
+		.absolute_offset = basis.offset,
 	};
 }
-void gpu_ring_allocator_destroy(Gpu_Ring_Allocator* allocator) {
-	*allocator = (Gpu_Ring_Allocator) {};
-}
-Gpu_Slice gpu_ring_allocator_allocate(Gpu_Ring_Allocator* allocator, Gpu_Size_And_Align size_and_align) {
-	if ((allocator->offset + size_and_align.size + size_and_align.align) > (allocator->basis.offset + allocator->basis.size)) {
-		allocator->offset = allocator->basis.offset;
-	}
-	
-	allocator->offset += size_and_align.align - (allocator->offset % size_and_align.align);
+Gpu_Slice gpu_arena_allocator_allocate(Gpu_Arena_Allocator* allocator, Gpu_Size_And_Align size_and_align) {
+	allocator->absolute_offset += size_and_align.align - (allocator->absolute_offset % size_and_align.align);
 	
 	Gpu_Slice result = {
 		.heap = allocator->basis.heap,
-		.offset = allocator->offset,
+		.offset = allocator->absolute_offset,
 		.size = size_and_align.size,
 	};
 	
-	allocator->offset += size_and_align.size;
+	allocator->absolute_offset += size_and_align.size;
 	
-	sl_assert(allocator->offset <= (allocator->basis.offset + allocator->basis.size), "Requested allocation can't fit on allocator.");
+	sl_assert(allocator->absolute_offset <= (allocator->basis.offset + allocator->basis.size), "Requested allocation can't fit on allocator.");
 	
 	return result;
 }
-Gpu_Texture gpu_ring_allocator_allocate_texture(Gpu_Ring_Allocator* allocator, Gpu_Texture_Desc texture_desc) {
+Gpu_Texture gpu_arena_allocator_allocate_texture(Gpu_Arena_Allocator* allocator, Gpu_Texture_Desc texture_desc) {
 	Gpu_Size_And_Align size_and_align = gpu_texture_desc_get_size_and_align(texture_desc, allocator->basis.heap);
-	Gpu_Slice slice = gpu_ring_allocator_allocate(allocator, size_and_align);
+	Gpu_Slice slice = gpu_arena_allocator_allocate(allocator, size_and_align);
 	return gpu_texture_new(slice, texture_desc);
 }
 
