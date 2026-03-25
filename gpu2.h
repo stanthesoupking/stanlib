@@ -456,8 +456,10 @@ void gpu_init(Gpu_Setup setup) {
 	_context = (Gpu_Context) {};
 	_context.device = MTLCreateSystemDefaultDevice();
 	_context.queue = [_context.device newCommandQueue];
-	_context.library = [_context.device newLibraryWithURL:[NSURL URLWithString:[NSString stringWithCString:setup.metal_library_path encoding:NSUTF8StringEncoding]] error:nil];
-	gpu_assert(_context.library != nil, "Failed to load library.");
+	if (setup.metal_library_path != NULL) {
+		_context.library = [_context.device newLibraryWithURL:[NSURL URLWithString:[NSString stringWithCString:setup.metal_library_path encoding:NSUTF8StringEncoding]] error:nil];
+		gpu_assert(_context.library != nil, "Failed to load library.");
+	}
 	_context.fence = [_context.device newFence];
 	gpu_pool_init(&_context.pool);
 }
