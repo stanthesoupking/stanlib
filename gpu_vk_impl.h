@@ -12,6 +12,10 @@
 	#define gpu_vk_log(fmt, ...) ((void)0)
 #endif
 
+const char* GPU_VK_DEVICE_EXTENSIONS[] = {
+	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+};
+
 typedef enum Gpu_Vk_Queue {
 	Gpu_Vk_Queue_Graphics,
 	Gpu_Vk_Queue_Compute,
@@ -26,9 +30,14 @@ typedef struct Gpu_Vk_Queue_Family_Indices {
 typedef struct Gpu_Vk {
 	Allocator* allocator;
 	VkInstance instance;
+	VkPhysicalDevice physical_device;
 	VkDevice device;
 	VkSurfaceKHR surface;
 
+	VkSwapchainKHR swapchain;
+	VkImage* swapchain_images;
+	VkImageView* swapchain_image_views;
+	u32 swapchain_image_count;
 	Gpu_Vk_Swapchain_Desc swapchain_desc;
 
 	VkQueue queue[Gpu_Vk_Queue_Count];
@@ -43,6 +52,7 @@ void gpu_vk_init_instance(const Gpu_Vk_Desc* desc) {
 	
 	const char* internal_required_extensions[] = {
 		VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+		VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
 	};
 	
 	const u32 combined_extension_count = sl_array_count(internal_required_extensions) + desc->required_extension_count;
@@ -175,6 +185,31 @@ bool gpu_vk_is_device_suitable(VkPhysicalDevice device, Allocator* scratch_alloc
 	if (!gpu_vk_queue_family_indices_is_complete(queue_indices)) {
 		return false;
 	}
+
+	u32 available_extension_count = 0;
+	vkEnumerateDeviceExtensionProperties(device, NULL, &available_extension_count, NULL);
+
+	VkExtensionProperties* available_extensions;
+	allocator_new(gpu_vk.allocator, available_extensions, available_extension_count);
+
+	for (u32 required_extension_idx = 0; required_extension_idx < sl_array_count(GPU_VK_DEVICE_EXTENSIONS); required_extension_idx++) {
+		const char* required_extension = GPU_VK_DEVICE_EXTENSIONS[required_extension_idx];
+
+		bool found_extension = false;
+		for (u32 available_extension_idx = 0; available_extension_idx < available_extension_count; available_extension_idx++) {
+			if (strcmp(required_extension, available_extensions[available_extension_idx].extensionName) == 0) {
+				found_extension = true;
+				break;
+			}
+		}
+
+		if (!found_extension) {
+			allocator_free(gpu_vk.allocator, available_extensions, available_extension_count);
+			return false;
+		}
+	}
+
+	allocator_free(gpu_vk.allocator, available_extensions, available_extension_count);
 	
 	return true;
 }
@@ -231,6 +266,7 @@ void gpu_vk_init_device(void) {
 	Allocator* allocator = gpu_vk.allocator;
 	
 	VkPhysicalDevice physical_device = gpu_vk_find_physical_device();
+	gpu_vk.physical_device = physical_device;
 
 #if GPU_VK_LOGGING
 {
@@ -243,15 +279,31 @@ void gpu_vk_init_device(void) {
 	Gpu_Vk_Queue_Family_Indices queue_indices = gpu_vk_get_physical_device_queue_families(physical_device, allocator);
 	
 	const f32 queue_priority = 1.0f;
-		
-	VkDeviceQueueCreateInfo queue_create_infos[Gpu_Vk_Queue_Count];
-	for (Gpu_Vk_Queue queue = 0; queue < Gpu_Vk_Queue_Count; queue++) {
-		queue_create_infos[queue] = (VkDeviceQueueCreateInfo) {
-			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			.queueFamilyIndex = queue_indices.index[queue],
-			.queueCount = 1,
-			.pQueuePriorities = &queue_priority,
-		};
+
+	u32 queue_family_count = 0;
+	vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, NULL);
+
+	u32 queue_create_info_count = 0;
+	VkDeviceQueueCreateInfo* queue_create_infos;
+	allocator_new(gpu_vk.allocator, queue_create_infos, queue_family_count);
+
+	// Deduplicate required queues
+	for (u32 queue_family_idx = 0; queue_family_idx < queue_family_count; queue_family_idx++) {
+		bool create_queue = false;
+		for (Gpu_Vk_Queue queue = 0; queue < Gpu_Vk_Queue_Count; queue++) {
+			if (queue_indices.index[queue] == queue_family_idx) {
+				create_queue = true;
+				break;
+			}
+		}
+		if (create_queue) {
+			queue_create_infos[queue_create_info_count++] = (VkDeviceQueueCreateInfo) {
+				.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+				.queueFamilyIndex = queue_family_idx,
+				.queueCount = 1,
+				.pQueuePriorities = &queue_priority,
+			};
+		}
 	}
 	
 	VkPhysicalDeviceFeatures device_features = {0};
@@ -259,15 +311,93 @@ void gpu_vk_init_device(void) {
 	VkDeviceCreateInfo device_create_info = {0};
 	device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 	device_create_info.pQueueCreateInfos = queue_create_infos;
-	device_create_info.queueCreateInfoCount = Gpu_Vk_Queue_Count;
+	device_create_info.queueCreateInfoCount = queue_create_info_count;
 	device_create_info.pEnabledFeatures = &device_features;
+	device_create_info.ppEnabledExtensionNames = GPU_VK_DEVICE_EXTENSIONS;
+	device_create_info.enabledExtensionCount = sl_array_count(GPU_VK_DEVICE_EXTENSIONS);
 	
 	VkResult create_device_result = vkCreateDevice(physical_device, &device_create_info, NULL, &gpu_vk.device);
 	sl_assert(create_device_result == VK_SUCCESS, "Failed to create logical device.");
 
+	allocator_free(gpu_vk.allocator, queue_create_infos, queue_family_count);
+
 	for (Gpu_Vk_Queue queue = 0; queue < Gpu_Vk_Queue_Count; queue++) {
 		vkGetDeviceQueue(gpu_vk.device, queue_indices.index[queue], 0, &gpu_vk.queue[queue]);
 	}
+}
+
+void gpu_vk_init_swapchain() {
+	VkSurfaceCapabilitiesKHR capabilities;
+	VkResult get_capabilities_result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu_vk.physical_device, gpu_vk.surface, &capabilities);
+	sl_assert(get_capabilities_result == VK_SUCCESS, "Failed to get swapchain capabilities.");
+
+	VkSurfaceFormatKHR surface_format = {
+		.format = VK_FORMAT_B8G8R8A8_SRGB,
+		.colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+	};
+
+	u32 available_present_mode_count;
+	vkGetPhysicalDeviceSurfacePresentModesKHR(gpu_vk.physical_device, gpu_vk.surface, &available_present_mode_count, NULL);
+	
+	VkPresentModeKHR* available_present_modes;
+	allocator_new(gpu_vk.allocator, available_present_modes, available_present_mode_count);
+	vkGetPhysicalDeviceSurfacePresentModesKHR(gpu_vk.physical_device, gpu_vk.surface, &available_present_mode_count, available_present_modes);
+
+	VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR; // default
+	for (u32 available_present_mode_idx = 0; available_present_mode_idx < available_present_mode_count; available_present_mode_idx++) {
+		if (available_present_modes[available_present_mode_idx] == VK_PRESENT_MODE_MAILBOX_KHR) {
+			present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
+		}
+	}
+
+	allocator_free(gpu_vk.allocator, available_present_modes, available_present_mode_count);
+
+	VkExtent2D extent = gpu_vk.swapchain_desc.get_swapchain_extent_fn(gpu_vk.swapchain_desc.ctx);
+
+	const u32 min_image_count = sl_clamp(3, capabilities.minImageCount, capabilities.maxImageCount);
+
+	gpu_vk_log("Creating swapchain with extent (%u, %u), %u min images.", extent.width, extent.height, min_image_count);
+
+	VkSwapchainCreateInfoKHR create_info = {
+		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		.surface = gpu_vk.surface,
+		.imageFormat = surface_format.format,
+		.imageColorSpace = surface_format.colorSpace,
+		.imageExtent = extent,
+		.minImageCount = min_image_count,
+		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		.imageArrayLayers = 1,
+		.preTransform = capabilities.currentTransform,
+		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+		.clipped = VK_TRUE,
+		.oldSwapchain = VK_NULL_HANDLE,
+	};
+
+	Gpu_Vk_Queue_Family_Indices queue_indices = gpu_vk_get_physical_device_queue_families(gpu_vk.physical_device, gpu_vk.allocator);
+	if (queue_indices.index[Gpu_Vk_Queue_Graphics] == queue_indices.index[Gpu_Vk_Queue_Present]) {
+		create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	} else {
+		create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+    	create_info.queueFamilyIndexCount = 3;
+    	create_info.pQueueFamilyIndices = queue_indices.index;
+	}
+
+	VkResult create_result = vkCreateSwapchainKHR(gpu_vk.device, &create_info, NULL, &gpu_vk.swapchain);
+	sl_assert(create_result == VK_SUCCESS, "Failed to create swapchain.");
+
+	u32 swapchain_image_count;
+	vkGetSwapchainImagesKHR(gpu_vk.device, gpu_vk.swapchain, &swapchain_image_count, NULL);
+
+	// Resize backing array
+	if (gpu_vk.swapchain_image_count != swapchain_image_count) {
+		if (gpu_vk.swapchain_image_count > 0) {
+			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_images, gpu_vk.swapchain_image_count);
+		}
+		gpu_vk.swapchain_image_count = swapchain_image_count;
+		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_images, swapchain_image_count);
+	}
+
+	vkGetSwapchainImagesKHR(gpu_vk.device, gpu_vk.swapchain, &swapchain_image_count, gpu_vk.swapchain_images);
 }
 
 void gpu_vk_init(const Gpu_Vk_Desc* desc) {
@@ -277,6 +407,7 @@ void gpu_vk_init(const Gpu_Vk_Desc* desc) {
 	gpu_vk_init_instance(desc);
 	gpu_vk_init_surface();
 	gpu_vk_init_device();
+	gpu_vk_init_swapchain();
 }
 void gpu_vk_deinit() {
 	vkDestroyInstance(gpu_vk.instance, NULL);
