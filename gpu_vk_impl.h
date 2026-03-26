@@ -5,8 +5,6 @@
 
 #include "gpu_vk.h"
 
-#include <vulkan/vulkan.h>
-
 #if GPU_VK_LOGGING
 	#define gpu_vk_log(fmt, ...) \
 		printf("[Gpu_Vk]: " fmt "\n", ##__VA_ARGS__)
@@ -14,20 +12,31 @@
 	#define gpu_vk_log(fmt, ...) ((void)0)
 #endif
 
+typedef enum Gpu_Vk_Queue {
+	Gpu_Vk_Queue_Graphics,
+	Gpu_Vk_Queue_Compute,
+	Gpu_Vk_Queue_Present,
+	Gpu_Vk_Queue_Count
+} Gpu_Vk_Queue;
+
 typedef struct Gpu_Vk_Queue_Family_Indices {
-	u32 graphics_family;
-	u32 compute_family;
-	u32 present_family;
+	u32 index[Gpu_Vk_Queue_Count];
 } Gpu_Vk_Queue_Family_Indices;
 
 typedef struct Gpu_Vk {
+	Allocator* allocator;
 	VkInstance instance;
 	VkDevice device;
+	VkSurfaceKHR surface;
+
+	Gpu_Vk_Swapchain_Desc swapchain_desc;
+
+	VkQueue queue[Gpu_Vk_Queue_Count];
 } Gpu_Vk;
 
 static Gpu_Vk gpu_vk;
 
-VkInstance gpu_vk_create_instance(const Gpu_Vk_Desc* desc) {
+void gpu_vk_init_instance(const Gpu_Vk_Desc* desc) {
 	gpu_vk_log("Creating instance.");
 	
 	Allocator* allocator = desc->allocator;
@@ -99,13 +108,10 @@ VkInstance gpu_vk_create_instance(const Gpu_Vk_Desc* desc) {
 	}
 #endif
 
-	VkInstance instance;
-	VkResult res = vkCreateInstance(&create_info, NULL, &instance);
+	VkResult res = vkCreateInstance(&create_info, NULL, &gpu_vk.instance);
 	sl_assert(res == VK_SUCCESS, "Failed to create Vulkan instance.");
 	
 	allocator_free(allocator, combined_extensions, combined_extension_count);
-	
-	return instance;
 }
 
 Gpu_Vk_Queue_Family_Indices gpu_vk_get_physical_device_queue_families(VkPhysicalDevice device, Allocator* scratch_allocator) {
@@ -117,17 +123,26 @@ Gpu_Vk_Queue_Family_Indices gpu_vk_get_physical_device_queue_families(VkPhysical
 	vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, queue_families);
 	
 	Gpu_Vk_Queue_Family_Indices indices = {
-		.compute_family = u32_max,
-		.graphics_family = u32_max,
-		.present_family = u32_max,
+		.index = {
+			u32_max,
+			u32_max,
+			u32_max
+		},
 	};
 	for (u32 queue_idx = 0; queue_idx < queue_family_count; queue_idx++) {
 		VkQueueFamilyProperties queue_family = queue_families[queue_idx];
-		if (queue_family.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-			indices.graphics_family = queue_idx;
+
+		VkBool32 present_support = false;
+		vkGetPhysicalDeviceSurfaceSupportKHR(device, queue_idx, gpu_vk.surface, &present_support);
+
+		if (indices.index[Gpu_Vk_Queue_Graphics] == u32_max && queue_family.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+			indices.index[Gpu_Vk_Queue_Graphics] = queue_idx;
 		}
-		if (queue_family.queueFlags & VK_QUEUE_COMPUTE_BIT) {
-			indices.compute_family = queue_idx;
+		if (indices.index[Gpu_Vk_Queue_Compute] == u32_max && queue_family.queueFlags & VK_QUEUE_COMPUTE_BIT) {
+			indices.index[Gpu_Vk_Queue_Compute] = queue_idx;
+		}
+		if (indices.index[Gpu_Vk_Queue_Present] == u32_max && present_support) {
+			indices.index[Gpu_Vk_Queue_Present] = queue_idx;
 		}
 	}
 	
@@ -137,7 +152,12 @@ Gpu_Vk_Queue_Family_Indices gpu_vk_get_physical_device_queue_families(VkPhysical
 }
 
 bool gpu_vk_queue_family_indices_is_complete(Gpu_Vk_Queue_Family_Indices indices) {
-	return (indices.compute_family != u32_max) && (indices.graphics_family != u32_max);
+	for (Gpu_Vk_Queue queue = 0; queue < Gpu_Vk_Queue_Count; queue++) {
+		if (indices.index[queue] == u32_max) {
+			return false;
+		}
+	}
+	return true;
 }
 
 bool gpu_vk_is_device_suitable(VkPhysicalDevice device, Allocator* scratch_allocator) {
@@ -165,19 +185,19 @@ bool gpu_vk_is_device_discrete(VkPhysicalDevice device) {
 	return (device_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU);
 }
 
-VkPhysicalDevice gpu_vk_find_physical_device(const Gpu_Vk_Desc* desc, VkInstance instance) {
+VkPhysicalDevice gpu_vk_find_physical_device(void) {
 	gpu_vk_log("Finding physical device.");
 	
-	Allocator* allocator = desc->allocator;
+	Allocator* allocator = gpu_vk.allocator;
 
 	u32 device_count = 0;
-	vkEnumeratePhysicalDevices(instance, &device_count, NULL);
+	vkEnumeratePhysicalDevices(gpu_vk.instance, &device_count, NULL);
 	gpu_vk_log("%u available device(s).", device_count);
 	sl_assert(device_count > 0, "Failed to find GPU with Vulkan support.");
 	
 	VkPhysicalDevice* devices;
 	allocator_new(allocator, devices, device_count);
-	vkEnumeratePhysicalDevices(instance, &device_count, devices);
+	vkEnumeratePhysicalDevices(gpu_vk.instance, &device_count, devices);
 	
 	u32 suitable_device_count = 0;
 	VkPhysicalDevice* suitable_devices;
@@ -202,42 +222,61 @@ VkPhysicalDevice gpu_vk_find_physical_device(const Gpu_Vk_Desc* desc, VkInstance
 	return suitable_devices[0];
 }
 
-VkDevice gpu_vk_create_device(const Gpu_Vk_Desc* desc, VkInstance instance) {
-	gpu_vk_log("Creating logical device.");
+void gpu_vk_init_surface(void) {
+	gpu_vk_log("Creating surface.");
+	gpu_vk.surface = gpu_vk.swapchain_desc.get_surface_fn(gpu_vk.swapchain_desc.ctx, gpu_vk.instance);
+}
+
+void gpu_vk_init_device(void) {
+	Allocator* allocator = gpu_vk.allocator;
 	
-	Allocator* allocator = desc->allocator;
-	
-	VkPhysicalDevice physical_device = gpu_vk_find_physical_device(desc, instance);
+	VkPhysicalDevice physical_device = gpu_vk_find_physical_device();
+
+#if GPU_VK_LOGGING
+{
+	VkPhysicalDeviceProperties physical_device_properties;
+	vkGetPhysicalDeviceProperties(physical_device, &physical_device_properties);
+	gpu_vk_log("Creating logical device for \"%s\".", physical_device_properties.deviceName);
+}
+#endif
 	
 	Gpu_Vk_Queue_Family_Indices queue_indices = gpu_vk_get_physical_device_queue_families(physical_device, allocator);
 	
 	const f32 queue_priority = 1.0f;
 		
-	VkDeviceQueueCreateInfo queue_create_info = {0};
-	queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-	queue_create_info.queueFamilyIndex = queue_indices.graphics_family;
-	queue_create_info.queueCount = 1;
-	queue_create_info.pQueuePriorities = &queue_priority;
+	VkDeviceQueueCreateInfo queue_create_infos[Gpu_Vk_Queue_Count];
+	for (Gpu_Vk_Queue queue = 0; queue < Gpu_Vk_Queue_Count; queue++) {
+		queue_create_infos[queue] = (VkDeviceQueueCreateInfo) {
+			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+			.queueFamilyIndex = queue_indices.index[queue],
+			.queueCount = 1,
+			.pQueuePriorities = &queue_priority,
+		};
+	}
 	
 	VkPhysicalDeviceFeatures device_features = {0};
 	
 	VkDeviceCreateInfo device_create_info = {0};
 	device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-	device_create_info.pQueueCreateInfos = &queue_create_info;
-	device_create_info.queueCreateInfoCount = 1;
+	device_create_info.pQueueCreateInfos = queue_create_infos;
+	device_create_info.queueCreateInfoCount = Gpu_Vk_Queue_Count;
 	device_create_info.pEnabledFeatures = &device_features;
 	
-	VkDevice device;
-	VkResult create_device_result = vkCreateDevice(physical_device, &device_create_info, NULL, &device);
+	VkResult create_device_result = vkCreateDevice(physical_device, &device_create_info, NULL, &gpu_vk.device);
 	sl_assert(create_device_result == VK_SUCCESS, "Failed to create logical device.");
-	
-	return device;
+
+	for (Gpu_Vk_Queue queue = 0; queue < Gpu_Vk_Queue_Count; queue++) {
+		vkGetDeviceQueue(gpu_vk.device, queue_indices.index[queue], 0, &gpu_vk.queue[queue]);
+	}
 }
 
 void gpu_vk_init(const Gpu_Vk_Desc* desc) {
 	gpu_vk = (Gpu_Vk) {};
-	gpu_vk.instance = gpu_vk_create_instance(desc);
-	gpu_vk.device = gpu_vk_create_device(desc, gpu_vk.instance);
+	gpu_vk.allocator = desc->allocator;
+	gpu_vk.swapchain_desc = desc->swapchain_desc;
+	gpu_vk_init_instance(desc);
+	gpu_vk_init_surface();
+	gpu_vk_init_device();
 }
 void gpu_vk_deinit() {
 	vkDestroyInstance(gpu_vk.instance, NULL);
