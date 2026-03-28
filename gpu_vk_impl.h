@@ -388,16 +388,40 @@ void gpu_vk_init_swapchain() {
 	u32 swapchain_image_count;
 	vkGetSwapchainImagesKHR(gpu_vk.device, gpu_vk.swapchain, &swapchain_image_count, NULL);
 
-	// Resize backing array
+	// Resize image arrays
 	if (gpu_vk.swapchain_image_count != swapchain_image_count) {
 		if (gpu_vk.swapchain_image_count > 0) {
 			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_images, gpu_vk.swapchain_image_count);
+			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_image_views, gpu_vk.swapchain_image_count);
 		}
 		gpu_vk.swapchain_image_count = swapchain_image_count;
 		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_images, swapchain_image_count);
+		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_image_views, swapchain_image_count);
 	}
 
+	// Get images
 	vkGetSwapchainImagesKHR(gpu_vk.device, gpu_vk.swapchain, &swapchain_image_count, gpu_vk.swapchain_images);
+
+	// Create image views
+	for (u32 image_idx = 0; image_idx < swapchain_image_count; image_idx++) {
+		const VkImageViewCreateInfo view_create_info = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = gpu_vk.swapchain_images[image_idx],
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = surface_format.format,
+			.components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.subresourceRange.baseMipLevel = 0,
+			.subresourceRange.levelCount = 1,
+			.subresourceRange.baseArrayLayer = 0,
+			.subresourceRange.layerCount = 1,
+		};
+		const VkResult view_create_result = vkCreateImageView(gpu_vk.device, &view_create_info, NULL, &gpu_vk.swapchain_image_views[image_idx]);
+		sl_assert(view_create_result == VK_SUCCESS, "Failed to create image view for swapchain.");
+	}
 }
 
 void gpu_vk_init(const Gpu_Vk_Desc* desc) {
