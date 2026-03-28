@@ -2,6 +2,7 @@
 
 #define GPU_VK_LOGGING 1
 #define GPU_VK_VALIDATION 1
+#define GPU_VK_MAX_INFLIGHT_FRAMES 2
 
 #include "gpu_vk.h"
 
@@ -27,6 +28,14 @@ typedef struct Gpu_Vk_Queue_Family_Indices {
 	u32 index[Gpu_Vk_Queue_Count];
 } Gpu_Vk_Queue_Family_Indices;
 
+typedef struct Gpu_Vk_Frame_Recorder {
+	VkCommandPool command_pool;
+
+	VkSemaphore image_available_semaphore;
+	VkSemaphore gpu_finished_semaphore;
+	VkFence gpu_fence;
+} Gpu_Vk_Frame_Recorder;
+
 typedef struct Gpu_Vk {
 	Allocator* allocator;
 	VkInstance instance;
@@ -35,12 +44,21 @@ typedef struct Gpu_Vk {
 	VkSurfaceKHR surface;
 
 	VkSwapchainKHR swapchain;
+	VkExtent2D swapchain_extent;
+	VkFormat swapchain_format;
 	VkImage* swapchain_images;
 	VkImageView* swapchain_image_views;
+	VkFramebuffer* swapchain_framebuffers;
 	u32 swapchain_image_count;
 	Gpu_Vk_Swapchain_Desc swapchain_desc;
+	
+	VkRenderPass render_pass;
 
+	Gpu_Vk_Queue_Family_Indices queue_family_indices;
 	VkQueue queue[Gpu_Vk_Queue_Count];
+
+	u32 next_frame_recorder_idx;
+	Gpu_Vk_Frame_Recorder frame_recorders[GPU_VK_MAX_INFLIGHT_FRAMES];
 } Gpu_Vk;
 
 static Gpu_Vk gpu_vk;
@@ -277,6 +295,7 @@ void gpu_vk_init_device(void) {
 #endif
 	
 	Gpu_Vk_Queue_Family_Indices queue_indices = gpu_vk_get_physical_device_queue_families(physical_device, allocator);
+	gpu_vk.queue_family_indices = queue_indices;
 	
 	const f32 queue_priority = 1.0f;
 
@@ -331,10 +350,7 @@ void gpu_vk_init_swapchain() {
 	VkResult get_capabilities_result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu_vk.physical_device, gpu_vk.surface, &capabilities);
 	sl_assert(get_capabilities_result == VK_SUCCESS, "Failed to get swapchain capabilities.");
 
-	VkSurfaceFormatKHR surface_format = {
-		.format = VK_FORMAT_B8G8R8A8_SRGB,
-		.colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
-	};
+	VkColorSpaceKHR colorspace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 
 	u32 available_present_mode_count;
 	vkGetPhysicalDeviceSurfacePresentModesKHR(gpu_vk.physical_device, gpu_vk.surface, &available_present_mode_count, NULL);
@@ -353,6 +369,7 @@ void gpu_vk_init_swapchain() {
 	allocator_free(gpu_vk.allocator, available_present_modes, available_present_mode_count);
 
 	VkExtent2D extent = gpu_vk.swapchain_desc.get_swapchain_extent_fn(gpu_vk.swapchain_desc.ctx);
+	gpu_vk.swapchain_extent = extent;
 
 	const u32 min_image_count = sl_clamp(3, capabilities.minImageCount, capabilities.maxImageCount);
 
@@ -361,8 +378,8 @@ void gpu_vk_init_swapchain() {
 	VkSwapchainCreateInfoKHR create_info = {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.surface = gpu_vk.surface,
-		.imageFormat = surface_format.format,
-		.imageColorSpace = surface_format.colorSpace,
+		.imageFormat = gpu_vk.swapchain_format,
+		.imageColorSpace = colorspace,
 		.imageExtent = extent,
 		.minImageCount = min_image_count,
 		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
@@ -393,10 +410,12 @@ void gpu_vk_init_swapchain() {
 		if (gpu_vk.swapchain_image_count > 0) {
 			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_images, gpu_vk.swapchain_image_count);
 			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_image_views, gpu_vk.swapchain_image_count);
+			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_framebuffers, gpu_vk.swapchain_image_count);
 		}
 		gpu_vk.swapchain_image_count = swapchain_image_count;
 		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_images, swapchain_image_count);
 		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_image_views, swapchain_image_count);
+		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_framebuffers, swapchain_image_count);
 	}
 
 	// Get images
@@ -408,7 +427,7 @@ void gpu_vk_init_swapchain() {
 			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 			.image = gpu_vk.swapchain_images[image_idx],
 			.viewType = VK_IMAGE_VIEW_TYPE_2D,
-			.format = surface_format.format,
+			.format = gpu_vk.swapchain_format,
 			.components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
 			.components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
 			.components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -422,18 +441,222 @@ void gpu_vk_init_swapchain() {
 		const VkResult view_create_result = vkCreateImageView(gpu_vk.device, &view_create_info, NULL, &gpu_vk.swapchain_image_views[image_idx]);
 		sl_assert(view_create_result == VK_SUCCESS, "Failed to create image view for swapchain.");
 	}
+
+	// Create framebuffers
+	{
+		for (u32 image_idx = 0; image_idx < swapchain_image_count; image_idx++) {
+			VkImageView attachments[] = {
+				gpu_vk.swapchain_image_views[image_idx],
+			};
+
+			VkFramebufferCreateInfo framebuffer_info = {
+				.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+				.renderPass = gpu_vk.render_pass,
+				.attachmentCount = 1,
+				.pAttachments = attachments,
+				.width = extent.width,
+				.height = extent.height,
+				.layers = 1,
+			};
+
+			VkResult create_framebuffer_result = vkCreateFramebuffer(gpu_vk.device, &framebuffer_info, NULL, &gpu_vk.swapchain_framebuffers[image_idx]);
+			sl_assert(create_framebuffer_result == VK_SUCCESS, "Failed to create framebuffer.");
+		}
+	}
+}
+
+void gpu_vk_init_render_pass() {
+	gpu_vk_log("Creating render pass.");
+
+	VkAttachmentDescription color_att = {
+		.format = gpu_vk.swapchain_format,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+	};
+
+	VkAttachmentReference color_att_ref = {
+		.attachment = 0,
+		.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	};
+
+	VkSubpassDescription subpass = {
+		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+		.colorAttachmentCount = 1,
+		.pColorAttachments = &color_att_ref,
+	};
+
+	VkRenderPassCreateInfo render_pass_create_info = {
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+		.attachmentCount = 1,
+		.pAttachments = &color_att,
+		.subpassCount = 1,
+		.pSubpasses = &subpass,
+	};
+
+	VkResult create_render_pass_result = vkCreateRenderPass(gpu_vk.device, &render_pass_create_info, NULL, &gpu_vk.render_pass);
+	sl_assert(create_render_pass_result == VK_SUCCESS, "Failed to create render pass.");
+}
+
+void gpu_vk_init_frame_recorder(Gpu_Vk_Frame_Recorder* recorder) {
+	*recorder = (Gpu_Vk_Frame_Recorder) { 0 };
+
+	VkCommandPoolCreateInfo command_pool_create_info = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.queueFamilyIndex = gpu_vk.queue_family_indices.index[Gpu_Vk_Queue_Graphics],
+	};
+
+	VkResult create_command_pool_result = vkCreateCommandPool(gpu_vk.device, &command_pool_create_info, NULL, &recorder->command_pool);
+	sl_assert(create_command_pool_result == VK_SUCCESS, "Failed to create command pool.");
+
+	VkSemaphoreCreateInfo semaphore_create_info = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+	};
+	vkCreateSemaphore(gpu_vk.device, &semaphore_create_info, NULL, &recorder->image_available_semaphore);
+	vkCreateSemaphore(gpu_vk.device, &semaphore_create_info, NULL, &recorder->gpu_finished_semaphore);
+
+	VkFenceCreateInfo fence_create_info = {
+		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
+	};
+	vkCreateFence(gpu_vk.device, &fence_create_info, NULL, &recorder->gpu_fence);
+}
+
+void gpu_vk_frame_recorder_begin(Gpu_Vk_Frame_Recorder* recorder) {
+	vkWaitForFences(gpu_vk.device, 1, &recorder->gpu_fence, true, u64_max);
+	vkResetFences(gpu_vk.device, 1, &recorder->gpu_fence);
+
+	vkResetCommandPool(gpu_vk.device, recorder->command_pool, 0);
+
+	u32 image_index;
+	VkResult acquire_image_result = vkAcquireNextImageKHR(gpu_vk.device, gpu_vk.swapchain, u64_max, recorder->image_available_semaphore, VK_NULL_HANDLE, &image_index);
+	sl_assert(acquire_image_result == VK_SUCCESS, "Failed to acquire next swapchain image.");
+
+	VkCommandBufferAllocateInfo alloc_info = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = recorder->command_pool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1,
+	};
+
+	VkCommandBuffer command_buffer;
+	VkResult alloc_result = vkAllocateCommandBuffers(gpu_vk.device, &alloc_info, &command_buffer);
+	sl_assert(alloc_result == VK_SUCCESS, "Failed to allocate command buffer.");
+
+	VkCommandBufferBeginInfo begin_info = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+	};
+	VkResult begin_result = vkBeginCommandBuffer(command_buffer, &begin_info);
+	sl_assert(begin_result == VK_SUCCESS, "Failed to begin command buffer.");
+
+	VkClearValue clear_values[] = {
+		{
+			.color = {
+				.float32 = { 0.2f, 0.3f, 0.4f, 1.0f },
+			},
+		}
+	};
+
+	// Render pass
+	VkRenderPassBeginInfo render_pass_begin_info = {
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+		.renderPass = gpu_vk.render_pass,
+		.framebuffer = gpu_vk.swapchain_framebuffers[image_index],
+		.renderArea = {
+			.offset = { 0, 0 },
+			.extent = gpu_vk.swapchain_extent,
+		},
+		.clearValueCount = sl_array_count(clear_values),
+		.pClearValues = clear_values,
+	};
+
+	vkCmdBeginRenderPass(command_buffer, &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+	vkCmdEndRenderPass(command_buffer);
+
+	VkResult end_result = vkEndCommandBuffer(command_buffer);
+	sl_assert(begin_result == VK_SUCCESS, "Failed to end command buffer.");
+
+	// graphics queue submit
+    {
+		VkSemaphore wait_semaphores[] = {
+			recorder->image_available_semaphore,
+		};
+		VkPipelineStageFlags wait_dst_stage_mask[] = {
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		};
+		VkSemaphore signal_semaphores[] = {
+			recorder->gpu_finished_semaphore,
+		};
+
+		VkSubmitInfo submit_info = {
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+			.waitSemaphoreCount = sl_array_count(wait_semaphores),
+			.pWaitSemaphores = wait_semaphores,
+			.pWaitDstStageMask = wait_dst_stage_mask,
+			.signalSemaphoreCount = sl_array_count(signal_semaphores),
+			.pSignalSemaphores = signal_semaphores,
+			.pCommandBuffers = &command_buffer,
+			.commandBufferCount = 1,
+		};
+
+		VkResult submit_result = vkQueueSubmit(gpu_vk.queue[Gpu_Vk_Queue_Graphics], 1, &submit_info, recorder->gpu_fence);
+		sl_assert(submit_result == VK_SUCCESS, "Failed to submit command buffer.");
+    }
+
+	// Present
+	{
+        VkSemaphore wait_semaphores[] = {
+            recorder->gpu_finished_semaphore,
+        };
+		VkPresentInfoKHR present_info = {
+			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+			.waitSemaphoreCount = sl_array_count(wait_semaphores),
+			.pWaitSemaphores = wait_semaphores,
+			.pSwapchains = &gpu_vk.swapchain,
+			.swapchainCount = 1,
+			.pImageIndices = &image_index,
+		};
+		
+		VkResult present_result = vkQueuePresentKHR(gpu_vk.queue[Gpu_Vk_Queue_Present], &present_info);
+		sl_assert(present_result == VK_SUCCESS, "Failed to present command buffer.");
+    }
+}
+
+void gpu_vk_init_frame_recorders() {
+	gpu_vk_log("Creating frame recorders.");
+	for (u32 recorder_idx = 0; recorder_idx < GPU_VK_MAX_INFLIGHT_FRAMES; recorder_idx++) {
+		gpu_vk_init_frame_recorder(&gpu_vk.frame_recorders[recorder_idx]);
+	}
+}
+
+Gpu_Vk_Frame_Recorder* gpu_vk_acquire_frame_recorder() {
+	const u32 recorder_idx = gpu_vk.next_frame_recorder_idx;
+	gpu_vk.next_frame_recorder_idx = (recorder_idx + 1) % GPU_VK_MAX_INFLIGHT_FRAMES;
+	return &gpu_vk.frame_recorders[recorder_idx];
 }
 
 void gpu_vk_init(const Gpu_Vk_Desc* desc) {
 	gpu_vk = (Gpu_Vk) {};
 	gpu_vk.allocator = desc->allocator;
 	gpu_vk.swapchain_desc = desc->swapchain_desc;
+	gpu_vk.swapchain_format = VK_FORMAT_B8G8R8A8_SRGB;
 	gpu_vk_init_instance(desc);
 	gpu_vk_init_surface();
 	gpu_vk_init_device();
+	gpu_vk_init_render_pass();
+	gpu_vk_init_frame_recorders();
 	gpu_vk_init_swapchain();
 }
 void gpu_vk_deinit() {
 	vkDestroyInstance(gpu_vk.instance, NULL);
 	gpu_vk = (Gpu_Vk) {};
+}
+
+void gpu_vk_dummy_render() {
+	Gpu_Vk_Frame_Recorder* recorder = gpu_vk_acquire_frame_recorder();
+	gpu_vk_frame_recorder_begin(recorder);
 }
