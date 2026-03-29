@@ -28,6 +28,10 @@ typedef struct Gpu_Vk_Queue_Family_Indices {
 	u32 index[Gpu_Vk_Queue_Count];
 } Gpu_Vk_Queue_Family_Indices;
 
+typedef struct Gpu_Vk_Memory_Type_Indices {
+	u32 index[Gpu_Vk_Memory_Type_Count];
+} Gpu_Vk_Memory_Type_Indices;
+
 typedef struct Gpu_Vk_Frame_Recorder {
 	VkCommandPool command_pool;
 
@@ -35,6 +39,15 @@ typedef struct Gpu_Vk_Frame_Recorder {
 	VkSemaphore gpu_finished_semaphore;
 	VkFence gpu_fence;
 } Gpu_Vk_Frame_Recorder;
+
+typedef struct Gpu_Vk_Heap_Data {
+	u32 generation;
+	VkDeviceMemory device_memory;
+	Gpu_Vk_Memory_Type memory_type;
+	u64 size;
+	void* host_ptr;
+} Gpu_Vk_Heap_Data;
+sl_seq(Gpu_Vk_Heap_Data, Seq_Gpu_Vk_Heap_Data, seq_gpu_vk_heap_data);
 
 typedef struct Gpu_Vk {
 	Allocator* allocator;
@@ -54,8 +67,12 @@ typedef struct Gpu_Vk {
 	
 	VkRenderPass render_pass;
 
+	Gpu_Vk_Memory_Type_Indices memory_type_indices;
 	Gpu_Vk_Queue_Family_Indices queue_family_indices;
 	VkQueue queue[Gpu_Vk_Queue_Count];
+
+	Seq_Gpu_Vk_Heap_Data heap_data;
+	Seq_u32 heap_free_list;
 
 	u32 next_frame_recorder_idx;
 	Gpu_Vk_Frame_Recorder frame_recorders[GPU_VK_MAX_INFLIGHT_FRAMES];
@@ -188,6 +205,58 @@ bool gpu_vk_queue_family_indices_is_complete(Gpu_Vk_Queue_Family_Indices indices
 	return true;
 }
 
+Gpu_Vk_Memory_Type_Indices gpu_vk_get_physical_device_memory_type_indices(VkPhysicalDevice physical_device) {
+    VkPhysicalDeviceMemoryProperties properties;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &properties);
+
+	VkMemoryPropertyFlagBits required_flags[Gpu_Vk_Memory_Type_Count] = {
+		[Gpu_Vk_Memory_Type_Host_Visible] = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+		[Gpu_Vk_Memory_Type_Device_Local] = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+	};
+
+	VkMemoryPropertyFlagBits undesirable_flags[Gpu_Vk_Memory_Type_Count] = {
+		[Gpu_Vk_Memory_Type_Host_Visible] = 0,
+		[Gpu_Vk_Memory_Type_Device_Local] = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+	};
+
+	Gpu_Vk_Memory_Type_Indices indices = {
+		.index = {
+			u32_max,
+			u32_max,
+		},
+	};
+
+	for (Gpu_Vk_Memory_Type type = 0; type < Gpu_Vk_Memory_Type_Count; type++) {
+		// Find optimal memory type
+		for (u32 device_type = 0; device_type < properties.memoryTypeCount; device_type++) {
+			const VkMemoryPropertyFlagBits device_type_flags = properties.memoryTypes[device_type].propertyFlags;
+			const bool is_usable = ((device_type_flags & required_flags[type]) == required_flags[type]);
+			const bool is_optimal = ((device_type_flags & undesirable_flags[type]) == 0);
+			if (is_usable && is_optimal) {
+				indices.index[type] = device_type;
+				break;
+			}
+		}
+
+		// Found optimal type, continue to next type.
+		if (indices.index[type] != u32_max) {
+			continue;
+		}
+
+		// Find usable memory type
+		for (u32 device_type = 0; device_type < properties.memoryTypeCount; device_type++) {
+			const VkMemoryPropertyFlagBits device_type_flags = properties.memoryTypes[device_type].propertyFlags;
+			const bool is_usable = ((device_type_flags & required_flags[type]) == required_flags[type]);
+			if (is_usable) {
+				indices.index[type] = device_type;
+				break;
+			}
+		}
+	}
+
+	return indices;
+}
+
 bool gpu_vk_is_device_suitable(VkPhysicalDevice device, Allocator* scratch_allocator) {
 	VkPhysicalDeviceProperties device_properties;
 	vkGetPhysicalDeviceProperties(device, &device_properties);
@@ -296,6 +365,8 @@ void gpu_vk_init_device(void) {
 	
 	Gpu_Vk_Queue_Family_Indices queue_indices = gpu_vk_get_physical_device_queue_families(physical_device, allocator);
 	gpu_vk.queue_family_indices = queue_indices;
+
+	gpu_vk.memory_type_indices = gpu_vk_get_physical_device_memory_type_indices(physical_device);
 	
 	const f32 queue_priority = 1.0f;
 
@@ -345,7 +416,24 @@ void gpu_vk_init_device(void) {
 	}
 }
 
-void gpu_vk_init_swapchain() {
+void gpu_vk_ensure_valid_swapchain() {
+	VkExtent2D extent = gpu_vk.swapchain_desc.get_swapchain_extent_fn(gpu_vk.swapchain_desc.ctx);
+	
+	const bool must_rebuild = (gpu_vk.swapchain == VK_NULL_HANDLE) || (extent.width != gpu_vk.swapchain_extent.width) || (extent.height != gpu_vk.swapchain_extent.height);
+	if (!must_rebuild) {
+		return;
+	}
+
+	vkDeviceWaitIdle(gpu_vk.device);
+
+	// Free old image views/framebuffers
+	for (u32 image_idx = 0; image_idx < gpu_vk.swapchain_image_count; image_idx++) {
+		vkDestroyFramebuffer(gpu_vk.device, gpu_vk.swapchain_framebuffers[image_idx], NULL);
+		vkDestroyImageView(gpu_vk.device, gpu_vk.swapchain_image_views[image_idx], NULL);
+	}
+	
+	gpu_vk.swapchain_extent = extent;
+
 	VkSurfaceCapabilitiesKHR capabilities;
 	VkResult get_capabilities_result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu_vk.physical_device, gpu_vk.surface, &capabilities);
 	sl_assert(get_capabilities_result == VK_SUCCESS, "Failed to get swapchain capabilities.");
@@ -368,12 +456,9 @@ void gpu_vk_init_swapchain() {
 
 	allocator_free(gpu_vk.allocator, available_present_modes, available_present_mode_count);
 
-	VkExtent2D extent = gpu_vk.swapchain_desc.get_swapchain_extent_fn(gpu_vk.swapchain_desc.ctx);
-	gpu_vk.swapchain_extent = extent;
-
 	const u32 min_image_count = sl_clamp(3, capabilities.minImageCount, capabilities.maxImageCount);
 
-	gpu_vk_log("Creating swapchain with extent (%u, %u), %u min images.", extent.width, extent.height, min_image_count);
+	gpu_vk_log("Rebuilding swapchain with extent (%u, %u), %u min images.", extent.width, extent.height, min_image_count);
 
 	VkSwapchainCreateInfoKHR create_info = {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -387,7 +472,7 @@ void gpu_vk_init_swapchain() {
 		.preTransform = capabilities.currentTransform,
 		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
 		.clipped = VK_TRUE,
-		.oldSwapchain = VK_NULL_HANDLE,
+		.oldSwapchain = gpu_vk.swapchain,
 	};
 
 	Gpu_Vk_Queue_Family_Indices queue_indices = gpu_vk_get_physical_device_queue_families(gpu_vk.physical_device, gpu_vk.allocator);
@@ -527,10 +612,13 @@ void gpu_vk_init_frame_recorder(Gpu_Vk_Frame_Recorder* recorder) {
 }
 
 void gpu_vk_frame_recorder_begin(Gpu_Vk_Frame_Recorder* recorder) {
+	// Wait for command buffers associated with the recorder to be completed.
 	vkWaitForFences(gpu_vk.device, 1, &recorder->gpu_fence, true, u64_max);
 	vkResetFences(gpu_vk.device, 1, &recorder->gpu_fence);
 
 	vkResetCommandPool(gpu_vk.device, recorder->command_pool, 0);
+
+	gpu_vk_ensure_valid_swapchain();
 
 	u32 image_index;
 	VkResult acquire_image_result = vkAcquireNextImageKHR(gpu_vk.device, gpu_vk.swapchain, u64_max, recorder->image_available_semaphore, VK_NULL_HANDLE, &image_index);
@@ -622,7 +710,7 @@ void gpu_vk_frame_recorder_begin(Gpu_Vk_Frame_Recorder* recorder) {
 		};
 		
 		VkResult present_result = vkQueuePresentKHR(gpu_vk.queue[Gpu_Vk_Queue_Present], &present_info);
-		sl_assert(present_result == VK_SUCCESS, "Failed to present command buffer.");
+		sl_assert((present_result == VK_SUCCESS) || (present_result == VK_ERROR_OUT_OF_DATE_KHR) || (present_result == VK_SUBOPTIMAL_KHR), "Failed to present command buffer.");
     }
 }
 
@@ -639,6 +727,42 @@ Gpu_Vk_Frame_Recorder* gpu_vk_acquire_frame_recorder() {
 	return &gpu_vk.frame_recorders[recorder_idx];
 }
 
+void gpu_vk_init_resource_pools() {
+	gpu_vk.heap_data = seq_gpu_vk_heap_data_new(gpu_vk.allocator, 8);
+	gpu_vk.heap_free_list = seq_u32_new(gpu_vk.allocator, 8);
+}
+
+Gpu_Vk_Heap_Data* gpu_vk_heap_pool_resolve(Gpu_Vk_Heap handle) {
+	Gpu_Vk_Heap_Data* data = seq_gpu_vk_heap_data_get_ptr(&gpu_vk.heap_data, handle.index);
+	if (data->generation == handle.generation) {
+		return data;
+	} else {
+		return NULL;
+	}
+}
+
+Gpu_Vk_Heap gpu_vk_heap_pool_acquire() {
+	u32 index;
+	if (!seq_u32_pop(&gpu_vk.heap_free_list, &index)) {
+		index = seq_gpu_vk_heap_data_get_count(&gpu_vk.heap_data);
+		seq_gpu_vk_heap_data_push(&gpu_vk.heap_data, (Gpu_Vk_Heap_Data) {0});
+	}
+
+	Gpu_Vk_Heap_Data* data = seq_gpu_vk_heap_data_get_ptr(&gpu_vk.heap_data, index);
+	data->generation++;
+
+	return (Gpu_Vk_Heap) {
+		.index = index,
+		.generation = data->generation,
+	};
+}
+
+void gpu_vk_heap_pool_release(Gpu_Vk_Heap heap) {
+	Gpu_Vk_Heap_Data* data = gpu_vk_heap_pool_resolve(heap);
+	data->generation++;
+	seq_u32_push(&gpu_vk.heap_free_list, heap.index);
+}
+
 void gpu_vk_init(const Gpu_Vk_Desc* desc) {
 	gpu_vk = (Gpu_Vk) {};
 	gpu_vk.allocator = desc->allocator;
@@ -649,7 +773,8 @@ void gpu_vk_init(const Gpu_Vk_Desc* desc) {
 	gpu_vk_init_device();
 	gpu_vk_init_render_pass();
 	gpu_vk_init_frame_recorders();
-	gpu_vk_init_swapchain();
+	gpu_vk_init_resource_pools();
+	gpu_vk_ensure_valid_swapchain();
 }
 void gpu_vk_deinit() {
 	vkDestroyInstance(gpu_vk.instance, NULL);
@@ -659,4 +784,91 @@ void gpu_vk_deinit() {
 void gpu_vk_dummy_render() {
 	Gpu_Vk_Frame_Recorder* recorder = gpu_vk_acquire_frame_recorder();
 	gpu_vk_frame_recorder_begin(recorder);
+}
+
+// Heap
+Gpu_Vk_Heap gpu_vk_heap_new(u64 bytes, Gpu_Vk_Memory_Type memory_type) {
+	gpu_vk_log("Allocating heap of size %llu.", bytes);
+
+	Gpu_Vk_Heap heap_handle = gpu_vk_heap_pool_acquire();
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(heap_handle);
+
+	VkMemoryAllocateInfo allocate_info = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.allocationSize = bytes,
+		.memoryTypeIndex = gpu_vk.memory_type_indices.index[memory_type],
+	};
+
+	VkResult allocate_result = vkAllocateMemory(gpu_vk.device, &allocate_info, NULL, &heap_data->device_memory);
+	sl_assert(allocate_result == VK_SUCCESS, "Failed to allocate memory.");
+
+	heap_data->memory_type = memory_type;
+	heap_data->size = bytes;
+
+	switch (memory_type) {
+		case Gpu_Vk_Memory_Type_Host_Visible: {
+			VkResult map_result = vkMapMemory(gpu_vk.device, heap_data->device_memory, 0, VK_WHOLE_SIZE, 0, &heap_data->host_ptr);
+			sl_assert(map_result == VK_SUCCESS, "Failed to map slice.");
+		} break;
+
+		case Gpu_Vk_Memory_Type_Device_Local: {
+			heap_data->host_ptr = NULL;
+		} break;
+
+		case Gpu_Vk_Memory_Type_Count: {
+			sl_abort("Invalid memory type.");
+		} break;
+	}
+
+	return heap_handle;
+}
+void gpu_vk_heap_destroy(Gpu_Vk_Heap heap) {
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(heap);
+	
+	switch (heap_data->memory_type) {
+		case Gpu_Vk_Memory_Type_Host_Visible: {
+			vkUnmapMemory(gpu_vk.device, heap_data->device_memory);
+		} break;
+
+		case Gpu_Vk_Memory_Type_Device_Local: {
+			// Do nothing
+		} break;
+
+		case Gpu_Vk_Memory_Type_Count: {
+			sl_abort("Invalid memory type.");
+		} break;
+	}
+
+	vkFreeMemory(gpu_vk.device, heap_data->device_memory, NULL);
+	gpu_vk_heap_pool_resolve(heap);
+}
+u64 gpu_vk_heap_get_size(Gpu_Vk_Heap heap) {
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(heap);
+	return heap_data->size;
+}
+
+void* gpu_vk_get_host_ptr(Gpu_Vk_Slice slice) {
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(slice.heap);
+	sl_assert(heap_data->memory_type == Gpu_Vk_Memory_Type_Host_Visible, "Can only map host-visible memory.");
+	return heap_data->host_ptr + slice.offset;
+}
+
+void gpu_vk_slice_flush(Gpu_Vk_Slice slice) {
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(slice.heap);
+	sl_assert(heap_data->memory_type == Gpu_Vk_Memory_Type_Host_Visible, "Flush only makes sense for host-visible memory.");
+	
+	VkMappedMemoryRange memory_range = {
+		.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+		.offset = slice.offset,
+		.size = slice.size,
+		.memory = heap_data->device_memory
+	};
+
+	VkResult invalidate_result = vkInvalidateMappedMemoryRanges(gpu_vk.device, 1, &memory_range);
+	sl_assert(invalidate_result == VK_SUCCESS, "Failed to invalidate slice.");
+
+	// To simplify the API, we wait for upload to complete before returning.
+	// This is sub-optimal.
+	VkResult flush_result = vkFlushMappedMemoryRanges(gpu_vk.device, 1, &memory_range);
+	sl_assert(invalidate_result == VK_SUCCESS, "Failed to flush slice upload.");
 }
