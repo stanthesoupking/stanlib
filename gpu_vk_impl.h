@@ -3,6 +3,7 @@
 #define GPU_VK_LOGGING 1
 #define GPU_VK_VALIDATION 1
 #define GPU_VK_MAX_INFLIGHT_FRAMES 2
+#define GPU_VK_MAX_ATTACHMENTS 8
 
 #include "gpu_vk.h"
 
@@ -16,6 +17,78 @@
 const char* GPU_VK_DEVICE_EXTENSIONS[] = {
 	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
+
+typedef struct Gpu_Vk_Framebuffer_Cache_Key {
+	Gpu_Vk_Texture attachments[GPU_VK_MAX_ATTACHMENTS];
+	u8 attachment_count;
+	vec2_u16 size;
+} Gpu_Vk_Framebuffer_Cache_Key;
+
+typedef struct Gpu_Vk_Framebuffer_Cache_Value {
+	bool exists;
+	u32 rc;
+	VkFramebuffer framebuffer;
+} Gpu_Vk_Framebuffer_Cache_Value;
+
+typedef struct Gpu_Vk_Framebuffer_Cache_Entry {
+	Gpu_Vk_Framebuffer_Cache_Key key;
+	u32 rc;
+	VkFramebuffer framebuffer;
+} Gpu_Vk_Framebuffer_Cache_Entry;
+
+u64 gpu_vk_framebuffer_cache_key_hash(Gpu_Vk_Framebuffer_Cache_Key key) {
+	SL_Hasher hasher;
+	sl_hasher_init(&hasher);
+	sl_hasher_push(&hasher, immutable_buffer_for(key.attachment_count));
+	for (u8 attachment_idx = 0; attachment_idx < key.attachment_count; attachment_idx++) {
+		sl_hasher_push(&hasher, immutable_buffer_for(key.attachments[attachment_idx]));
+	}
+	sl_hasher_push(&hasher, immutable_buffer_for(key.size.x));
+	sl_hasher_push(&hasher, immutable_buffer_for(key.size.y));
+	return sl_hasher_finalise(&hasher);
+}
+bool gpu_vk_framebuffer_cache_key_equals(Gpu_Vk_Framebuffer_Cache_Key a, Gpu_Vk_Framebuffer_Cache_Key b) {
+	if (a.attachment_count != b.attachment_count) {
+		return false;
+	}
+	if ((a.size.x != b.size.x) || (a.size.y != b.size.y)) {
+		return false;
+	}
+	for (u8 attachment_idx = 0; attachment_idx < a.attachment_count; attachment_idx++) {
+		if ((a.attachments[attachment_idx].index != b.attachments[attachment_idx].index) || (a.attachments[attachment_idx].generation != b.attachments[attachment_idx].generation)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+sl_hashmap(Gpu_Vk_Framebuffer_Cache_Key, Gpu_Vk_Framebuffer_Cache_Value, Gpu_Vk_Framebuffer_Cache_Map, gpu_vk_framebuffer_cache_map, gpu_vk_framebuffer_cache_key_hash, gpu_vk_framebuffer_cache_key_equals);
+
+// typedef struct Gpu_Vk_Transient_Key {
+// 	// Gpu_Vk_Transient_Kind kind;
+// } Gpu_Vk_Transient_Key;
+
+// typedef struct Gpu_Vk_Transient {
+// 	u32 rc;
+
+// 	VkFramebuffer framebuffer;
+// } Gpu_Vk_Transient;
+
+// u64 gpu_vk_transient_key_hash(Gpu_Vk_Transient_Key key) {
+// 	return 0;
+// }
+// bool gpu_vk_transient_key_equals(Gpu_Vk_Transient_Key a, Gpu_Vk_Transient_Key b) {
+// 	return a.kind == b.kind;
+// }
+
+// sl_hashmap(Gpu_Vk_Transient_Key, Gpu_Vk_Transient*, Gpu_Vk_Transient_Map, gpu_vk_transient_map, gpu_vk_transient_key_hash, gpu_vk_transient_key_equals);
+// sl_seq(Gpu_Vk_Transient, Seq_Gpu_Vk_Transient, seq_gpu_vk_transient);
+// sl_seq(Gpu_Vk_Transient*, Seq_Gpu_Vk_Transient_Ptr, seq_gpu_vk_transient_ptr);
+
+// typedef struct Gpu_Vk_Cleanup_Set {
+// 	Seq_Gpu_Vk_Transient_Ptr resources;
+// 	VkFence fence;
+// } Gpu_Vk_Cleanup_Set;
 
 typedef enum Gpu_Vk_Queue {
 	Gpu_Vk_Queue_Graphics,
@@ -48,6 +121,14 @@ typedef struct Gpu_Vk_Heap_Data {
 	void* host_ptr;
 } Gpu_Vk_Heap_Data;
 sl_seq(Gpu_Vk_Heap_Data, Seq_Gpu_Vk_Heap_Data, seq_gpu_vk_heap_data);
+sl_pool(Gpu_Vk_Heap_Data, Gpu_Vk_Heap_Pool, gpu_vk_heap_pool);
+
+typedef struct Gpu_Vk_Texture_Data {
+	u32 generation;
+	VkImage image;
+	VkImageView image_view;
+} Gpu_Vk_Texture_Data;
+sl_pool(Gpu_Vk_Texture_Data, Gpu_Vk_Texture_Data_Pool, gpu_vk_texture_data_pool);
 
 typedef struct Gpu_Vk {
 	Allocator* allocator;
@@ -71,8 +152,7 @@ typedef struct Gpu_Vk {
 	Gpu_Vk_Queue_Family_Indices queue_family_indices;
 	VkQueue queue[Gpu_Vk_Queue_Count];
 
-	Seq_Gpu_Vk_Heap_Data heap_data;
-	Seq_u32 heap_free_list;
+	Gpu_Vk_Heap_Pool heap_pool;
 
 	u32 next_frame_recorder_idx;
 	Gpu_Vk_Frame_Recorder frame_recorders[GPU_VK_MAX_INFLIGHT_FRAMES];
@@ -278,6 +358,7 @@ bool gpu_vk_is_device_suitable(VkPhysicalDevice device, Allocator* scratch_alloc
 
 	VkExtensionProperties* available_extensions;
 	allocator_new(gpu_vk.allocator, available_extensions, available_extension_count);
+	vkEnumerateDeviceExtensionProperties(device, NULL, &available_extension_count, available_extensions);
 
 	for (u32 required_extension_idx = 0; required_extension_idx < sl_array_count(GPU_VK_DEVICE_EXTENSIONS); required_extension_idx++) {
 		const char* required_extension = GPU_VK_DEVICE_EXTENSIONS[required_extension_idx];
@@ -728,39 +809,7 @@ Gpu_Vk_Frame_Recorder* gpu_vk_acquire_frame_recorder() {
 }
 
 void gpu_vk_init_resource_pools() {
-	gpu_vk.heap_data = seq_gpu_vk_heap_data_new(gpu_vk.allocator, 8);
-	gpu_vk.heap_free_list = seq_u32_new(gpu_vk.allocator, 8);
-}
-
-Gpu_Vk_Heap_Data* gpu_vk_heap_pool_resolve(Gpu_Vk_Heap handle) {
-	Gpu_Vk_Heap_Data* data = seq_gpu_vk_heap_data_get_ptr(&gpu_vk.heap_data, handle.index);
-	if (data->generation == handle.generation) {
-		return data;
-	} else {
-		return NULL;
-	}
-}
-
-Gpu_Vk_Heap gpu_vk_heap_pool_acquire() {
-	u32 index;
-	if (!seq_u32_pop(&gpu_vk.heap_free_list, &index)) {
-		index = seq_gpu_vk_heap_data_get_count(&gpu_vk.heap_data);
-		seq_gpu_vk_heap_data_push(&gpu_vk.heap_data, (Gpu_Vk_Heap_Data) {0});
-	}
-
-	Gpu_Vk_Heap_Data* data = seq_gpu_vk_heap_data_get_ptr(&gpu_vk.heap_data, index);
-	data->generation++;
-
-	return (Gpu_Vk_Heap) {
-		.index = index,
-		.generation = data->generation,
-	};
-}
-
-void gpu_vk_heap_pool_release(Gpu_Vk_Heap heap) {
-	Gpu_Vk_Heap_Data* data = gpu_vk_heap_pool_resolve(heap);
-	data->generation++;
-	seq_u32_push(&gpu_vk.heap_free_list, heap.index);
+	gpu_vk.heap_pool = gpu_vk_heap_pool_new(gpu_vk.allocator, 8);
 }
 
 void gpu_vk_init(const Gpu_Vk_Desc* desc) {
@@ -788,10 +837,10 @@ void gpu_vk_dummy_render() {
 
 // Heap
 Gpu_Vk_Heap gpu_vk_heap_new(u64 bytes, Gpu_Vk_Memory_Type memory_type) {
-	gpu_vk_log("Allocating heap of size %llu.", bytes);
+	gpu_vk_log("Allocating heap of size %lu.", bytes);
 
-	Gpu_Vk_Heap heap_handle = gpu_vk_heap_pool_acquire();
-	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(heap_handle);
+	Gpu_Vk_Heap heap_handle = gpu_vk_heap_pool_acquire(&gpu_vk.heap_pool);
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, heap_handle);
 
 	VkMemoryAllocateInfo allocate_info = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
@@ -823,7 +872,7 @@ Gpu_Vk_Heap gpu_vk_heap_new(u64 bytes, Gpu_Vk_Memory_Type memory_type) {
 	return heap_handle;
 }
 void gpu_vk_heap_destroy(Gpu_Vk_Heap heap) {
-	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(heap);
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, heap);
 	
 	switch (heap_data->memory_type) {
 		case Gpu_Vk_Memory_Type_Host_Visible: {
@@ -840,21 +889,21 @@ void gpu_vk_heap_destroy(Gpu_Vk_Heap heap) {
 	}
 
 	vkFreeMemory(gpu_vk.device, heap_data->device_memory, NULL);
-	gpu_vk_heap_pool_resolve(heap);
+	gpu_vk_heap_pool_release(&gpu_vk.heap_pool, heap);
 }
 u64 gpu_vk_heap_get_size(Gpu_Vk_Heap heap) {
-	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(heap);
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, heap);
 	return heap_data->size;
 }
 
 void* gpu_vk_get_host_ptr(Gpu_Vk_Slice slice) {
-	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(slice.heap);
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, slice.heap);
 	sl_assert(heap_data->memory_type == Gpu_Vk_Memory_Type_Host_Visible, "Can only map host-visible memory.");
 	return heap_data->host_ptr + slice.offset;
 }
 
 void gpu_vk_slice_flush(Gpu_Vk_Slice slice) {
-	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(slice.heap);
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, slice.heap);
 	sl_assert(heap_data->memory_type == Gpu_Vk_Memory_Type_Host_Visible, "Flush only makes sense for host-visible memory.");
 	
 	VkMappedMemoryRange memory_range = {

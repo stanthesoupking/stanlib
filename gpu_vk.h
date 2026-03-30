@@ -2,8 +2,14 @@
 
 #include <vulkan/vulkan.h>
 
-#define GPU_VK_HANDLE(name) typedef struct name { u32 index; u32 generation; } name;
-GPU_VK_HANDLE(Gpu_Vk_Heap);
+typedef SL_Handle Gpu_Vk_Heap;
+typedef SL_Handle Gpu_Vk_Command_Buffer;
+typedef SL_Handle Gpu_Vk_Texture;
+
+typedef struct Gpu_Vk_Swapchain_Image {
+	u32 image_index;
+	Gpu_Vk_Texture texture;
+} Gpu_Vk_Swapchain_Image;
 
 typedef struct Gpu_Vk_Slice {
 	Gpu_Vk_Heap heap;
@@ -63,5 +69,13 @@ void gpu_vk_deinit();
 Gpu_Vk_Heap gpu_vk_heap_new(u64 bytes, Gpu_Vk_Memory_Type memory_type);
 void gpu_vk_heap_destroy(Gpu_Vk_Heap heap);
 u64 gpu_vk_heap_get_size(Gpu_Vk_Heap heap);
+
+// Swapchain
+Gpu_Vk_Swapchain_Image gpu_vk_get_next_swapchain_image(Gpu_Vk_Command_Buffer command_buffer);
+void gpu_vk_present_swapchain_image(Gpu_Vk_Command_Buffer command_buffer, Gpu_Vk_Swapchain_Image swapchain_texture);
+
+// Command Buffer
+Gpu_Vk_Command_Buffer gpu_vk_command_buffer_new();
+void gpu_vk_command_buffer_submit(Gpu_Vk_Command_Buffer command_buffer);
 
 void gpu_vk_dummy_render();

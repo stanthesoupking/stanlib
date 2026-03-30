@@ -2094,6 +2094,8 @@ typedef struct Immutable_Buffer {
 
 #define MUTABLE_BUFFER_NULL ((Mutable_Buffer) {0})
 #define IMMUTABLE_BUFFER_NULL ((Immutable_Buffer) {0})
+#define immutable_buffer_for(X) ((Immutable_Buffer) { .data = &(X), .size = sizeof((X)) })
+#define mutable_buffer_for(X) ((Mutable_Buffer) { .data = &(X), .size = sizeof((X)) })
 
 sl_inline bool mutable_buffer_is_null(Mutable_Buffer buf) {
 	return (buf.data == NULL);
@@ -2234,43 +2236,7 @@ static Allocator allocator_libc = {
 		s->element_count = 0;\
 	}
 
-typedef struct Seq_u8 {
-	Allocator* allocator; u8** chunks; u64 chunk_size_exp; u64 chunk_count; u64 element_count;
-} Seq_u8; static inline u64 seq_u8_chunk_storage_for_count(u64 chunk_count) {
-	if (chunk_count == 0) {
-		return 0;
-	} return 1ULL << sl_next_pow2_exp_u64(chunk_count);
-} static inline void seq_u8_ensure_capacity(Seq_u8* s, u64 capacity) {
-	const u64 new_chunk_count = (capacity + (1ull << s->chunk_size_exp)) >> s->chunk_size_exp; if (s->chunk_count < new_chunk_count) {
-		const u64 old_storage_count = seq_u8_chunk_storage_for_count(s->chunk_count); const u64 new_storage_count = seq_u8_chunk_storage_for_count(new_chunk_count); if (old_storage_count != new_storage_count) {
-			s->chunks = s->allocator->resize(s->allocator->ctx, s->chunks, sizeof(*s->chunks) * (u64)(old_storage_count), sizeof(*s->chunks) * (u64)(new_storage_count), __alignof(__typeof__(*s->chunks)));
-		} for (u64 chunk_idx = s->chunk_count; chunk_idx < new_chunk_count; chunk_idx++) {
-			s->chunks[chunk_idx] = s->allocator->new(s->allocator->ctx, sizeof(*s->chunks[chunk_idx]) * (u64)(1ull << s->chunk_size_exp), __alignof(__typeof__(*s->chunks[chunk_idx])));
-		} s->chunk_count = new_chunk_count;
-	}
-} static inline Seq_u8 seq_u8_new(Allocator* allocator, u64 initial_capacity) {
-	const u64 chunk_size_exp = sl_next_pow2_exp_u64(((4096 / sizeof(Seq_u8)) > (1) ? (4096 / sizeof(Seq_u8)) : (1))); Seq_u8 s = { .allocator = allocator, .chunks = ((void*)0), .chunk_size_exp = chunk_size_exp, .chunk_count = 0, .element_count = 0, }; seq_u8_ensure_capacity(&s, initial_capacity); return s;
-} static inline void seq_u8_destroy(Seq_u8* s) {
-	for (u32 chunk_idx = 0; chunk_idx < s->chunk_count; chunk_idx++) {
-		s->allocator->free(s->allocator->ctx, s->chunks[chunk_idx], sizeof(*s->chunks[chunk_idx]) * (u64)(1ull << s->chunk_size_exp), __alignof(__typeof__(*s->chunks[chunk_idx])));
-	} const u64 storage_count = seq_u8_chunk_storage_for_count(s->chunk_count); s->allocator->free(s->allocator->ctx, s->chunks, sizeof(*s->chunks) * (u64)(storage_count), __alignof(__typeof__(*s->chunks))); *s = (Seq_u8){ 0 };
-} static inline u8* seq_u8_get_ptr(Seq_u8* s, u64 idx) {
-	sl_assert(idx < s->element_count, "Index exceeds count of sequence."); return &s->chunks[idx >> s->chunk_size_exp][idx & ((1ull << s->chunk_size_exp) - 1)];
-} static inline u8 seq_u8_get(Seq_u8* s, u64 idx) {
-	return *seq_u8_get_ptr(s, idx);
-} static inline void seq_u8_push(Seq_u8* s, u8 e) {
-	seq_u8_ensure_capacity(s, s->element_count + 1); const u64 idx = s->element_count++; *seq_u8_get_ptr(s, idx) = e;
-} static inline _Bool seq_u8_pop(Seq_u8* s, u8* out_e) {
-	if (s->element_count == 0) {
-		return 0;
-	} *out_e = *seq_u8_get_ptr(s, --s->element_count); return 1;
-} static inline u64 seq_u8_get_count(Seq_u8* s) {
-	return s->element_count;
-} static inline void seq_u8_remove(Seq_u8* s, u64 idx) {
-	sl_assert(idx < s->element_count, "Index exceeds count of sequence."); for (u64 i = idx; i < s->element_count - 1; i++) {
-		*seq_u8_get_ptr(s, i) = *seq_u8_get_ptr(s, i + 1);
-	} --s->element_count;
-};
+sl_seq(u8, Seq_u8, seq_u8);
 sl_seq(u16, Seq_u16, seq_u16);
 sl_seq(u32, Seq_u32, seq_u32);
 sl_seq(u64, Seq_u64, seq_u64);
@@ -2316,6 +2282,188 @@ sl_seq(vec4_f64, Seq_Vec4_f64, seq_vec4_f64);
 
 sl_seq(mat4x4_f32, Seq_Mat4x4_f32, seq_mat4x4_f32);
 sl_seq(mat4x4_f64, Seq_Mat4x4_f64, seq_mat4x4_f64);
+
+#define sl_hashmap(key_type, value_type, type, function_prefix, hash_func, equals_func) \
+    typedef struct { \
+        key_type* keys; \
+        value_type* values; \
+        u64* hashes; \
+        u64 capacity; \
+        u64 count; \
+        Allocator* allocator; \
+    } type; \
+    \
+    sl_inline type sl_concat(function_prefix, _new)(Allocator* allocator, u64 initial_capacity) { \
+        type m = {0}; \
+        m.allocator = allocator; \
+        m.capacity = 1ULL << sl_next_pow2_exp_u64(initial_capacity); \
+        m.count = 0; \
+        allocator_new(allocator, m.keys, m.capacity); \
+        allocator_new(allocator, m.values, m.capacity); \
+        allocator_new(allocator, m.hashes, m.capacity); \
+        for (u64 i = 0; i < m.capacity; i++) m.hashes[i] = 0; \
+        return m; \
+    } \
+    \
+    sl_inline void sl_concat(function_prefix, _destroy)(type* m) { \
+        allocator_free(m->allocator, m->keys, m->capacity); \
+        allocator_free(m->allocator, m->values, m->capacity); \
+        allocator_free(m->allocator, m->hashes, m->capacity); \
+        *m = (type){0}; \
+    } \
+    \
+    sl_inline void sl_concat(function_prefix, _resize)(type* m, u64 new_capacity) { \
+        key_type* new_keys; allocator_new(m->allocator, new_keys, new_capacity); \
+        value_type* new_values; allocator_new(m->allocator, new_values, new_capacity); \
+        u64* new_hashes; allocator_new(m->allocator, new_hashes, new_capacity); \
+        for (u64 i = 0; i < new_capacity; i++) new_hashes[i] = 0; \
+        for (u64 i = 0; i < m->capacity; i++) { \
+            if (m->hashes[i] != 0) { \
+                u64 h = m->hashes[i]; \
+                u64 idx = h & (new_capacity - 1); \
+                while (new_hashes[idx] != 0) idx = (idx + 1) & (new_capacity - 1); \
+                new_keys[idx] = m->keys[i]; \
+                new_values[idx] = m->values[i]; \
+                new_hashes[idx] = h; \
+            } \
+        } \
+        allocator_free(m->allocator, m->keys, m->capacity); \
+        allocator_free(m->allocator, m->values, m->capacity); \
+        allocator_free(m->allocator, m->hashes, m->capacity); \
+        m->keys = new_keys; m->values = new_values; m->hashes = new_hashes; m->capacity = new_capacity; \
+    } \
+    \
+    sl_inline void sl_concat(function_prefix, _insert)(type* m, key_type key, value_type value) { \
+        if (m->count * 2 >= m->capacity) sl_concat(function_prefix, _resize)(m, m->capacity * 2); \
+        u64 h = hash_func(key); \
+        u64 idx = h & (m->capacity - 1); \
+        while (m->hashes[idx] != 0 && !equals_func(m->keys[idx], key)) idx = (idx + 1) & (m->capacity - 1); \
+        if (m->hashes[idx] == 0) m->count++; \
+        m->keys[idx] = key; \
+        m->values[idx] = value; \
+        m->hashes[idx] = h; \
+    } \
+    \
+    sl_inline bool sl_concat(function_prefix, _get)(type* m, key_type key, value_type* out_value) { \
+        if (m->count == 0) return false; \
+        u64 h = hash_func(key); \
+        u64 idx = h & (m->capacity - 1); \
+        u64 start = idx; \
+        while (m->hashes[idx] != 0) { \
+            if (equals_func(m->keys[idx], key)) { *out_value = m->values[idx]; return true; } \
+            idx = (idx + 1) & (m->capacity - 1); \
+            if (idx == start) break; \
+        } \
+        return false; \
+    } \
+    \
+    sl_inline bool sl_concat(function_prefix, _remove)(type* m, key_type key) { \
+        if (m->count == 0) return false; \
+        u64 h = hash_func(key); \
+        u64 idx = h & (m->capacity - 1); \
+        u64 start = idx; \
+        while (m->hashes[idx] != 0) { \
+            if (equals_func(m->keys[idx], key)) { \
+                m->hashes[idx] = 0; m->count--; \
+                return true; \
+            } \
+            idx = (idx + 1) & (m->capacity - 1); \
+            if (idx == start) break; \
+        } \
+        return false; \
+    } \
+    \
+    sl_inline u64 sl_concat(function_prefix, _get_count)(type* m) { \
+        return m->count; \
+    }
+
+typedef struct SL_Handle {
+	u32 index;
+	u32 generation;
+} SL_Handle;
+#define SL_HANDLE_NULL ((SL_Handle) { .index = 0, .generation = 0 })
+
+#define sl_pool(element, type, function_prefix)\
+	sl_seq(element, sl_concat(type, _Backing_Seq), sl_concat(function_prefix, _backing_seq));\
+	typedef struct type {\
+		sl_concat(type, _Backing_Seq) backing;\
+		Seq_u32 free_list;\
+	} type;\
+	sl_inline type sl_concat(function_prefix, _new)(Allocator* allocator, u64 initial_capacity) {\
+		type result = {\
+			.backing = sl_concat(function_prefix, _backing_seq_new)(allocator, initial_capacity),\
+			.free_list = seq_u32_new(allocator, initial_capacity),\
+		};\
+		return result;\
+	}\
+	sl_inline void sl_concat(function_prefix, _destroy)(type* p) {\
+		sl_concat(function_prefix, _backing_seq_destroy)(&p->backing);\
+		seq_u32_destroy(&p->free_list);\
+		*p = (type) {};\
+	}\
+	sl_inline element* sl_concat(function_prefix, _resolve)(type* p, SL_Handle handle) {\
+		element* e = sl_concat(function_prefix, _backing_seq_get_ptr)(&p->backing, handle.index);\
+		if (e->generation == handle.generation) {\
+			return e;\
+		} else {\
+			return NULL;\
+		}\
+	}\
+	sl_inline SL_Handle sl_concat(function_prefix, _acquire)(type* p) {\
+		u32 index;\
+		if (!seq_u32_pop(&p->free_list, &index)) {\
+			index = sl_concat(function_prefix, _backing_seq_get_count)(&p->backing);\
+			sl_concat(function_prefix, _backing_seq_push)(&p->backing, (element) {0});\
+		}\
+		\
+		element* e = sl_concat(function_prefix, _backing_seq_get_ptr)(&p->backing, index);\
+		const u32 new_generation = ++e->generation;\
+		*e = (element) {\
+			.generation = new_generation,\
+		};\
+		return (SL_Handle) {\
+			.index = index,\
+			.generation = new_generation,\
+		};\
+	}\
+	sl_inline void sl_concat(function_prefix, _release)(type* p, SL_Handle handle) {\
+		element* e = sl_concat(function_prefix, _resolve)(p, handle);\
+		sl_assert(e != NULL, "Can't release a stale handle.");\
+		seq_u32_push(&p->free_list, handle.index);\
+		e->generation++;\
+	}\
+
+u64 sl_hash_bytes(Immutable_Buffer buffer) {
+	// FNV-1a
+	const u8* bytes = (const u8*)buffer.data;
+	u64 hash = 1469598103934665603ULL;
+
+	for (u64 i = 0; i < buffer.size; i++) {
+		hash ^= bytes[i];
+		hash *= 1099511628211ULL;
+	}
+
+	return hash;
+}
+
+typedef struct SL_Hasher {
+	u64 hash;
+} SL_Hasher;
+
+void sl_hasher_init(SL_Hasher* hasher) {
+	*hasher = (SL_Hasher) {
+		.hash = 1469598103934665603ULL,
+	};
+}
+void sl_hasher_push(SL_Hasher* hasher, Immutable_Buffer buffer) {
+	for (u64 i = 0; i < buffer.size; i++) {
+		hasher->hash ^= (u64)((u8*)buffer.data)[i];
+		hasher->hash *= 1099511628211ULL;
+	}
+}
+u64 sl_hasher_finalise(SL_Hasher* hasher) {
+	return hasher->hash;
+}
 
 #endif
 
