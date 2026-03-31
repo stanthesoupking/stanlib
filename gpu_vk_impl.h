@@ -18,25 +18,33 @@ const char* GPU_VK_DEVICE_EXTENSIONS[] = {
 	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
-typedef struct Gpu_Vk_Framebuffer_Cache_Key {
+typedef SL_Handle Gpu_Vk_Framebuffer;
+
+typedef struct Gpu_Vk_Framebuffer_Key {
 	Gpu_Vk_Texture attachments[GPU_VK_MAX_ATTACHMENTS];
 	u8 attachment_count;
 	vec2_u16 size;
-} Gpu_Vk_Framebuffer_Cache_Key;
+} Gpu_Vk_Framebuffer_Key;
 
-typedef struct Gpu_Vk_Framebuffer_Cache_Value {
-	bool exists;
+typedef struct Gpu_Vk_Framebuffer_Data {
+	u32 generation;
+
+	Gpu_Vk_Framebuffer_Key key;
 	u32 rc;
 	VkFramebuffer framebuffer;
-} Gpu_Vk_Framebuffer_Cache_Value;
 
-typedef struct Gpu_Vk_Framebuffer_Cache_Entry {
-	Gpu_Vk_Framebuffer_Cache_Key key;
-	u32 rc;
-	VkFramebuffer framebuffer;
-} Gpu_Vk_Framebuffer_Cache_Entry;
+	// todo
+	Gpu_Vk_Framebuffer older;
+	Gpu_Vk_Framebuffer newer;
+} Gpu_Vk_Framebuffer_Data;
 
-u64 gpu_vk_framebuffer_cache_key_hash(Gpu_Vk_Framebuffer_Cache_Key key) {
+typedef struct Gpu_Vk_Framebuffer_LRU {
+	Gpu_Vk_Framebuffer oldest;
+	Gpu_Vk_Framebuffer newest;
+} Gpu_Vk_Framebuffer_LRU;
+
+
+u64 gpu_vk_framebuffer_key_hash(Gpu_Vk_Framebuffer_Key key) {
 	SL_Hasher hasher;
 	sl_hasher_init(&hasher);
 	sl_hasher_push(&hasher, immutable_buffer_for(key.attachment_count));
@@ -47,7 +55,7 @@ u64 gpu_vk_framebuffer_cache_key_hash(Gpu_Vk_Framebuffer_Cache_Key key) {
 	sl_hasher_push(&hasher, immutable_buffer_for(key.size.y));
 	return sl_hasher_finalise(&hasher);
 }
-bool gpu_vk_framebuffer_cache_key_equals(Gpu_Vk_Framebuffer_Cache_Key a, Gpu_Vk_Framebuffer_Cache_Key b) {
+bool gpu_vk_framebuffer_key_equals(Gpu_Vk_Framebuffer_Key a, Gpu_Vk_Framebuffer_Key b) {
 	if (a.attachment_count != b.attachment_count) {
 		return false;
 	}
@@ -62,7 +70,8 @@ bool gpu_vk_framebuffer_cache_key_equals(Gpu_Vk_Framebuffer_Cache_Key a, Gpu_Vk_
 	return true;
 }
 
-sl_hashmap(Gpu_Vk_Framebuffer_Cache_Key, Gpu_Vk_Framebuffer_Cache_Value, Gpu_Vk_Framebuffer_Cache_Map, gpu_vk_framebuffer_cache_map, gpu_vk_framebuffer_cache_key_hash, gpu_vk_framebuffer_cache_key_equals);
+sl_pool(Gpu_Vk_Framebuffer_Data, Gpu_Vk_Framebuffer_Pool, gpu_vk_framebuffer_pool);
+sl_hashmap(Gpu_Vk_Framebuffer_Key, Gpu_Vk_Framebuffer, Gpu_Vk_Framebuffer_Map, gpu_vk_framebuffer_map, gpu_vk_framebuffer_key_hash, gpu_vk_framebuffer_key_equals);
 
 // typedef struct Gpu_Vk_Transient_Key {
 // 	// Gpu_Vk_Transient_Kind kind;
@@ -120,7 +129,6 @@ typedef struct Gpu_Vk_Heap_Data {
 	u64 size;
 	void* host_ptr;
 } Gpu_Vk_Heap_Data;
-sl_seq(Gpu_Vk_Heap_Data, Seq_Gpu_Vk_Heap_Data, seq_gpu_vk_heap_data);
 sl_pool(Gpu_Vk_Heap_Data, Gpu_Vk_Heap_Pool, gpu_vk_heap_pool);
 
 typedef struct Gpu_Vk_Texture_Data {
@@ -128,7 +136,7 @@ typedef struct Gpu_Vk_Texture_Data {
 	VkImage image;
 	VkImageView image_view;
 } Gpu_Vk_Texture_Data;
-sl_pool(Gpu_Vk_Texture_Data, Gpu_Vk_Texture_Data_Pool, gpu_vk_texture_data_pool);
+sl_pool(Gpu_Vk_Texture_Data, Gpu_Vk_Texture_Pool, gpu_vk_texture_pool);
 
 typedef struct Gpu_Vk {
 	Allocator* allocator;
@@ -141,8 +149,7 @@ typedef struct Gpu_Vk {
 	VkExtent2D swapchain_extent;
 	VkFormat swapchain_format;
 	VkImage* swapchain_images;
-	VkImageView* swapchain_image_views;
-	VkFramebuffer* swapchain_framebuffers;
+	Gpu_Vk_Texture* swapchain_textures;
 	u32 swapchain_image_count;
 	Gpu_Vk_Swapchain_Desc swapchain_desc;
 	
@@ -153,6 +160,11 @@ typedef struct Gpu_Vk {
 	VkQueue queue[Gpu_Vk_Queue_Count];
 
 	Gpu_Vk_Heap_Pool heap_pool;
+	Gpu_Vk_Texture_Pool texture_pool;
+
+	Gpu_Vk_Framebuffer_Pool framebuffer_pool;
+	Gpu_Vk_Framebuffer_Map framebuffer_map;
+	Gpu_Vk_Framebuffer_LRU framebuffer_lru;
 
 	u32 next_frame_recorder_idx;
 	Gpu_Vk_Frame_Recorder frame_recorders[GPU_VK_MAX_INFLIGHT_FRAMES];
@@ -497,6 +509,82 @@ void gpu_vk_init_device(void) {
 	}
 }
 
+// Texture
+void gpu_vk_texture_destroy(Gpu_Vk_Texture texture) {
+	Gpu_Vk_Texture_Data* data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, texture);
+	sl_assert(data != NULL, "Texture is invalid.");
+
+	// 1. flush any pending command buffer cleanups
+	// ...
+
+	// 2. destroy all cached framebuffers that retain this texture (can assert that rc == 0).
+	// ...
+
+	vkDestroyImageView(gpu_vk.device, data->image_view, NULL);
+
+	if (data->image != VK_NULL_HANDLE) {
+		vkDestroyImage(gpu_vk.device, data->image, NULL);
+	}
+
+	gpu_vk_texture_pool_release(&gpu_vk.texture_pool, texture);
+}
+
+// Framebuffer
+void gpu_vk_retain_framebuffer(Gpu_Vk_Framebuffer framebuffer) {
+	Gpu_Vk_Framebuffer_Data* data = gpu_vk_framebuffer_pool_resolve(&gpu_vk.framebuffer_pool, framebuffer);
+	data->rc++;
+}
+void gpu_vk_release_framebuffer(Gpu_Vk_Framebuffer framebuffer) {
+	Gpu_Vk_Framebuffer_Data* data = gpu_vk_framebuffer_pool_resolve(&gpu_vk.framebuffer_pool, framebuffer);
+	sl_assert(data->rc > 0, "Over-released framebuffer.");
+	data->rc--;
+
+	// TODO: Put on evictable LRU
+}
+Gpu_Vk_Framebuffer gpu_vk_acquire_framebuffer(Gpu_Vk_Framebuffer_Key key) {
+	// Find existing entry
+	{
+		Gpu_Vk_Framebuffer result;
+		if (gpu_vk_framebuffer_map_get(&gpu_vk.framebuffer_map, key, &result)) {
+			gpu_vk_retain_framebuffer(result);
+			return result;
+		}
+	}
+
+	// Make new entry
+	{
+		gpu_vk_log("Creating new framebuffer.");
+		Gpu_Vk_Framebuffer result = gpu_vk_framebuffer_pool_acquire(&gpu_vk.framebuffer_pool);
+		Gpu_Vk_Framebuffer_Data* data = gpu_vk_framebuffer_pool_resolve(&gpu_vk.framebuffer_pool, result);
+		data->rc = 1;
+		data->key = key;
+
+		VkImageView attachments[GPU_VK_MAX_ATTACHMENTS];
+		for (u8 attachment_idx = 0; attachment_idx < key.attachment_count; attachment_idx++) {
+			Gpu_Vk_Texture_Data* texture_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, key.attachments[attachment_idx]);
+			attachments[attachment_idx] = texture_data->image_view;
+		}
+
+		VkFramebufferCreateInfo framebuffer_info = {
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.renderPass = gpu_vk.render_pass,
+			.attachmentCount = key.attachment_count,
+			.pAttachments = attachments,
+			.width = key.size.x,
+			.height = key.size.y,
+			.layers = 1,
+		};
+		
+		VkResult create_result = vkCreateFramebuffer(gpu_vk.device, &framebuffer_info, NULL, &data->framebuffer);
+		sl_assert(create_result == VK_SUCCESS, "Failed to create framebuffer.");
+
+		gpu_vk_framebuffer_map_insert(&gpu_vk.framebuffer_map, key, result);
+
+		return result;
+	}
+}
+
+// Swapchain
 void gpu_vk_ensure_valid_swapchain() {
 	VkExtent2D extent = gpu_vk.swapchain_desc.get_swapchain_extent_fn(gpu_vk.swapchain_desc.ctx);
 	
@@ -509,8 +597,7 @@ void gpu_vk_ensure_valid_swapchain() {
 
 	// Free old image views/framebuffers
 	for (u32 image_idx = 0; image_idx < gpu_vk.swapchain_image_count; image_idx++) {
-		vkDestroyFramebuffer(gpu_vk.device, gpu_vk.swapchain_framebuffers[image_idx], NULL);
-		vkDestroyImageView(gpu_vk.device, gpu_vk.swapchain_image_views[image_idx], NULL);
+		gpu_vk_texture_destroy(gpu_vk.swapchain_textures[image_idx]);
 	}
 	
 	gpu_vk.swapchain_extent = extent;
@@ -575,13 +662,11 @@ void gpu_vk_ensure_valid_swapchain() {
 	if (gpu_vk.swapchain_image_count != swapchain_image_count) {
 		if (gpu_vk.swapchain_image_count > 0) {
 			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_images, gpu_vk.swapchain_image_count);
-			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_image_views, gpu_vk.swapchain_image_count);
-			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_framebuffers, gpu_vk.swapchain_image_count);
+			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_textures, gpu_vk.swapchain_image_count);
 		}
 		gpu_vk.swapchain_image_count = swapchain_image_count;
 		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_images, swapchain_image_count);
-		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_image_views, swapchain_image_count);
-		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_framebuffers, swapchain_image_count);
+		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_textures, swapchain_image_count);
 	}
 
 	// Get images
@@ -604,30 +689,15 @@ void gpu_vk_ensure_valid_swapchain() {
 			.subresourceRange.baseArrayLayer = 0,
 			.subresourceRange.layerCount = 1,
 		};
-		const VkResult view_create_result = vkCreateImageView(gpu_vk.device, &view_create_info, NULL, &gpu_vk.swapchain_image_views[image_idx]);
+		
+		VkImageView image_view;
+		const VkResult view_create_result = vkCreateImageView(gpu_vk.device, &view_create_info, NULL, &image_view);
 		sl_assert(view_create_result == VK_SUCCESS, "Failed to create image view for swapchain.");
-	}
 
-	// Create framebuffers
-	{
-		for (u32 image_idx = 0; image_idx < swapchain_image_count; image_idx++) {
-			VkImageView attachments[] = {
-				gpu_vk.swapchain_image_views[image_idx],
-			};
-
-			VkFramebufferCreateInfo framebuffer_info = {
-				.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-				.renderPass = gpu_vk.render_pass,
-				.attachmentCount = 1,
-				.pAttachments = attachments,
-				.width = extent.width,
-				.height = extent.height,
-				.layers = 1,
-			};
-
-			VkResult create_framebuffer_result = vkCreateFramebuffer(gpu_vk.device, &framebuffer_info, NULL, &gpu_vk.swapchain_framebuffers[image_idx]);
-			sl_assert(create_framebuffer_result == VK_SUCCESS, "Failed to create framebuffer.");
-		}
+		Gpu_Vk_Texture texture = gpu_vk_texture_pool_acquire(&gpu_vk.texture_pool);
+		Gpu_Vk_Texture_Data* texture_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, texture);
+		texture_data->image_view = image_view;
+		gpu_vk.swapchain_textures[image_idx] = texture;
 	}
 }
 
@@ -730,11 +800,21 @@ void gpu_vk_frame_recorder_begin(Gpu_Vk_Frame_Recorder* recorder) {
 		}
 	};
 
+	Gpu_Vk_Framebuffer_Key fb_key = {
+		.attachments = {
+			[0] = gpu_vk.swapchain_textures[image_index],
+		},
+		.attachment_count = 1,
+		.size = { gpu_vk.swapchain_extent.width, gpu_vk.swapchain_extent.height },
+	};
+	Gpu_Vk_Framebuffer fb = gpu_vk_acquire_framebuffer(fb_key);
+	Gpu_Vk_Framebuffer_Data* fb_data = gpu_vk_framebuffer_pool_resolve(&gpu_vk.framebuffer_pool, fb);
+
 	// Render pass
 	VkRenderPassBeginInfo render_pass_begin_info = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 		.renderPass = gpu_vk.render_pass,
-		.framebuffer = gpu_vk.swapchain_framebuffers[image_index],
+		.framebuffer = fb_data->framebuffer,
 		.renderArea = {
 			.offset = { 0, 0 },
 			.extent = gpu_vk.swapchain_extent,
@@ -810,6 +890,14 @@ Gpu_Vk_Frame_Recorder* gpu_vk_acquire_frame_recorder() {
 
 void gpu_vk_init_resource_pools() {
 	gpu_vk.heap_pool = gpu_vk_heap_pool_new(gpu_vk.allocator, 8);
+	gpu_vk.texture_pool = gpu_vk_texture_pool_new(gpu_vk.allocator, 8);
+
+	gpu_vk.framebuffer_pool = gpu_vk_framebuffer_pool_new(gpu_vk.allocator, 8);
+	gpu_vk.framebuffer_map = gpu_vk_framebuffer_map_new(gpu_vk.allocator, 64);
+	gpu_vk.framebuffer_lru = (Gpu_Vk_Framebuffer_LRU) {
+		.oldest = SL_HANDLE_NULL,
+		.newest = SL_HANDLE_NULL,
+	};
 }
 
 void gpu_vk_init(const Gpu_Vk_Desc* desc) {

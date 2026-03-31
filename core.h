@@ -2219,7 +2219,8 @@ static Allocator allocator_libc = {
 		if (s->element_count == 0) {\
 			return false;\
 		}\
-		*out_e = *sl_concat(function_prefix, _get_ptr)(s, --s->element_count);\
+		*out_e = *sl_concat(function_prefix, _get_ptr)(s, s->element_count - 1);\
+		--s->element_count;\
 		return true;\
 	}\
 	sl_inline u64 sl_concat(function_prefix, _get_count)(type* s) {\
