@@ -3,7 +3,6 @@
 #define GPU_VK_LOGGING 1
 #define GPU_VK_VALIDATION 1
 #define GPU_VK_MAX_INFLIGHT_FRAMES 2
-#define GPU_VK_MAX_ATTACHMENTS 8
 
 #include "gpu_vk.h"
 
@@ -42,7 +41,6 @@ typedef struct Gpu_Vk_Framebuffer_LRU {
 	Gpu_Vk_Framebuffer oldest;
 	Gpu_Vk_Framebuffer newest;
 } Gpu_Vk_Framebuffer_LRU;
-
 
 u64 gpu_vk_framebuffer_key_hash(Gpu_Vk_Framebuffer_Key key) {
 	SL_Hasher hasher;
@@ -138,6 +136,27 @@ typedef struct Gpu_Vk_Texture_Data {
 } Gpu_Vk_Texture_Data;
 sl_pool(Gpu_Vk_Texture_Data, Gpu_Vk_Texture_Pool, gpu_vk_texture_pool);
 
+typedef enum Gpu_Vk_Command_Buffer_State {
+	Gpu_Vk_Command_Buffer_State_Idle,
+	Gpu_Vk_Command_Buffer_State_Recording,
+	Gpu_Vk_Command_Buffer_State_Enqueued
+} Gpu_Vk_Command_Buffer_State;
+
+typedef struct Gpu_Vk_Command_Buffer_Data {
+	Gpu_Vk_Command_Buffer_State state;
+	VkCommandPool command_pool[Gpu_Vk_Queue_Count];
+	VkFence fence;
+} Gpu_Vk_Command_Buffer_Data;
+
+typedef struct Gpu_Vk_Command_Buffer_Pool_Data {
+	u32 generation;
+
+	Gpu_Vk_Command_Buffer_Data* command_buffers;
+	u32 command_buffer_count;
+	u32 next_command_buffer;
+} Gpu_Vk_Command_Buffer_Pool_Data;
+sl_pool(Gpu_Vk_Command_Buffer_Pool_Data, Gpu_Vk_Command_Buffer_Pool_Pool, gpu_vk_command_buffer_pool_pool);
+
 typedef struct Gpu_Vk {
 	Allocator* allocator;
 	VkInstance instance;
@@ -161,6 +180,7 @@ typedef struct Gpu_Vk {
 
 	Gpu_Vk_Heap_Pool heap_pool;
 	Gpu_Vk_Texture_Pool texture_pool;
+	Gpu_Vk_Command_Buffer_Pool_Pool command_pool_pool;
 
 	Gpu_Vk_Framebuffer_Pool framebuffer_pool;
 	Gpu_Vk_Framebuffer_Map framebuffer_map;
@@ -641,6 +661,7 @@ void gpu_vk_ensure_valid_swapchain() {
 		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
 		.clipped = VK_TRUE,
 		.oldSwapchain = gpu_vk.swapchain,
+		.presentMode = present_mode,
 	};
 
 	Gpu_Vk_Queue_Family_Indices queue_indices = gpu_vk_get_physical_device_queue_families(gpu_vk.physical_device, gpu_vk.allocator);
@@ -800,6 +821,7 @@ void gpu_vk_frame_recorder_begin(Gpu_Vk_Frame_Recorder* recorder) {
 		}
 	};
 
+	// Acquire cached framebuffer
 	Gpu_Vk_Framebuffer_Key fb_key = {
 		.attachments = {
 			[0] = gpu_vk.swapchain_textures[image_index],
@@ -891,6 +913,7 @@ Gpu_Vk_Frame_Recorder* gpu_vk_acquire_frame_recorder() {
 void gpu_vk_init_resource_pools() {
 	gpu_vk.heap_pool = gpu_vk_heap_pool_new(gpu_vk.allocator, 8);
 	gpu_vk.texture_pool = gpu_vk_texture_pool_new(gpu_vk.allocator, 8);
+	gpu_vk.command_pool_pool = gpu_vk_command_buffer_pool_pool_new(gpu_vk.allocator, 8);
 
 	gpu_vk.framebuffer_pool = gpu_vk_framebuffer_pool_new(gpu_vk.allocator, 8);
 	gpu_vk.framebuffer_map = gpu_vk_framebuffer_map_new(gpu_vk.allocator, 64);
@@ -924,7 +947,7 @@ void gpu_vk_dummy_render() {
 }
 
 // Heap
-Gpu_Vk_Heap gpu_vk_heap_new(u64 bytes, Gpu_Vk_Memory_Type memory_type) {
+Gpu_Vk_Heap gpu_vk_new_heap(u64 bytes, Gpu_Vk_Memory_Type memory_type) {
 	gpu_vk_log("Allocating heap of size %lu.", bytes);
 
 	Gpu_Vk_Heap heap_handle = gpu_vk_heap_pool_acquire(&gpu_vk.heap_pool);
@@ -959,7 +982,7 @@ Gpu_Vk_Heap gpu_vk_heap_new(u64 bytes, Gpu_Vk_Memory_Type memory_type) {
 
 	return heap_handle;
 }
-void gpu_vk_heap_destroy(Gpu_Vk_Heap heap) {
+void gpu_vk_destroy_heap(Gpu_Vk_Heap heap) {
 	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, heap);
 	
 	switch (heap_data->memory_type) {
@@ -979,18 +1002,18 @@ void gpu_vk_heap_destroy(Gpu_Vk_Heap heap) {
 	vkFreeMemory(gpu_vk.device, heap_data->device_memory, NULL);
 	gpu_vk_heap_pool_release(&gpu_vk.heap_pool, heap);
 }
-u64 gpu_vk_heap_get_size(Gpu_Vk_Heap heap) {
+u64 gpu_vk_get_heap_size(Gpu_Vk_Heap heap) {
 	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, heap);
 	return heap_data->size;
 }
 
-void* gpu_vk_get_host_ptr(Gpu_Vk_Slice slice) {
+// Slice
+void* gpu_vk_get_slice_host_ptr(Gpu_Vk_Slice slice) {
 	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, slice.heap);
 	sl_assert(heap_data->memory_type == Gpu_Vk_Memory_Type_Host_Visible, "Can only map host-visible memory.");
 	return heap_data->host_ptr + slice.offset;
 }
-
-void gpu_vk_slice_flush(Gpu_Vk_Slice slice) {
+void gpu_vk_flush_slice(Gpu_Vk_Slice slice) {
 	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, slice.heap);
 	sl_assert(heap_data->memory_type == Gpu_Vk_Memory_Type_Host_Visible, "Flush only makes sense for host-visible memory.");
 	
@@ -1008,4 +1031,81 @@ void gpu_vk_slice_flush(Gpu_Vk_Slice slice) {
 	// This is sub-optimal.
 	VkResult flush_result = vkFlushMappedMemoryRanges(gpu_vk.device, 1, &memory_range);
 	sl_assert(invalidate_result == VK_SUCCESS, "Failed to flush slice upload.");
+}
+
+// Command Buffer
+void gpu_init_command_buffer(Gpu_Vk_Command_Buffer_Data* command_buffer) {
+	*command_buffer = (Gpu_Vk_Command_Buffer_Data) {0};
+
+	for (Gpu_Vk_Queue queue = 0; queue < Gpu_Vk_Queue_Count; queue++) {
+		VkCommandPoolCreateInfo command_pool_create_info = {
+			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+			.queueFamilyIndex = gpu_vk.queue_family_indices.index[queue],
+		};
+		VkResult command_pool_result = vkCreateCommandPool(gpu_vk.device, &command_pool_create_info, NULL, &command_buffer->command_pool[queue]);
+		sl_assert(command_pool_result == VK_SUCCESS, "Failed to create command pool.");
+	}
+
+	VkFenceCreateInfo fence_create_info = {
+		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+	};
+	VkResult fence_result = vkCreateFence(gpu_vk.device, &fence_create_info, NULL, &command_buffer->fence);
+	sl_assert(fence_result == VK_SUCCESS, "Failed to create fence.");
+}
+
+// Command Buffer Pool
+Gpu_Vk_Command_Buffer_Pool gpu_vk_new_command_buffer_pool(u32 size) {
+	gpu_vk_log("Creating command buffer pool of size %u.", size);
+	Gpu_Vk_Command_Buffer_Pool pool = gpu_vk_command_buffer_pool_pool_acquire(&gpu_vk.command_pool_pool);
+	Gpu_Vk_Command_Buffer_Pool_Data* pool_data = gpu_vk_command_buffer_pool_pool_resolve(&gpu_vk.command_pool_pool, pool);
+
+	allocator_new(gpu_vk.allocator, pool_data->command_buffers, size);
+	pool_data->command_buffer_count = size;
+
+	for (u32 i = 0; i < size; i++) {
+		gpu_init_command_buffer(&pool_data->command_buffers[i]);
+	}
+
+	return pool;
+}
+void gpu_vk_destroy_command_buffer_pool(Gpu_Vk_Command_Buffer_Pool pool) {
+	// todo
+}
+Gpu_Vk_Command_Buffer_Data* gpu_vk_resolve_command_buffer_data(Gpu_Vk_Command_Buffer cb) {
+	Gpu_Vk_Command_Buffer_Pool_Data* pool_data = gpu_vk_command_buffer_pool_pool_resolve(&gpu_vk.command_pool_pool, cb.pool);
+	if (pool_data == NULL) {
+		return NULL;
+	}
+	if (cb.index > pool_data->command_buffer_count) {
+		return NULL;
+	}
+	return &pool_data->command_buffers[cb.index];
+}
+
+bool gpu_vk_new_command_buffer(Gpu_Vk_Command_Buffer_Pool pool, Gpu_Vk_Command_Buffer* out_cb) {
+	Gpu_Vk_Command_Buffer_Pool_Data* pool_data = gpu_vk_command_buffer_pool_pool_resolve(&gpu_vk.command_pool_pool, pool);
+	sl_assert(pool_data != NULL, "Pool is invalid.");
+
+	Gpu_Vk_Command_Buffer cb_handle = {
+		.pool = pool,
+		.index = pool_data->next_command_buffer,
+	};
+
+	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb_handle);
+	if (cb_data->state == Gpu_Vk_Command_Buffer_State_Recording) {
+		// Command pool exceeded.
+		return false;
+	}
+
+	cb_data->state = Gpu_Vk_Command_Buffer_State_Recording;
+
+	pool_data->next_command_buffer = (pool_data->next_command_buffer + 1) % pool_data->command_buffer_count;
+	
+	*out_cb = cb_handle;
+	return true;
+}
+void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
+	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb);
+	sl_assert(cb_data->state == Gpu_Vk_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+	cb_data->state = Gpu_Vk_Command_Buffer_State_Enqueued;
 }
