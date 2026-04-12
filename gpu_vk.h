@@ -95,6 +95,9 @@ typedef struct Gpu_Vk_Desc {
 void gpu_vk_init(const Gpu_Vk_Desc* desc);
 void gpu_vk_deinit();
 
+// Texture
+vec2_u16 gpu_vk_get_texture_size(Gpu_Vk_Texture texture);
+
 // Heap
 Gpu_Vk_Heap gpu_vk_new_heap(u64 bytes, Gpu_Vk_Memory_Type memory_type);
 void gpu_vk_destroy_heap(Gpu_Vk_Heap heap);
