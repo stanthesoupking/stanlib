@@ -2122,11 +2122,11 @@ typedef struct Allocator {
 } Allocator;
 
 #define allocator_new(allocator, ptr, count)\
-	ptr = allocator->new(allocator->ctx, sizeof(*ptr) * (u64)(count), sl_align_of(*ptr))
+	ptr = (allocator)->new((allocator)->ctx, sizeof(*ptr) * (u64)(count), sl_align_of(*ptr))
 #define allocator_resize(allocator, ptr, old_count, new_count)\
-	ptr = allocator->resize(allocator->ctx, ptr, sizeof(*ptr) * (u64)(old_count), sizeof(*ptr) * (u64)(new_count), sl_align_of(*ptr))
+	ptr = (allocator)->resize((allocator)->ctx, ptr, sizeof(*ptr) * (u64)(old_count), sizeof(*ptr) * (u64)(new_count), sl_align_of(*ptr))
 #define allocator_free(allocator, ptr, count)\
-	allocator->free(allocator->ctx, ptr, sizeof(*ptr) * (u64)(count), sl_align_of(*ptr))
+	(allocator)->free((allocator)->ctx, ptr, sizeof(*ptr) * (u64)(count), sl_align_of(*ptr))
 
 static void* allocator_libc_new(void* ctx, u64 size, u64 alignment) {
 	return malloc(size);
@@ -2284,6 +2284,63 @@ sl_seq(vec4_f64, Seq_Vec4_f64, seq_vec4_f64);
 sl_seq(mat4x4_f32, Seq_Mat4x4_f32, seq_mat4x4_f32);
 sl_seq(mat4x4_f64, Seq_Mat4x4_f64, seq_mat4x4_f64);
 
+sl_seq(Mutable_Buffer, Seq_Mutable_Buffer, seq_mutable_buffer);
+
+typedef struct SL_Arena_Allocator {
+	Allocator* basis_allocator;
+	Allocator allocator;
+
+	u8* buffer;
+	u8* next_position;
+	u64 size;
+} SL_Arena_Allocator;
+
+static void* _sl_arena_allocator_new(void* ctx, u64 size, u64 alignment) {
+	SL_Arena_Allocator* arena = ctx;
+	
+	arena->next_position += (u64)arena->next_position % alignment;
+	sl_assert(arena->next_position < (arena->buffer + arena->size), "Arena capacity exceeded.");
+	void* result = arena->next_position;
+	arena->next_position += size;
+
+	return result;
+}
+static void* _sl_arena_allocator_resize(void* ctx, void* ptr, u64 old_size, u64 new_size, u64 alignment) {
+	return _sl_arena_allocator_new(ctx, new_size, alignment);
+}
+static void _sl_arena_allocator_free(void* ctx, void* ptr, u64 size, u64 alignment) {}
+sl_inline SL_Arena_Allocator* sl_arena_allocator_new(Allocator* allocator, u64 size) {
+	u8* buffer;
+	allocator_new(allocator, buffer, size);
+
+	SL_Arena_Allocator* result;
+	allocator_new(allocator, result, 1);
+	*result = (SL_Arena_Allocator) {
+		.basis_allocator = allocator,
+		.allocator = {
+			.ctx = result,
+			.new = _sl_arena_allocator_new,
+			.resize = _sl_arena_allocator_resize,
+			.free = _sl_arena_allocator_free,
+		},
+		.buffer = buffer,
+		.size = size,
+		.next_position = buffer,
+	};
+	return result;
+}
+sl_inline void sl_arena_allocator_destroy(SL_Arena_Allocator* allocator) {
+	allocator_free(allocator->basis_allocator, allocator->buffer, allocator->size);
+	allocator_free(allocator->basis_allocator, allocator, 1);
+	*allocator = (SL_Arena_Allocator) {0};
+}
+sl_inline void sl_arena_allocator_reset(SL_Arena_Allocator* allocator, u64 position) {
+	allocator->next_position = allocator->buffer + position;
+}
+sl_inline u64 sl_arena_allocator_get_position(SL_Arena_Allocator* allocator) {
+	return (u64)(allocator->next_position - allocator->buffer);
+}
+
 #define sl_hashmap(key_type, value_type, type, function_prefix, hash_func, equals_func) \
     typedef struct { \
         key_type* keys; \
@@ -2382,6 +2439,7 @@ typedef struct SL_Handle {
 	u32 index;
 	u32 generation;
 } SL_Handle;
+sl_seq(SL_Handle, SL_Handle_Seq, sl_handle_seq);
 #define SL_HANDLE_NULL ((SL_Handle) { .index = 0, .generation = 0 })
 
 #define sl_pool(element, type, function_prefix)\
