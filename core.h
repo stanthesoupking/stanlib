@@ -2122,11 +2122,11 @@ typedef struct Allocator {
 } Allocator;
 
 #define allocator_new(allocator, ptr, count)\
-	ptr = (allocator)->new((allocator)->ctx, sizeof(*ptr) * (u64)(count), sl_align_of(*ptr))
+	ptr = (allocator)->new((allocator)->ctx, sizeof(*(ptr)) * (u64)(count), sl_align_of(*(ptr)))
 #define allocator_resize(allocator, ptr, old_count, new_count)\
-	ptr = (allocator)->resize((allocator)->ctx, ptr, sizeof(*ptr) * (u64)(old_count), sizeof(*ptr) * (u64)(new_count), sl_align_of(*ptr))
+	ptr = (allocator)->resize((allocator)->ctx, (ptr), sizeof(*(ptr)) * (u64)(old_count), sizeof(*(ptr)) * (u64)(new_count), sl_align_of(*(ptr)))
 #define allocator_free(allocator, ptr, count)\
-	(allocator)->free((allocator)->ctx, ptr, sizeof(*ptr) * (u64)(count), sl_align_of(*ptr))
+	(allocator)->free((allocator)->ctx, (ptr), sizeof(*(ptr)) * (u64)(count), sl_align_of(*(ptr)))
 
 static void* allocator_libc_new(void* ctx, u64 size, u64 alignment) {
 	return malloc(size);
@@ -2295,9 +2295,9 @@ typedef struct SL_Arena_Allocator {
 	u64 size;
 } SL_Arena_Allocator;
 
-static void* _sl_arena_allocator_new(void* ctx, u64 size, u64 alignment) {
+static void* sl_arena_allocator_new_fn(void* ctx, u64 size, u64 alignment) {
 	SL_Arena_Allocator* arena = ctx;
-	
+
 	arena->next_position += (u64)arena->next_position % alignment;
 	sl_assert(arena->next_position < (arena->buffer + arena->size), "Arena capacity exceeded.");
 	void* result = arena->next_position;
@@ -2305,10 +2305,10 @@ static void* _sl_arena_allocator_new(void* ctx, u64 size, u64 alignment) {
 
 	return result;
 }
-static void* _sl_arena_allocator_resize(void* ctx, void* ptr, u64 old_size, u64 new_size, u64 alignment) {
-	return _sl_arena_allocator_new(ctx, new_size, alignment);
+static void* sl_arena_allocator_resize_fn(void* ctx, void* ptr, u64 old_size, u64 new_size, u64 alignment) {
+	return sl_arena_allocator_new_fn(ctx, new_size, alignment);
 }
-static void _sl_arena_allocator_free(void* ctx, void* ptr, u64 size, u64 alignment) {}
+static void sl_arena_allocator_free_fn(void* ctx, void* ptr, u64 size, u64 alignment) {}
 sl_inline SL_Arena_Allocator* sl_arena_allocator_new(Allocator* allocator, u64 size) {
 	u8* buffer;
 	allocator_new(allocator, buffer, size);
@@ -2319,9 +2319,9 @@ sl_inline SL_Arena_Allocator* sl_arena_allocator_new(Allocator* allocator, u64 s
 		.basis_allocator = allocator,
 		.allocator = {
 			.ctx = result,
-			.new = _sl_arena_allocator_new,
-			.resize = _sl_arena_allocator_resize,
-			.free = _sl_arena_allocator_free,
+			.new = sl_arena_allocator_new_fn,
+			.resize = sl_arena_allocator_resize_fn,
+			.free = sl_arena_allocator_free_fn,
 		},
 		.buffer = buffer,
 		.size = size,
@@ -2492,7 +2492,7 @@ sl_seq(SL_Handle, SL_Handle_Seq, sl_handle_seq);
 		e->generation++;\
 	}\
 
-u64 sl_hash_bytes(Immutable_Buffer buffer) {
+sl_inline u64 sl_hash_bytes(Immutable_Buffer buffer) {
 	// FNV-1a
 	const u8* bytes = (const u8*)buffer.data;
 	u64 hash = 1469598103934665603ULL;
@@ -2509,18 +2509,18 @@ typedef struct SL_Hasher {
 	u64 hash;
 } SL_Hasher;
 
-void sl_hasher_init(SL_Hasher* hasher) {
+sl_inline void sl_hasher_init(SL_Hasher* hasher) {
 	*hasher = (SL_Hasher) {
 		.hash = 1469598103934665603ULL,
 	};
 }
-void sl_hasher_push(SL_Hasher* hasher, Immutable_Buffer buffer) {
+sl_inline void sl_hasher_push(SL_Hasher* hasher, Immutable_Buffer buffer) {
 	for (u64 i = 0; i < buffer.size; i++) {
 		hasher->hash ^= (u64)((u8*)buffer.data)[i];
 		hasher->hash *= 1099511628211ULL;
 	}
 }
-u64 sl_hasher_finalise(SL_Hasher* hasher) {
+sl_inline u64 sl_hasher_finalise(SL_Hasher* hasher) {
 	return hasher->hash;
 }
 

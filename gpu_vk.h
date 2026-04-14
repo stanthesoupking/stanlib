@@ -1,12 +1,14 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
+#include "core.h"
 
 #define GPU_VK_MAX_ATTACHMENTS 8
 
 typedef SL_Handle Gpu_Vk_Heap;
 typedef SL_Handle Gpu_Vk_Command_Buffer_Pool;
 typedef SL_Handle Gpu_Vk_Texture;
+typedef SL_Handle Gpu_Vk_Compute_Pipeline;
 
 typedef struct Gpu_Vk_Swapchain_Desc {
 	vec2_u32 size;
@@ -74,6 +76,11 @@ typedef enum Gpu_Vk_Memory_Type {
 	Gpu_Vk_Memory_Type_Count
 } Gpu_Vk_Memory_Type;
 
+typedef struct Gpu_Vk_Code {
+	const u32* code;
+	u64 size;
+} Gpu_Vk_Code;
+
 typedef VkSurfaceKHR (*Gpu_Vk_Get_Surface_Fn)(void* ctx, VkInstance instance);
 typedef VkExtent2D (*Gpu_Vk_Get_Swapchain_Extent_Fn)(void* ctx);
 
@@ -121,14 +128,10 @@ void gpu_vk_end_render(Gpu_Vk_Command_Buffer cb);
 // void gpu_vk_draw(Gpu_Vk_Command_Buffer cb);
 
 // Compute
-void gpu_vk_begin_compute(Gpu_Vk_Command_Buffer cb);
-void gpu_vk_end_compute(Gpu_Vk_Command_Buffer cb);
+typedef struct Gpu_Vk_Compute_Pipeline_Desc {
+	Gpu_Vk_Code code;
+	const char* entry_point;
+} Gpu_Vk_Compute_Pipeline_Desc;
+Gpu_Vk_Compute_Pipeline gpu_vk_new_compute_pipeline(const Gpu_Vk_Compute_Pipeline_Desc* desc);
 
-void gpu_vk_dummy_render();
-
-// How would I do parallel gpu?
-// fork/join symantics?
-// data-oriented handles?
-// expose timeline semaphores? 
-//
-// parralel gpu basically requires multiple queues
+void gpu_vk_dispatch(Gpu_Vk_Command_Buffer cb);
