@@ -22,7 +22,6 @@ const char* GPU_VK_DEVICE_EXTENSIONS[] = {
 };
 
 typedef SL_Handle Gpu_Vk_Framebuffer;
-typedef SL_Handle Gpu_Vk_Render_Pass_Object;
 
 typedef struct Gpu_Vk_Framebuffer_Key_Attachment {
 	Gpu_Vk_Texture texture;
@@ -33,17 +32,31 @@ typedef struct Gpu_Vk_Framebuffer_Key_Attachment {
 typedef struct Gpu_Vk_Framebuffer_Key {
 	Gpu_Vk_Framebuffer_Key_Attachment attachments[GPU_VK_MAX_ATTACHMENTS];
 	u8 attachment_count;
-	vec2_u16 size;
 } Gpu_Vk_Framebuffer_Key;
+
+sl_inline Gpu_Vk_Framebuffer_Key gpu_vk_framebuffer_key_for_render_pass(const Gpu_Vk_Render_Pass* render_pass) {
+	Gpu_Vk_Framebuffer_Key result = {
+		.attachment_count = render_pass->attachment_count,
+	};
+	for (u8 attachment_idx = 0; attachment_idx < render_pass->attachment_count; attachment_idx++) {
+		const Gpu_Vk_Render_Attachment* render_attachment = &render_pass->attachments[attachment_idx];
+		result.attachments[attachment_idx] = (Gpu_Vk_Framebuffer_Key_Attachment) {
+			.texture = render_attachment->texture,
+			.load_op = render_attachment->load_op,
+			.store_op = render_attachment->store_op,
+		};
+	}
+	return result;
+}
 
 typedef struct Gpu_Vk_Framebuffer_Data {
 	u32 generation;
 
 	Gpu_Vk_Framebuffer_Key key;
 	u32 rc;
-	VkFramebuffer framebuffer;
 
-	Gpu_Vk_Render_Pass_Object render_pass_object;
+	VkFramebuffer framebuffer;
+	VkRenderPass render_pass;
 
 	// todo
 	Gpu_Vk_Framebuffer older;
@@ -55,22 +68,17 @@ typedef struct Gpu_Vk_Framebuffer_LRU {
 	Gpu_Vk_Framebuffer newest;
 } Gpu_Vk_Framebuffer_LRU;
 
-u64 gpu_vk_framebuffer_key_hash(Gpu_Vk_Framebuffer_Key key) {
+sl_inline u64 gpu_vk_framebuffer_key_hash(Gpu_Vk_Framebuffer_Key key) {
 	SL_Hasher hasher;
 	sl_hasher_init(&hasher);
 	sl_hasher_push(&hasher, immutable_buffer_for(key.attachment_count));
 	for (u8 attachment_idx = 0; attachment_idx < key.attachment_count; attachment_idx++) {
 		sl_hasher_push(&hasher, immutable_buffer_for(key.attachments[attachment_idx]));
 	}
-	sl_hasher_push(&hasher, immutable_buffer_for(key.size.x));
-	sl_hasher_push(&hasher, immutable_buffer_for(key.size.y));
 	return sl_hasher_finalise(&hasher);
 }
-bool gpu_vk_framebuffer_key_equals(Gpu_Vk_Framebuffer_Key a, Gpu_Vk_Framebuffer_Key b) {
+sl_inline bool gpu_vk_framebuffer_key_equals(Gpu_Vk_Framebuffer_Key a, Gpu_Vk_Framebuffer_Key b) {
 	if (a.attachment_count != b.attachment_count) {
-		return false;
-	}
-	if ((a.size.x != b.size.x) || (a.size.y != b.size.y)) {
 		return false;
 	}
 	for (u8 attachment_idx = 0; attachment_idx < a.attachment_count; attachment_idx++) {
@@ -83,50 +91,6 @@ bool gpu_vk_framebuffer_key_equals(Gpu_Vk_Framebuffer_Key a, Gpu_Vk_Framebuffer_
 
 sl_pool(Gpu_Vk_Framebuffer_Data, Gpu_Vk_Framebuffer_Pool, gpu_vk_framebuffer_pool);
 sl_hashmap(Gpu_Vk_Framebuffer_Key, Gpu_Vk_Framebuffer, Gpu_Vk_Framebuffer_Map, gpu_vk_framebuffer_map, gpu_vk_framebuffer_key_hash, gpu_vk_framebuffer_key_equals);
-
-typedef struct Gpu_Vk_Render_Pass_Object_Key_Attachment {
-	VkFormat format;
-	Gpu_Vk_Load_Op load_op;
-	Gpu_Vk_Store_Op store_op;
-} Gpu_Vk_Render_Pass_Object_Key_Attachment;
-
-typedef struct Gpu_Vk_Render_Pass_Object_Key {
- 	Gpu_Vk_Render_Pass_Object_Key_Attachment attachments[GPU_VK_MAX_ATTACHMENTS];
-	u8 attachment_count;
-} Gpu_Vk_Render_Pass_Object_Key;
-
-typedef struct Gpu_Vk_Render_Pass_Object_Data {
-	u32 generation;
-	u32 rc;
-	Gpu_Vk_Render_Pass_Object_Key key;
-	VkRenderPass render_pass;
-} Gpu_Vk_Render_Pass_Object_Data;
-
-u64 gpu_vk_render_pass_object_key_hash(Gpu_Vk_Render_Pass_Object_Key key) {
-	SL_Hasher hasher;
-	sl_hasher_init(&hasher);
-	sl_hasher_push(&hasher, immutable_buffer_for(key.attachment_count));
-	for (u8 attachment_idx = 0; attachment_idx < key.attachment_count; attachment_idx++) {
-		sl_hasher_push(&hasher, immutable_buffer_for(key.attachments[attachment_idx].format));
-		sl_hasher_push(&hasher, immutable_buffer_for(key.attachments[attachment_idx].load_op));
-		sl_hasher_push(&hasher, immutable_buffer_for(key.attachments[attachment_idx].store_op));
-	}
-	return sl_hasher_finalise(&hasher);
-}
-bool gpu_vk_render_pass_object_key_equals(Gpu_Vk_Render_Pass_Object_Key a, Gpu_Vk_Render_Pass_Object_Key b) {
-	if (a.attachment_count != b.attachment_count) {
-		return false;
-	}
-	for (u8 attachment_idx = 0; attachment_idx < a.attachment_count; attachment_idx++) {
-		if ((a.attachments[attachment_idx].format != b.attachments[attachment_idx].format) || (a.attachments[attachment_idx].load_op != b.attachments[attachment_idx].load_op) || (a.attachments[attachment_idx].store_op != b.attachments[attachment_idx].store_op)) {
-			return false;
-		}
-	}
-	return true;
-}
-
-sl_pool(Gpu_Vk_Render_Pass_Object_Data, Gpu_Vk_Render_Pass_Object_Pool, gpu_vk_render_pass_object_pool);
-sl_hashmap(Gpu_Vk_Render_Pass_Object_Key, Gpu_Vk_Render_Pass_Object, Gpu_Vk_Render_Pass_Object_Map, gpu_vk_render_pass_object_map, gpu_vk_render_pass_object_key_hash, gpu_vk_render_pass_object_key_equals);
 
 typedef enum Gpu_Vk_Queue {
 	// Graphics + Compute
@@ -289,9 +253,6 @@ typedef struct Gpu_Vk {
 	Gpu_Vk_Framebuffer_Pool framebuffer_pool;
 	Gpu_Vk_Framebuffer_Map framebuffer_map;
 	Gpu_Vk_Framebuffer_LRU framebuffer_lru;
-
-	Gpu_Vk_Render_Pass_Object_Pool render_pass_object_pool;
-	Gpu_Vk_Render_Pass_Object_Map render_pass_object_map;
 } Gpu_Vk;
 
 static Gpu_Vk gpu_vk;
@@ -643,8 +604,7 @@ void gpu_vk_init_device(void) {
 	}
 
 	gpu_vk.device_function_table = (Gpu_Vk_Device_Function_Table) {
-		.vkCmdPipelineBarrier2KHR = (PFN_vkCmdPipelineBarrier2KHR)
-    vkGetDeviceProcAddr(gpu_vk.device, "vkCmdPipelineBarrier2KHR"),
+		.vkCmdPipelineBarrier2KHR = (PFN_vkCmdPipelineBarrier2KHR)vkGetDeviceProcAddr(gpu_vk.device, "vkCmdPipelineBarrier2KHR"),
 	};
 }
 
@@ -719,18 +679,6 @@ void gpu_vk_destroy_texture(Gpu_Vk_Texture texture) {
 	gpu_vk_texture_pool_release(&gpu_vk.texture_pool, texture);
 }
 
-// Render Pass Object
-void gpu_vk_retain_render_pass_object(Gpu_Vk_Render_Pass_Object render_pass_object) {
-	Gpu_Vk_Render_Pass_Object_Data* data = gpu_vk_render_pass_object_pool_resolve(&gpu_vk.render_pass_object_pool, render_pass_object);
-	data->rc++;
-}
-void gpu_vk_release_render_pass_object(Gpu_Vk_Render_Pass_Object render_pass_object) {
-	Gpu_Vk_Render_Pass_Object_Data* data = gpu_vk_render_pass_object_pool_resolve(&gpu_vk.render_pass_object_pool, render_pass_object);
-	sl_assert(data->rc > 0, "Over-released render pass object.");
-	data->rc--;
-
-	// TODO: Put on evictable LRU
-}
 VkAttachmentLoadOp gpu_vk_load_op_to_vk(Gpu_Vk_Load_Op op) {
 	switch (op) {
 		case Gpu_Vk_Load_Op_Load: return VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -742,66 +690,6 @@ VkAttachmentStoreOp gpu_vk_store_op_to_vk(Gpu_Vk_Store_Op op) {
 	switch (op) {
 		case Gpu_Vk_Store_Op_Store: return VK_ATTACHMENT_STORE_OP_STORE;
 		case Gpu_Vk_Store_Op_Dont_Care: return VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	}
-}
-Gpu_Vk_Render_Pass_Object gpu_vk_acquire_render_pass_object(Gpu_Vk_Render_Pass_Object_Key key) {
-	// Find existing entry
-	{
-		Gpu_Vk_Render_Pass_Object result;
-		if (gpu_vk_render_pass_object_map_get(&gpu_vk.render_pass_object_map, key, &result)) {
-			gpu_vk_retain_render_pass_object(result);
-			return result;
-		}
-	}
-
-	// Make new entry
-	{
-		gpu_vk_log("Creating new render pass object.");
-		Gpu_Vk_Render_Pass_Object result = gpu_vk_render_pass_object_pool_acquire(&gpu_vk.render_pass_object_pool);
-		Gpu_Vk_Render_Pass_Object_Data* data = gpu_vk_render_pass_object_pool_resolve(&gpu_vk.render_pass_object_pool, result);
-		data->rc = 1;
-		data->key = key;
-
-		VkAttachmentDescription attachments[GPU_VK_MAX_ATTACHMENTS];
-		VkAttachmentReference attachment_refs[GPU_VK_MAX_ATTACHMENTS];
-		for (u8 attachment_idx = 0; attachment_idx < key.attachment_count; attachment_idx++) {
-			const Gpu_Vk_Render_Pass_Object_Key_Attachment* key_att = &key.attachments[attachment_idx];
-			attachments[attachment_idx] = (VkAttachmentDescription) {
-				.format = key_att->format,
-				.samples = VK_SAMPLE_COUNT_1_BIT,
-				.loadOp = gpu_vk_load_op_to_vk(key_att->load_op),
-				.storeOp = gpu_vk_store_op_to_vk(key_att->store_op),
-				.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-				.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-				.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-				.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-			};
-			attachment_refs[attachment_idx] = (VkAttachmentReference) {
-				.attachment = attachment_idx,
-				.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-			};
-		}
-
-		VkSubpassDescription subpass = {
-			.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-			.colorAttachmentCount = key.attachment_count,
-			.pColorAttachments = attachment_refs,
-		};
-
-		VkRenderPassCreateInfo render_pass_create_info = {
-			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-			.attachmentCount = key.attachment_count,
-			.pAttachments = attachments,
-			.subpassCount = 1,
-			.pSubpasses = &subpass,
-		};
-
-		VkResult create_render_pass_result = vkCreateRenderPass(gpu_vk.device, &render_pass_create_info, NULL, &data->render_pass);
-		sl_assert(create_render_pass_result == VK_SUCCESS, "Failed to create render pass.");
-
-		gpu_vk_render_pass_object_map_insert(&gpu_vk.render_pass_object_map, key, result);
-
-		return result;
 	}
 }
 
@@ -818,6 +706,8 @@ void gpu_vk_release_framebuffer(Gpu_Vk_Framebuffer framebuffer) {
 	// TODO: Put on evictable LRU
 }
 Gpu_Vk_Framebuffer gpu_vk_acquire_framebuffer(Gpu_Vk_Framebuffer_Key key) {
+	sl_assert(key.attachment_count > 0, "Framebuffer must have at least one attachment.");
+
 	// Find existing entry
 	{
 		Gpu_Vk_Framebuffer result;
@@ -835,34 +725,60 @@ Gpu_Vk_Framebuffer gpu_vk_acquire_framebuffer(Gpu_Vk_Framebuffer_Key key) {
 		data->rc = 1;
 		data->key = key;
 
-		// Acquire cached render pass
-		Gpu_Vk_Render_Pass_Object_Key render_pass_obj_key = {
-			.attachment_count = key.attachment_count,
-		};
-		for (u8 attachment_idx = 0; attachment_idx < key.attachment_count; attachment_idx++) {
-			const Gpu_Vk_Framebuffer_Key_Attachment* att = &key.attachments[attachment_idx];
-			render_pass_obj_key.attachments[attachment_idx] = (Gpu_Vk_Render_Pass_Object_Key_Attachment) {
-				.load_op = att->load_op,
-				.store_op = att->store_op,
-				.format = gpu_vk_get_texture_format(att->texture),
+		// Create render pass
+		{
+			VkAttachmentDescription attachments[GPU_VK_MAX_ATTACHMENTS];
+			VkAttachmentReference attachment_refs[GPU_VK_MAX_ATTACHMENTS];
+			for (u8 attachment_idx = 0; attachment_idx < key.attachment_count; attachment_idx++) {
+				const Gpu_Vk_Framebuffer_Key_Attachment* key_att = &key.attachments[attachment_idx];
+				attachments[attachment_idx] = (VkAttachmentDescription) {
+					.format = gpu_vk_get_texture_format(key_att->texture),
+					.samples = VK_SAMPLE_COUNT_1_BIT,
+					.loadOp = gpu_vk_load_op_to_vk(key_att->load_op),
+					.storeOp = gpu_vk_store_op_to_vk(key_att->store_op),
+					.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+					.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+					.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+					.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+				};
+				attachment_refs[attachment_idx] = (VkAttachmentReference) {
+					.attachment = attachment_idx,
+					.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+				};
+			}
+
+			VkSubpassDescription subpass = {
+				.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+				.colorAttachmentCount = key.attachment_count,
+				.pColorAttachments = attachment_refs,
 			};
+
+			VkRenderPassCreateInfo render_pass_create_info = {
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+				.attachmentCount = key.attachment_count,
+				.pAttachments = attachments,
+				.subpassCount = 1,
+				.pSubpasses = &subpass,
+			};
+
+			VkResult create_render_pass_result = vkCreateRenderPass(gpu_vk.device, &render_pass_create_info, NULL, &data->render_pass);
+			sl_assert(create_render_pass_result == VK_SUCCESS, "Failed to create render pass.");
 		}
-		Gpu_Vk_Render_Pass_Object render_pass_obj = gpu_vk_acquire_render_pass_object(render_pass_obj_key);
-		data->render_pass_object = render_pass_obj;
-		Gpu_Vk_Render_Pass_Object_Data* render_pass_obj_data = gpu_vk_render_pass_object_pool_resolve(&gpu_vk.render_pass_object_pool, render_pass_obj);
 
 		VkImageView attachments[GPU_VK_MAX_ATTACHMENTS];
 		for (u8 attachment_idx = 0; attachment_idx < key.attachment_count; attachment_idx++) {
 			attachments[attachment_idx] = gpu_vk_texture_get_image_view(key.attachments[attachment_idx].texture);
 		}
 
+		const vec2_u16 size = gpu_vk_get_texture_size(key.attachments[0].texture);
+
 		VkFramebufferCreateInfo framebuffer_info = {
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-			.renderPass = render_pass_obj_data->render_pass,
+			.renderPass = data->render_pass,
 			.attachmentCount = key.attachment_count,
 			.pAttachments = attachments,
-			.width = key.size.x,
-			.height = key.size.y,
+			.width = size.x,
+			.height = size.y,
 			.layers = 1,
 		};
 
@@ -1006,9 +922,6 @@ void gpu_vk_init_resource_pools() {
 		.oldest = SL_HANDLE_NULL,
 		.newest = SL_HANDLE_NULL,
 	};
-
-	gpu_vk.render_pass_object_pool = gpu_vk_render_pass_object_pool_new(gpu_vk.allocator, 0);
-	gpu_vk.render_pass_object_map = gpu_vk_render_pass_object_map_new(gpu_vk.allocator, 64);
 }
 
 void gpu_vk_init(const Gpu_Vk_Desc* desc) {
@@ -1293,7 +1206,6 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 				// Acquire cached framebuffer
 				Gpu_Vk_Framebuffer_Key fb_key = {
 					.attachment_count = begin_render->render_pass.attachment_count,
-					.size = gpu_vk_get_texture_size(begin_render->render_pass.attachments[0].texture),
 				};
 				for (u8 attachment_idx = 0; attachment_idx < begin_render->render_pass.attachment_count; attachment_idx++) {
 					fb_key.attachments[attachment_idx] = (Gpu_Vk_Framebuffer_Key_Attachment) {
@@ -1304,7 +1216,6 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 				}
 				Gpu_Vk_Framebuffer fb = gpu_vk_acquire_framebuffer(fb_key);
 				Gpu_Vk_Framebuffer_Data* fb_data = gpu_vk_framebuffer_pool_resolve(&gpu_vk.framebuffer_pool, fb);
-				Gpu_Vk_Render_Pass_Object_Data* render_pass_obj_data = gpu_vk_render_pass_object_pool_resolve(&gpu_vk.render_pass_object_pool, fb_data->render_pass_object);
 
 				// Render pass
 				VkClearValue clear_values[GPU_VK_MAX_ATTACHMENTS];
@@ -1319,13 +1230,16 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 						},
 					};
 				}
+
+				const vec2_u16 render_size = gpu_vk_get_texture_size(begin_render->render_pass.attachments[0].texture);
+
 				VkRenderPassBeginInfo render_pass_begin_info = {
 					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-					.renderPass = render_pass_obj_data->render_pass,
+					.renderPass = fb_data->render_pass,
 					.framebuffer = fb_data->framebuffer,
 					.renderArea = {
 						.offset = { 0, 0 },
-						.extent = { fb_key.size.x, fb_key.size.y },
+						.extent = { render_size.x, render_size.y },
 					},
 					.clearValueCount = sl_array_count(clear_values),
 					.pClearValues = clear_values,
