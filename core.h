@@ -2441,6 +2441,9 @@ typedef struct SL_Handle {
 } SL_Handle;
 sl_seq(SL_Handle, SL_Handle_Seq, sl_handle_seq);
 #define SL_HANDLE_NULL ((SL_Handle) { .index = 0, .generation = 0 })
+sl_inline bool sl_handle_is_null(SL_Handle handle) {
+	return (handle.index == 0) && (handle.generation == 0);
+}
 
 #define sl_pool(element, type, function_prefix)\
 	sl_seq(element, sl_concat(type, _Backing_Seq), sl_concat(function_prefix, _backing_seq));\
