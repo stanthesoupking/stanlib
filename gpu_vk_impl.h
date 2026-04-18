@@ -3,8 +3,7 @@
 #include "core.h"
 #include "vulkan/vulkan_core.h"
 #define GPU_VK_LOGGING 1
-#define GPU_VK_VALIDATION 0
-#define GPU_VK_MAX_INFLIGHT_FRAMES 2
+#define GPU_VK_VALIDATION 1
 
 #include "gpu_vk.h"
 #include <string.h>
@@ -281,7 +280,7 @@ void gpu_vk_init_instance(const Gpu_Vk_Desc* desc) {
 
 	const char* internal_required_extensions[] = {
 		VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
-		VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
+		//VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME, // this breaks render doc
 		VK_EXT_DEBUG_UTILS_EXTENSION_NAME, // renderdoc
 	};
 
@@ -947,7 +946,7 @@ void gpu_vk_ensure_valid_swapchain() {
 
 	allocator_free(gpu_vk.allocator, available_present_modes, available_present_mode_count);
 
-	const u32 min_image_count = sl_clamp(3, capabilities.minImageCount, capabilities.maxImageCount);
+	const u32 min_image_count = sl_clamp(3, capabilities.minImageCount, (capabilities.maxImageCount == 0) ? u32_max : capabilities.maxImageCount);
 
 	gpu_vk_log("Rebuilding swapchain with extent (%u, %u), %u min images.", extent.width, extent.height, min_image_count);
 
