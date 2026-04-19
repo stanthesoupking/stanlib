@@ -141,7 +141,7 @@ typedef struct Gpu_Vk_Texture_Data {
 			VkImage image;
 			VkImageView image_view;
 			Gpu_Vk_Texture_Layout layout;
-			vec2_u16 size;
+			vec3_u32 size;
 			VkFormat format;
 		} imm;
 
@@ -173,7 +173,9 @@ typedef enum Gpu_Vk_Command_Kind {
 	Gpu_Vk_Command_Kind_Fetch_Swapchain_Texture,
 	Gpu_Vk_Command_Kind_Begin_Render,
 	Gpu_Vk_Command_Kind_End_Render,
-	Gpu_Vk_Command_Kind_Dispatch
+	Gpu_Vk_Command_Kind_Dispatch,
+	Gpu_Vk_Command_Kind_Blit,
+	Gpu_Vk_Command_Kind_Barrier
 } Gpu_Vk_Command_Kind;
 
 typedef struct Gpu_Vk_Command_Begin_Render {
@@ -198,6 +200,11 @@ typedef struct Gpu_Vk_Command_Transition_Texture_Layouts {
 	u32 count;
 } Gpu_Vk_Command_Transition_Texture_Layouts;
 
+typedef struct Gpu_Vk_Command_Blit {
+	Gpu_Vk_Texture src;
+	Gpu_Vk_Texture dst;
+} Gpu_Vk_Command_Blit;
+
 typedef struct Gpu_Vk_Command {
 	Gpu_Vk_Command_Kind kind;
 
@@ -206,6 +213,7 @@ typedef struct Gpu_Vk_Command {
 		Gpu_Vk_Command_Begin_Render* begin_render;
 		Gpu_Vk_Command_Fetch_Swapchain_Texture* fetch_swapchain_texture;
 		Gpu_Vk_Command_Dispatch* dispatch;
+		Gpu_Vk_Command_Blit* blit;
 	} data;
 } Gpu_Vk_Command;
 sl_seq(Gpu_Vk_Command, Gpu_Vk_Command_Seq, gpu_vk_command_seq);
@@ -688,6 +696,9 @@ sl_inline VkImageViewType gpu_vk_texture_kind_to_vk_image_view_type(Gpu_Vk_Textu
 sl_inline VkImageUsageFlags gpu_vk_texture_usage_to_vk_image_usage_flags(Gpu_Vk_Texture_Usage usage) {
 	VkImageUsageFlags flags = 0;
 
+	// For blit
+	flags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
 	if ((usage & Gpu_Vk_Texture_Usage_Shader_Read) > 0) {
 		flags |= VK_IMAGE_USAGE_SAMPLED_BIT;
 	}
@@ -725,6 +736,7 @@ Gpu_Vk_Texture gpu_vk_new_texture(const Gpu_Vk_Texture_Desc* desc) {
 	Gpu_Vk_Texture_Data* texture_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, texture);
 	texture_data->data_kind = Gpu_Vk_Texture_Data_Kind_Immediate;
 	texture_data->imm.layout = Gpu_Vk_Texture_Layout_Undefined;
+	texture_data->imm.size = desc->size;
 
 	VkImageCreateInfo image_create_info = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -779,7 +791,7 @@ Gpu_Vk_Texture gpu_vk_new_texture(const Gpu_Vk_Texture_Desc* desc) {
 
 	return texture;
 }
-vec2_u16 gpu_vk_get_texture_size(Gpu_Vk_Texture texture) {
+vec3_u32 gpu_vk_get_texture_size(Gpu_Vk_Texture texture) {
 	Gpu_Vk_Texture root_texture = gpu_vk_texture_get_root(texture);
 	Gpu_Vk_Texture_Data* root_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, root_texture);
 	sl_assert(root_data != NULL, "Texture is invalid.");
@@ -913,7 +925,7 @@ Gpu_Vk_Framebuffer gpu_vk_acquire_framebuffer(Gpu_Vk_Framebuffer_Key key) {
 			attachments[attachment_idx] = gpu_vk_texture_get_image_view(key.attachments[attachment_idx].texture);
 		}
 
-		const vec2_u16 size = gpu_vk_get_texture_size(key.attachments[0].texture);
+		const vec3_u32 size = gpu_vk_get_texture_size(key.attachments[0].texture);
 
 		VkFramebufferCreateInfo framebuffer_info = {
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
@@ -985,7 +997,7 @@ void gpu_vk_ensure_valid_swapchain() {
 		.imageColorSpace = colorspace,
 		.imageExtent = extent,
 		.minImageCount = min_image_count,
-		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
 		.imageArrayLayers = 1,
 		.preTransform = capabilities.currentTransform,
 		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
@@ -1044,7 +1056,7 @@ void gpu_vk_ensure_valid_swapchain() {
 		Gpu_Vk_Texture texture = gpu_vk_texture_pool_acquire(&gpu_vk.texture_pool);
 		Gpu_Vk_Texture_Data* texture_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, texture);
 		texture_data->data_kind = Gpu_Vk_Texture_Data_Kind_Immediate;
-		texture_data->imm.size = (vec2_u16) { extent.width, extent.height };
+		texture_data->imm.size = (vec3_u32) { extent.width, extent.height, 1 };
 		texture_data->imm.format = gpu_vk.swapchain_format;
 		texture_data->imm.layout = Gpu_Vk_Texture_Layout_Undefined;
 		texture_data->imm.image = gpu_vk.swapchain_images[image_idx];
@@ -1499,7 +1511,7 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 					};
 				}
 
-				const vec2_u16 render_size = gpu_vk_get_texture_size(begin_render->render_pass.attachments[0].texture);
+				const vec3_u32 render_size = gpu_vk_get_texture_size(begin_render->render_pass.attachments[0].texture);
 
 				VkRenderPassBeginInfo render_pass_begin_info = {
 					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -1525,6 +1537,53 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 				gpu_vk_write_bindings(cb_data->arena, vk_cb, pipeline_data->pipeline_layout, dispatch->bindings, dispatch->binding_count);
 				vkCmdBindPipeline(vk_cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_data->pipeline);
 				vkCmdDispatch(vk_cb, dispatch->group_count.x, dispatch->group_count.y, dispatch->group_count.z);
+			} break;
+
+			case Gpu_Vk_Command_Kind_Blit: {
+				Gpu_Vk_Command_Blit* blit = command.data.blit;
+				Gpu_Vk_Texture_Data* src_data = gpu_vk_texture_get_root_data(blit->src);
+				Gpu_Vk_Texture_Data* dst_data = gpu_vk_texture_get_root_data(blit->dst);
+				VkImageBlit region = {
+				 	.srcSubresource = {
+			            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+			            .mipLevel       = 0,
+			            .baseArrayLayer = 0,
+			            .layerCount     = 1,
+			        },
+			        .srcOffsets = {
+			            { 0, 0, 0 },
+			            { src_data->imm.size.x, src_data->imm.size.y, 1 },
+			        },
+			        .dstSubresource = {
+			            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+			            .mipLevel       = 0,
+			            .baseArrayLayer = 0,
+			            .layerCount     = 1,
+			        },
+			        .dstOffsets = {
+			            { 0, 0, 0 },
+			            { src_data->imm.size.x, src_data->imm.size.y, 1 },
+			        },
+				};
+				vkCmdBlitImage(vk_cb, src_data->imm.image, gpu_vk_texture_layout_to_vk_image_layout(src_data->imm.layout), dst_data->imm.image, gpu_vk_texture_layout_to_vk_image_layout(dst_data->imm.layout), 1, &region, VK_FILTER_NEAREST);
+			} break;
+
+			case Gpu_Vk_Command_Kind_Barrier: {
+				VkMemoryBarrier2 barrier = {
+			        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+			        .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+			        .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+			        .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+			        .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+			    };
+
+			    VkDependencyInfo dep = {
+			        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			        .memoryBarrierCount = 1,
+			        .pMemoryBarriers = &barrier,
+			    };
+
+			    gpu_vk.device_function_table.vkCmdPipelineBarrier2KHR(vk_cb, &dep);
 			} break;
 		}
 	}
@@ -1811,5 +1870,33 @@ void gpu_vk_dispatch(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Compute_Pipeline pipeline,
 	gpu_vk_command_seq_push(&cb_data->commands, (Gpu_Vk_Command) {
 		.kind = Gpu_Vk_Command_Kind_Dispatch,
 		.data.dispatch = dispatch,
+	});
+}
+
+void gpu_vk_blit(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Texture src, Gpu_Vk_Texture dst) {
+	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb);
+	gpu_vk_validate(cb_data, "Invalid command buffer.");
+	sl_assert(cb_data->state == Gpu_Vk_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+
+	Gpu_Vk_Command_Blit* blit;
+	allocator_new(&cb_data->arena->allocator, blit, 1);
+	*blit = (Gpu_Vk_Command_Blit) {
+		.src = src,
+		.dst = dst,
+	};
+
+	gpu_vk_command_seq_push(&cb_data->commands, (Gpu_Vk_Command) {
+		.kind = Gpu_Vk_Command_Kind_Blit,
+		.data.blit = blit,
+	});
+}
+
+void gpu_vk_barrier(Gpu_Vk_Command_Buffer cb) {
+	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb);
+	gpu_vk_validate(cb_data, "Invalid command buffer.");
+	sl_assert(cb_data->state == Gpu_Vk_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+
+	gpu_vk_command_seq_push(&cb_data->commands, (Gpu_Vk_Command) {
+		.kind = Gpu_Vk_Command_Kind_Barrier,
 	});
 }

@@ -170,7 +170,7 @@ typedef struct Gpu_Vk_Texture_Desc {
 	Gpu_Vk_Slice slice;
 } Gpu_Vk_Texture_Desc;
 Gpu_Vk_Texture gpu_vk_new_texture(const Gpu_Vk_Texture_Desc* desc);
-vec2_u16 gpu_vk_get_texture_size(Gpu_Vk_Texture texture);
+vec3_u32 gpu_vk_get_texture_size(Gpu_Vk_Texture texture);
 
 // Heap
 Gpu_Vk_Heap gpu_vk_new_heap(u64 bytes, Gpu_Vk_Memory_Type memory_type);
@@ -181,7 +181,6 @@ u64 gpu_vk_get_heap_size(Gpu_Vk_Heap heap);
 
 // Swapchain
 Gpu_Vk_Texture gpu_vk_fetch_swapchain_texture(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Swapchain_Desc swapchain_desc);
-void gpu_vk_present_swapchain_texture(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Texture swapchain_texture);
 
 // Command Buffer Pool
 Gpu_Vk_Command_Buffer_Pool gpu_vk_new_command_buffer_pool(u32 size);
@@ -209,3 +208,7 @@ typedef struct Gpu_Vk_Compute_Pipeline_Desc {
 Gpu_Vk_Compute_Pipeline gpu_vk_new_compute_pipeline(const Gpu_Vk_Compute_Pipeline_Desc* desc);
 
 void gpu_vk_dispatch(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Compute_Pipeline pipeline, const Gpu_Vk_Binding* bindings, u32 binding_count, vec3_u32 group_count);
+
+void gpu_vk_blit(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Texture src, Gpu_Vk_Texture dst);
+
+void gpu_vk_barrier(Gpu_Vk_Command_Buffer cb);
