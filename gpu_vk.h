@@ -28,6 +28,15 @@ typedef enum Gpu_Vk_Texture_Usage {
 	Gpu_Vk_Texture_Usage_Render_Attachment = 1 << 2,
 } Gpu_Vk_Texture_Usage;
 
+typedef enum Gpu_Vk_Texture_Layout {
+	Gpu_Vk_Texture_Layout_Undefined,
+	Gpu_Vk_Texture_Layout_General,
+	Gpu_Vk_Texture_Layout_Shader_Read,
+	Gpu_Vk_Texture_Layout_Shader_Write,
+	Gpu_Vk_Texture_Layout_Color_Attachment,
+	Gpu_Vk_Texture_Layout_Present,
+} Gpu_Vk_Texture_Layout;
+
 typedef struct Gpu_Vk_Swapchain_Desc {
 	vec2_u32 size;
 	// format
@@ -89,14 +98,14 @@ void* gpu_vk_get_slice_host_ptr(Gpu_Vk_Slice slice);
 void gpu_vk_flush_slice(Gpu_Vk_Slice slice);
 
 typedef enum Gpu_Vk_Binding_Kind {
-	Gpu_Vk_Binding_Kind_Storage_Texture,
+	Gpu_Vk_Binding_Kind_Output_Texture,
 	Gpu_Vk_Binding_Kind_Sampled_Texture, // todo
 	Gpu_Vk_Binding_Kind_Slice,
 } Gpu_Vk_Binding_Kind;
 
-typedef struct Gpu_Vk_Binding_Storage_Texture {
+typedef struct Gpu_Vk_Binding_Output_Texture {
 	Gpu_Vk_Texture texture;
-} Gpu_Vk_Binding_Storage_Texture;
+} Gpu_Vk_Binding_Output_Texture;
 
 typedef struct Gpu_Vk_Binding_Sampled_Texture {
 	Gpu_Vk_Texture texture;
@@ -106,7 +115,7 @@ typedef struct Gpu_Vk_Binding_Sampled_Texture {
 typedef struct Gpu_Vk_Binding {
 	Gpu_Vk_Binding_Kind kind;
 	union {
-		Gpu_Vk_Binding_Storage_Texture storage_texture;
+		Gpu_Vk_Binding_Output_Texture output_texture;
 		Gpu_Vk_Binding_Sampled_Texture sampled_texture;
 		Gpu_Vk_Slice slice;
 	};
@@ -170,7 +179,6 @@ u64 gpu_vk_get_heap_size(Gpu_Vk_Heap heap);
 
 // Sampler
 
-
 // Swapchain
 Gpu_Vk_Texture gpu_vk_fetch_swapchain_texture(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Swapchain_Desc swapchain_desc);
 void gpu_vk_present_swapchain_texture(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Texture swapchain_texture);
@@ -182,6 +190,8 @@ void gpu_vk_destroy_command_buffer_pool(Gpu_Vk_Command_Buffer_Pool pool);
 // Command Buffer
 bool gpu_vk_new_command_buffer(Gpu_Vk_Command_Buffer_Pool pool, Gpu_Vk_Command_Buffer* out_cb);
 void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed);
+
+void gpu_vk_transition_texture_layouts(Gpu_Vk_Command_Buffer cb, const Gpu_Vk_Texture* textures, const Gpu_Vk_Texture_Layout* layouts, u32 count);
 
 // Render
 void gpu_vk_begin_render(Gpu_Vk_Command_Buffer cb, const Gpu_Vk_Render_Pass* render_pass);

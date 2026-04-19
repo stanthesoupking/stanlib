@@ -140,6 +140,7 @@ typedef struct Gpu_Vk_Texture_Data {
 		struct {
 			VkImage image;
 			VkImageView image_view;
+			Gpu_Vk_Texture_Layout layout;
 			vec2_u16 size;
 			VkFormat format;
 		} imm;
@@ -168,6 +169,7 @@ typedef enum Gpu_Vk_Command_Buffer_State {
 } Gpu_Vk_Command_Buffer_State;
 
 typedef enum Gpu_Vk_Command_Kind {
+	Gpu_Vk_Command_Kind_Transition_Texture_Layouts,
 	Gpu_Vk_Command_Kind_Fetch_Swapchain_Texture,
 	Gpu_Vk_Command_Kind_Begin_Render,
 	Gpu_Vk_Command_Kind_End_Render,
@@ -190,10 +192,17 @@ typedef struct Gpu_Vk_Command_Dispatch {
 	vec3_u32 group_count;
 } Gpu_Vk_Command_Dispatch;
 
+typedef struct Gpu_Vk_Command_Transition_Texture_Layouts {
+	const Gpu_Vk_Texture* textures;
+	const Gpu_Vk_Texture_Layout* layouts;
+	u32 count;
+} Gpu_Vk_Command_Transition_Texture_Layouts;
+
 typedef struct Gpu_Vk_Command {
 	Gpu_Vk_Command_Kind kind;
 
 	union {
+		Gpu_Vk_Command_Transition_Texture_Layouts* transition_texture_layouts;
 		Gpu_Vk_Command_Begin_Render* begin_render;
 		Gpu_Vk_Command_Fetch_Swapchain_Texture* fetch_swapchain_texture;
 		Gpu_Vk_Command_Dispatch* dispatch;
@@ -304,7 +313,7 @@ void gpu_vk_init_instance(const Gpu_Vk_Desc* desc) {
 	create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	create_info.pApplicationInfo = &app_info;
 
-	create_info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+	//create_info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 
 	create_info.enabledExtensionCount = combined_extension_count;
 	create_info.ppEnabledExtensionNames = combined_extensions;
@@ -656,6 +665,10 @@ Gpu_Vk_Texture gpu_vk_texture_get_root(Gpu_Vk_Texture texture) {
 		} break;
 	}
 }
+Gpu_Vk_Texture_Data* gpu_vk_texture_get_root_data(Gpu_Vk_Texture texture) {
+	return gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, gpu_vk_texture_get_root(texture));
+}
+
 
 sl_inline VkImageType gpu_vk_texture_kind_to_vk_image_type(Gpu_Vk_Texture_Kind kind) {
 	switch (kind) {
@@ -699,6 +712,7 @@ Gpu_Vk_Texture gpu_vk_new_texture(const Gpu_Vk_Texture_Desc* desc) {
 	Gpu_Vk_Texture texture = gpu_vk_texture_pool_acquire(&gpu_vk.texture_pool);
 	Gpu_Vk_Texture_Data* texture_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, texture);
 	texture_data->data_kind = Gpu_Vk_Texture_Data_Kind_Immediate;
+	texture_data->imm.layout = Gpu_Vk_Texture_Layout_Undefined;
 
 	VkImageCreateInfo image_create_info = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -1270,10 +1284,74 @@ VkSemaphore gpu_vk_get_next_command_buffer_semaphore(Gpu_Vk_Command_Buffer cb) {
 
 sl_inline VkDescriptorType gpu_vk_binding_kind_to_vk_descriptor_type(Gpu_Vk_Binding_Kind binding_kind) {
 	switch (binding_kind) {
-		case Gpu_Vk_Binding_Kind_Storage_Texture: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		case Gpu_Vk_Binding_Kind_Output_Texture: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 		case Gpu_Vk_Binding_Kind_Sampled_Texture: return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		case Gpu_Vk_Binding_Kind_Slice: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	}
+}
+
+sl_inline VkImageLayout gpu_vk_texture_layout_to_vk_image_layout(Gpu_Vk_Texture_Layout layout) {
+	switch (layout) {
+		case Gpu_Vk_Texture_Layout_Undefined: return VK_IMAGE_LAYOUT_UNDEFINED;
+		case Gpu_Vk_Texture_Layout_General: return VK_IMAGE_LAYOUT_GENERAL;
+		case Gpu_Vk_Texture_Layout_Shader_Read: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		case Gpu_Vk_Texture_Layout_Shader_Write: return VK_IMAGE_LAYOUT_GENERAL;
+		case Gpu_Vk_Texture_Layout_Color_Attachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		case Gpu_Vk_Texture_Layout_Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	}
+}
+
+sl_inline void gpu_vk_execute_transition_textures_to_layout(SL_Arena_Allocator* arena, VkCommandBuffer vk_cb, const Gpu_Vk_Texture* textures, const Gpu_Vk_Texture_Layout* layouts, u32 count) {
+	if (count == 0) {
+		return;
+	}
+	const u64 reset_position = sl_arena_allocator_get_position(arena);
+
+	u32 next_barrier = 0;
+	VkImageMemoryBarrier2* barriers;
+	allocator_new(&arena->allocator, barriers, count);
+
+	for (u32 texture_idx = 0; texture_idx < count; texture_idx++) {
+		Gpu_Vk_Texture_Data* texture_data = gpu_vk_texture_get_root_data(textures[texture_idx]);
+		Gpu_Vk_Texture_Layout layout = layouts[texture_idx];
+		if (texture_data->imm.layout == layout) {
+			continue;
+		}
+
+		barriers[next_barrier++] = (VkImageMemoryBarrier2) {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+
+			.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+			.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+
+			.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+			.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+
+			.oldLayout = gpu_vk_texture_layout_to_vk_image_layout(texture_data->imm.layout),
+			.newLayout = gpu_vk_texture_layout_to_vk_image_layout(layout),
+
+			.image = texture_data->imm.image,
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
+				.levelCount = VK_REMAINING_MIP_LEVELS,
+				.baseArrayLayer = 0,
+				.layerCount = VK_REMAINING_ARRAY_LAYERS,
+			},
+		};
+	}
+
+	if (next_barrier > 0) {
+		VkDependencyInfo dep = {
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.imageMemoryBarrierCount = next_barrier,
+			.pImageMemoryBarriers = barriers,
+		};
+
+		gpu_vk.device_function_table.vkCmdPipelineBarrier2KHR(vk_cb, &dep);
+	}
+
+	sl_arena_allocator_reset(arena, reset_position);
 }
 
 sl_inline void gpu_vk_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer vk_cb, VkPipelineLayout pipeline_layout, const Gpu_Vk_Binding* bindings, u32 binding_count) {
@@ -1289,12 +1367,12 @@ sl_inline void gpu_vk_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer 
 		VkWriteDescriptorSet* write = &writes[binding_idx];
 		Gpu_Vk_Binding binding = bindings[binding_idx];
 		switch (binding.kind) {
-			case Gpu_Vk_Binding_Kind_Storage_Texture: {
+			case Gpu_Vk_Binding_Kind_Output_Texture: {
 				VkDescriptorImageInfo* image_info;
 				allocator_new(&arena->allocator, image_info, 1);
 				*image_info = (VkDescriptorImageInfo) {
 					.imageLayout = VK_IMAGE_LAYOUT_GENERAL, // todo
-					.imageView = gpu_vk_texture_get_image_view(binding.storage_texture.texture),
+					.imageView = gpu_vk_texture_get_image_view(binding.output_texture.texture),
 					.sampler = VK_NULL_HANDLE,
 				};
 
@@ -1350,6 +1428,11 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 		const Gpu_Vk_Command command = gpu_vk_command_seq_get(&cb_data->commands, command_idx);
 
 		switch (command.kind) {
+			case Gpu_Vk_Command_Kind_Transition_Texture_Layouts: {
+				Gpu_Vk_Command_Transition_Texture_Layouts* transition_texture_layouts = command.data.transition_texture_layouts;
+				gpu_vk_execute_transition_textures_to_layout(cb_data->arena, vk_cb, transition_texture_layouts->textures, transition_texture_layouts->layouts, transition_texture_layouts->count);
+			} break;
+
 			case Gpu_Vk_Command_Kind_Fetch_Swapchain_Texture: {
 				Gpu_Vk_Command_Fetch_Swapchain_Texture* fetch_swapchain_texture = command.data.fetch_swapchain_texture;
 
@@ -1542,6 +1625,33 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 	while (sl_handle_seq_pop(&cb_data->cleanup_textures, &cleanup_texture)) {
 		gpu_vk_destroy_texture(cleanup_texture);
 	}
+}
+
+void gpu_vk_transition_texture_layouts(Gpu_Vk_Command_Buffer cb, const Gpu_Vk_Texture* textures, const Gpu_Vk_Texture_Layout* layouts, u32 count) {
+	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb);
+	sl_assert(cb_data->state == Gpu_Vk_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+
+	Gpu_Vk_Texture* textures_copy;
+	Gpu_Vk_Texture_Layout* layouts_copy;
+	allocator_new(&cb_data->arena->allocator, textures_copy, count);
+	allocator_new(&cb_data->arena->allocator, layouts_copy, count);
+	memcpy(textures_copy, textures, sizeof(Gpu_Vk_Texture) * count);
+	memcpy(layouts_copy, layouts, sizeof(Gpu_Vk_Texture_Layout) * count);
+
+	Gpu_Vk_Command_Transition_Texture_Layouts* transition_texture_layouts;
+	allocator_new(&cb_data->arena->allocator, transition_texture_layouts, 1);
+	*transition_texture_layouts = (Gpu_Vk_Command_Transition_Texture_Layouts) {
+		.textures = textures_copy,
+		.layouts = layouts_copy,
+		.count = count,
+	};
+
+	gpu_vk_command_seq_push(&cb_data->commands, (Gpu_Vk_Command) {
+		.kind = Gpu_Vk_Command_Kind_Transition_Texture_Layouts,
+		.data = {
+			.transition_texture_layouts = transition_texture_layouts,
+		},
+	});
 }
 
 Gpu_Vk_Texture gpu_vk_fetch_swapchain_texture(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Swapchain_Desc swapchain_desc) {
