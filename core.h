@@ -52,7 +52,55 @@
 
 #define SL_PI 3.14159265359f
 
-#ifdef __METAL_VERSION__
+#if defined(__SLANG__)
+#define sl_shared_struct(name) struct name
+#define sl_shared_enum(name) enum name
+
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef int8_t s8;
+typedef int16_t s16;
+typedef int32_t s32;
+typedef int64_t s64;
+typedef float f32;
+
+typedef vector<uint8_t, 2> vec2_u8;
+typedef vector<uint16_t, 2> vec2_u16;
+typedef vector<uint32_t, 2> vec2_u32;
+typedef vector<uint64_t, 2> vec2_u64;
+typedef vector<int8_t, 2> vec2_s8;
+typedef vector<int16_t, 2> vec2_s16;
+typedef vector<int32_t, 2> vec2_s32;
+typedef vector<int64_t, 2> vec2_s64;
+typedef vector<float, 2> vec2_f32;
+
+typedef vector<uint8_t, 3> vec3_u8;
+typedef vector<uint16_t, 3> vec3_u16;
+typedef vector<uint32_t, 3> vec3_u32;
+typedef vector<uint64_t, 3> vec3_u64;
+typedef vector<int8_t, 3> vec3_s8;
+typedef vector<int16_t, 3> vec3_s16;
+typedef vector<int32_t, 3> vec3_s32;
+typedef vector<int64_t, 3> vec3_s64;
+typedef vector<float, 3> vec3_f32;
+
+typedef vector<uint8_t, 4> vec4_u8;
+typedef vector<uint16_t, 4> vec4_u16;
+typedef vector<uint32_t, 4> vec4_u32;
+typedef vector<uint64_t, 4> vec4_u64;
+typedef vector<int8_t, 4> vec4_s8;
+typedef vector<int16_t, 4> vec4_s16;
+typedef vector<int32_t, 4> vec4_s32;
+typedef vector<int64_t, 4> vec4_s64;
+typedef vector<float, 4> vec4_f32;
+
+typedef float4x4 mat4x4_f32;
+#elif defined(__METAL_VERSION__)
+#define sl_shared_struct(name) typedef struct name name; struct name
+#define sl_shared_enum(name) typedef enum name name; enum name
+
 typedef uchar u8;
 typedef ushort u16;
 typedef uint u32;
@@ -99,6 +147,9 @@ typedef float4 vec4_f32;
 // mat4x4
 typedef float4x4 mat4x4_f32;
 #else
+#define sl_shared_struct(name) typedef struct name name; struct name
+#define sl_shared_enum(name) typedef enum name name; enum name
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdalign.h>
@@ -2529,9 +2580,9 @@ sl_inline u64 sl_hasher_finalise(SL_Hasher* hasher) {
 
 #endif
 
-typedef struct Quad_f32 {
+sl_shared_struct(Quad_f32) {
 	vec2_f32 v[4];
-} Quad_f32;
+};
 
 #define u8_max 255u
 #define u16_max 65535u

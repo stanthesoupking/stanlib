@@ -119,6 +119,7 @@ typedef struct Gpu_Vk_Memory_Type_Indices {
 typedef struct Gpu_Vk_Heap_Data {
 	u32 generation;
 	VkDeviceMemory device_memory;
+	VkBuffer buffer;
 	Gpu_Vk_Memory_Type memory_type;
 	u64 size;
 	void* host_ptr;
@@ -731,13 +732,7 @@ sl_inline VkImageLayout gpu_vk_texture_layout_to_vk_image_layout(Gpu_Vk_Texture_
 	}
 }
 
-Gpu_Vk_Texture gpu_vk_new_texture(const Gpu_Vk_Texture_Desc* desc) {
-	Gpu_Vk_Texture texture = gpu_vk_texture_pool_acquire(&gpu_vk.texture_pool);
-	Gpu_Vk_Texture_Data* texture_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, texture);
-	texture_data->data_kind = Gpu_Vk_Texture_Data_Kind_Immediate;
-	texture_data->imm.layout = Gpu_Vk_Texture_Layout_Undefined;
-	texture_data->imm.size = desc->size;
-
+bool gpu_vk_new_image_for_texture_desc(const Gpu_Vk_Texture_Desc* desc, VkImage* out_image) {
 	VkImageCreateInfo image_create_info = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.imageType = gpu_vk_texture_kind_to_vk_image_type(desc->kind),
@@ -754,17 +749,56 @@ Gpu_Vk_Texture gpu_vk_new_texture(const Gpu_Vk_Texture_Desc* desc) {
 		.pQueueFamilyIndices = &gpu_vk.queue_family_indices.index[Gpu_Vk_Queue_Primary],
 		.queueFamilyIndexCount = 1,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
 	};
-	VkResult create_image_result = vkCreateImage(gpu_vk.device, &image_create_info, NULL, &texture_data->imm.image);
-	if (create_image_result != VK_SUCCESS) {
+	if (vkCreateImage(gpu_vk.device, &image_create_info, NULL, out_image) == VK_SUCCESS) {
+		return true;
+	} else {
+		return false;
+	}
+}
+
+Gpu_Vk_Size_And_Align gpu_vk_size_and_align_for_texture(const Gpu_Vk_Texture_Desc* desc) {
+	VkImage image;
+	if (!gpu_vk_new_image_for_texture_desc(desc, &image)) {
+		return (Gpu_Vk_Size_And_Align) {0};
+	}
+
+	VkMemoryRequirements mem_reqs;
+	vkGetImageMemoryRequirements(gpu_vk.device, image, &mem_reqs);
+
+	vkDestroyImage(gpu_vk.device, image, NULL);
+
+	return (Gpu_Vk_Size_And_Align) {
+		.size = mem_reqs.size,
+		.align = mem_reqs.alignment,
+	};
+}
+
+Gpu_Vk_Texture gpu_vk_new_texture(const Gpu_Vk_Texture_Desc* desc, Gpu_Vk_Slice slice) {
+	Gpu_Vk_Texture texture = gpu_vk_texture_pool_acquire(&gpu_vk.texture_pool);
+	Gpu_Vk_Texture_Data* texture_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, texture);
+	texture_data->data_kind = Gpu_Vk_Texture_Data_Kind_Immediate;
+	texture_data->imm.layout = Gpu_Vk_Texture_Layout_Undefined;
+	texture_data->imm.size = desc->size;
+
+	if (!gpu_vk_new_image_for_texture_desc(desc, &texture_data->imm.image)) {
+		gpu_vk_texture_pool_release(&gpu_vk.texture_pool, texture);
 		return SL_HANDLE_NULL;
 	}
 
-	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, desc->slice.heap);
+	VkMemoryRequirements mem_reqs;
+	vkGetImageMemoryRequirements(gpu_vk.device, texture_data->imm.image, &mem_reqs);
+	gpu_vk_validate(slice.offset % mem_reqs.alignment == 0, "Slice has insufficient alignment for texture.");
+	gpu_vk_validate(slice.size >= mem_reqs.size, "Slice has insufficient size for texture.");
+
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, slice.heap);
 	sl_assert(heap_data != NULL, "Invalid slice.");
 
-	VkResult bind_result = vkBindImageMemory(gpu_vk.device, texture_data->imm.image, heap_data->device_memory, desc->slice.offset);
+	VkResult bind_result = vkBindImageMemory(gpu_vk.device, texture_data->imm.image, heap_data->device_memory, slice.offset);
 	if (bind_result != VK_SUCCESS) {
+		vkDestroyImage(gpu_vk.device, texture_data->imm.image, NULL);
+		gpu_vk_texture_pool_release(&gpu_vk.texture_pool, texture);
 		return SL_HANDLE_NULL;
 	}
 
@@ -786,6 +820,8 @@ Gpu_Vk_Texture gpu_vk_new_texture(const Gpu_Vk_Texture_Desc* desc) {
 
 	VkResult create_view_result = vkCreateImageView(gpu_vk.device, &view_create_info, NULL, &texture_data->imm.image_view);
 	if (create_view_result != VK_SUCCESS) {
+		vkDestroyImage(gpu_vk.device, texture_data->imm.image, NULL);
+		gpu_vk_texture_pool_release(&gpu_vk.texture_pool, texture);
 		return SL_HANDLE_NULL;
 	}
 
@@ -1116,6 +1152,21 @@ Gpu_Vk_Heap gpu_vk_new_heap(u64 bytes, Gpu_Vk_Memory_Type memory_type) {
 	heap_data->memory_type = memory_type;
 	heap_data->size = bytes;
 
+	VkBufferCreateInfo buffer_create_info = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = bytes,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.pQueueFamilyIndices = &gpu_vk.queue_family_indices.index[Gpu_Vk_Queue_Primary],
+		.queueFamilyIndexCount = 1,
+		.flags = 0,
+		.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+	};
+	VkResult create_buffer_result = vkCreateBuffer(gpu_vk.device, &buffer_create_info, NULL, &heap_data->buffer);
+	sl_assert(create_buffer_result == VK_SUCCESS, "Failed to create buffer.");
+
+	VkResult bind_buffer_result = vkBindBufferMemory(gpu_vk.device, heap_data->buffer, heap_data->device_memory, 0);
+	sl_assert(bind_buffer_result == VK_SUCCESS, "Failed to bind buffer to heap allocation.");
+
 	switch (memory_type) {
 		case Gpu_Vk_Memory_Type_Host_Visible: {
 			VkResult map_result = vkMapMemory(gpu_vk.device, heap_data->device_memory, 0, VK_WHOLE_SIZE, 0, &heap_data->host_ptr);
@@ -1130,8 +1181,6 @@ Gpu_Vk_Heap gpu_vk_new_heap(u64 bytes, Gpu_Vk_Memory_Type memory_type) {
 			sl_abort("Invalid memory type.");
 		} break;
 	}
-
-
 
 	return heap_handle;
 }
@@ -1158,6 +1207,9 @@ void gpu_vk_destroy_heap(Gpu_Vk_Heap heap) {
 u64 gpu_vk_get_heap_size(Gpu_Vk_Heap heap) {
 	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, heap);
 	return heap_data->size;
+}
+Gpu_Vk_Slice gpu_vk_get_heap_slice(Gpu_Vk_Heap heap) {
+	return gpu_vk_slice(heap, 0, gpu_vk_get_heap_size(heap));
 }
 
 // Slice
@@ -1411,7 +1463,25 @@ sl_inline void gpu_vk_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer 
 			} break;
 
 			case Gpu_Vk_Binding_Kind_Slice: {
-				// todo
+				Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, binding.slice.heap);
+
+				VkDescriptorBufferInfo* buffer_info;
+				allocator_new(&arena->allocator, buffer_info, 1);
+				*buffer_info = (VkDescriptorBufferInfo) {
+					.buffer = heap_data->buffer,
+					.offset = binding.slice.offset,
+					.range = binding.slice.size,
+				};
+
+				*write = (VkWriteDescriptorSet) {
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = VK_NULL_HANDLE,
+					.dstBinding = binding.index,
+					.descriptorType = gpu_vk_binding_kind_to_vk_descriptor_type(binding.kind),
+					.pBufferInfo = buffer_info,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+				};
 			} break;
 		}
 	}

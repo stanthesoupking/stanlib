@@ -15,6 +15,12 @@ typedef enum Gpu_Vk_Format {
 	Gpu_Vk_Format_R8G8B8A8_UNORM,
 } Gpu_Vk_Format;
 
+typedef struct Gpu_Vk_Size_And_Align {
+	u64 size;
+	u64 align;
+} Gpu_Vk_Size_And_Align;
+#define gpu_vk_size_and_align_of_type(x) ((Gpu_Vk_Size_And_Align) { .size = sizeof(x), .align = sl_align_of(x) })
+
 typedef enum Gpu_Vk_Texture_Kind {
 	Gpu_Vk_Texture_Kind_1D,
 	Gpu_Vk_Texture_Kind_2D,
@@ -94,6 +100,25 @@ sl_inline Gpu_Vk_Slice gpu_vk_slice(Gpu_Vk_Heap heap, u64 offset, u64 size) {
 		.size = size,
 	};
 }
+sl_inline bool gpu_vk_slice_suballocate(Gpu_Vk_Slice basis, Gpu_Vk_Size_And_Align size_and_align, Gpu_Vk_Slice* out_allocation, Gpu_Vk_Slice* out_remainder) {
+	const u64 aligned_offset = basis.offset % size_and_align.align;
+	if (aligned_offset + size_and_align.size > basis.size) {
+		return false;
+	}
+
+	*out_allocation = (Gpu_Vk_Slice) {
+		.heap = basis.heap,
+		.offset = aligned_offset,
+		.size = size_and_align.size,
+	};
+	*out_remainder = (Gpu_Vk_Slice) {
+		.heap = basis.heap,
+		.offset = aligned_offset + size_and_align.size,
+		.size = basis.size - (basis.offset - aligned_offset + size_and_align.size),
+	};
+	return true;
+}
+
 void* gpu_vk_get_slice_host_ptr(Gpu_Vk_Slice slice);
 void gpu_vk_flush_slice(Gpu_Vk_Slice slice);
 
@@ -167,15 +192,16 @@ typedef struct Gpu_Vk_Texture_Desc {
 	vec3_u32 size;
 	u32 mip_levels;
 	u32 array_layers;
-	Gpu_Vk_Slice slice;
 } Gpu_Vk_Texture_Desc;
-Gpu_Vk_Texture gpu_vk_new_texture(const Gpu_Vk_Texture_Desc* desc);
+Gpu_Vk_Size_And_Align gpu_vk_size_and_align_for_texture(const Gpu_Vk_Texture_Desc* desc);
+Gpu_Vk_Texture gpu_vk_new_texture(const Gpu_Vk_Texture_Desc* desc, Gpu_Vk_Slice slice);
 vec3_u32 gpu_vk_get_texture_size(Gpu_Vk_Texture texture);
 
 // Heap
 Gpu_Vk_Heap gpu_vk_new_heap(u64 bytes, Gpu_Vk_Memory_Type memory_type);
 void gpu_vk_destroy_heap(Gpu_Vk_Heap heap);
 u64 gpu_vk_get_heap_size(Gpu_Vk_Heap heap);
+Gpu_Vk_Slice gpu_vk_get_heap_slice(Gpu_Vk_Heap heap);
 
 // Sampler
 
