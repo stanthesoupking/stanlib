@@ -101,7 +101,7 @@ sl_inline Gpu_Vk_Slice gpu_vk_slice(Gpu_Vk_Heap heap, u64 offset, u64 size) {
 	};
 }
 sl_inline bool gpu_vk_slice_suballocate(Gpu_Vk_Slice basis, Gpu_Vk_Size_And_Align size_and_align, Gpu_Vk_Slice* out_allocation, Gpu_Vk_Slice* out_remainder) {
-	const u64 aligned_offset = basis.offset % size_and_align.align;
+	const u64 aligned_offset = sl_round_up_u64(basis.offset, size_and_align.align);
 	if (aligned_offset + size_and_align.size > basis.size) {
 		return false;
 	}
@@ -120,17 +120,18 @@ sl_inline bool gpu_vk_slice_suballocate(Gpu_Vk_Slice basis, Gpu_Vk_Size_And_Alig
 }
 
 void* gpu_vk_get_slice_host_ptr(Gpu_Vk_Slice slice);
-void gpu_vk_flush_slice(Gpu_Vk_Slice slice);
+void gpu_vk_flush_slice_to_gpu(Gpu_Vk_Slice slice);
+void gpu_vk_flush_slice_from_gpu(Gpu_Vk_Slice slice);
 
 typedef enum Gpu_Vk_Binding_Kind {
-	Gpu_Vk_Binding_Kind_Output_Texture,
+	Gpu_Vk_Binding_Kind_Storage_Texture,
 	Gpu_Vk_Binding_Kind_Sampled_Texture, // todo
 	Gpu_Vk_Binding_Kind_Slice,
 } Gpu_Vk_Binding_Kind;
 
-typedef struct Gpu_Vk_Binding_Output_Texture {
+typedef struct Gpu_Vk_Binding_Storage_Texture {
 	Gpu_Vk_Texture texture;
-} Gpu_Vk_Binding_Output_Texture;
+} Gpu_Vk_Binding_Storage_Texture;
 
 typedef struct Gpu_Vk_Binding_Sampled_Texture {
 	Gpu_Vk_Texture texture;
@@ -140,7 +141,7 @@ typedef struct Gpu_Vk_Binding_Sampled_Texture {
 typedef struct Gpu_Vk_Binding {
 	Gpu_Vk_Binding_Kind kind;
 	union {
-		Gpu_Vk_Binding_Output_Texture output_texture;
+		Gpu_Vk_Binding_Storage_Texture storage_texture;
 		Gpu_Vk_Binding_Sampled_Texture sampled_texture;
 		Gpu_Vk_Slice slice;
 	};

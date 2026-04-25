@@ -267,6 +267,7 @@ typedef struct Gpu_Vk {
 	VkDevice device;
 	VkSurfaceKHR surface;
 	Gpu_Vk_Device_Function_Table device_function_table;
+	VkPhysicalDeviceLimits device_limits;
 
 	VkSwapchainKHR swapchain;
 	VkExtent2D swapchain_extent;
@@ -479,6 +480,13 @@ bool gpu_vk_is_device_suitable(VkPhysicalDevice device, Allocator* scratch_alloc
 	VkPhysicalDeviceFeatures device_features;
 	vkGetPhysicalDeviceFeatures(device, &device_features);
 
+	if (!device_features.shaderInt16) {
+		return false;
+	}
+	if (!device_features.shaderInt64) {
+		return false;
+	}
+
 	Gpu_Vk_Queue_Family_Indices queue_indices = gpu_vk_get_physical_device_queue_families(device, scratch_allocator);
 	if (!gpu_vk_queue_family_indices_is_complete(queue_indices)) {
 		return false;
@@ -567,13 +575,11 @@ void gpu_vk_init_device(void) {
 	VkPhysicalDevice physical_device = gpu_vk_find_physical_device();
 	gpu_vk.physical_device = physical_device;
 
-#if GPU_VK_LOGGING
-{
 	VkPhysicalDeviceProperties physical_device_properties;
 	vkGetPhysicalDeviceProperties(physical_device, &physical_device_properties);
 	gpu_vk_log("Creating logical device for \"%s\".", physical_device_properties.deviceName);
-}
-#endif
+
+	gpu_vk.device_limits = physical_device_properties.limits;
 
 	Gpu_Vk_Queue_Family_Indices queue_indices = gpu_vk_get_physical_device_queue_families(physical_device, allocator);
 	gpu_vk.queue_family_indices = queue_indices;
@@ -608,7 +614,10 @@ void gpu_vk_init_device(void) {
 		}
 	}
 
-	VkPhysicalDeviceFeatures device_features = {0};
+	VkPhysicalDeviceFeatures device_features = {
+		.shaderInt16 = true,
+		.shaderInt64 = true,
+	};
 
 	VkDeviceCreateInfo device_create_info = {0};
 	device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -771,7 +780,10 @@ Gpu_Vk_Size_And_Align gpu_vk_size_and_align_for_texture(const Gpu_Vk_Texture_Des
 
 	return (Gpu_Vk_Size_And_Align) {
 		.size = mem_reqs.size,
-		.align = mem_reqs.alignment,
+
+		// On older hardware tiled textures and buffers can't overlap the same page(s).
+		// So we bump the alignment to prevent overlap.
+		.align = sl_max(mem_reqs.alignment, gpu_vk.device_limits.bufferImageGranularity),
 	};
 }
 
@@ -1218,24 +1230,41 @@ void* gpu_vk_get_slice_host_ptr(Gpu_Vk_Slice slice) {
 	sl_assert(heap_data->memory_type == Gpu_Vk_Memory_Type_Host_Visible, "Can only map host-visible memory.");
 	return heap_data->host_ptr + slice.offset;
 }
-void gpu_vk_flush_slice(Gpu_Vk_Slice slice) {
+void gpu_vk_flush_slice_to_gpu(Gpu_Vk_Slice slice) {
 	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, slice.heap);
 	sl_assert(heap_data->memory_type == Gpu_Vk_Memory_Type_Host_Visible, "Flush only makes sense for host-visible memory.");
 
+	const u64 aligned_offset = sl_round_down_u64(slice.offset, gpu_vk.device_limits.nonCoherentAtomSize);
+	const u64 aligned_size = sl_round_up_u64(slice.size + (slice.offset - aligned_offset), gpu_vk.device_limits.nonCoherentAtomSize);
+
 	VkMappedMemoryRange memory_range = {
 		.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-		.offset = slice.offset,
-		.size = slice.size,
+		.offset = aligned_offset,
+		.size = aligned_size,
+		.memory = heap_data->device_memory
+	};
+
+	// To simplify the API, we wait for upload to complete before returning.
+	// This is sub-optimal.
+	VkResult flush_result = vkFlushMappedMemoryRanges(gpu_vk.device, 1, &memory_range);
+	sl_assert(flush_result == VK_SUCCESS, "Failed to flush slice upload.");
+}
+void gpu_vk_flush_slice_from_gpu(Gpu_Vk_Slice slice) {
+	Gpu_Vk_Heap_Data* heap_data = gpu_vk_heap_pool_resolve(&gpu_vk.heap_pool, slice.heap);
+	sl_assert(heap_data->memory_type == Gpu_Vk_Memory_Type_Host_Visible, "Flush only makes sense for host-visible memory.");
+
+	const u64 aligned_offset = sl_round_down_u64(slice.offset, gpu_vk.device_limits.nonCoherentAtomSize);
+	const u64 aligned_size = sl_round_up_u64(slice.size + (slice.offset - aligned_offset), gpu_vk.device_limits.nonCoherentAtomSize);
+
+	VkMappedMemoryRange memory_range = {
+		.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+		.offset = aligned_offset,
+		.size = aligned_size,
 		.memory = heap_data->device_memory
 	};
 
 	VkResult invalidate_result = vkInvalidateMappedMemoryRanges(gpu_vk.device, 1, &memory_range);
 	sl_assert(invalidate_result == VK_SUCCESS, "Failed to invalidate slice.");
-
-	// To simplify the API, we wait for upload to complete before returning.
-	// This is sub-optimal.
-	VkResult flush_result = vkFlushMappedMemoryRanges(gpu_vk.device, 1, &memory_range);
-	sl_assert(invalidate_result == VK_SUCCESS, "Failed to flush slice upload.");
 }
 
 // Command Buffer
@@ -1364,7 +1393,7 @@ VkSemaphore gpu_vk_get_next_command_buffer_semaphore(Gpu_Vk_Command_Buffer cb) {
 
 sl_inline VkDescriptorType gpu_vk_binding_kind_to_vk_descriptor_type(Gpu_Vk_Binding_Kind binding_kind) {
 	switch (binding_kind) {
-		case Gpu_Vk_Binding_Kind_Output_Texture: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		case Gpu_Vk_Binding_Kind_Storage_Texture: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 		case Gpu_Vk_Binding_Kind_Sampled_Texture: return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		case Gpu_Vk_Binding_Kind_Slice: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	}
@@ -1438,12 +1467,12 @@ sl_inline void gpu_vk_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer 
 		VkWriteDescriptorSet* write = &writes[binding_idx];
 		Gpu_Vk_Binding binding = bindings[binding_idx];
 		switch (binding.kind) {
-			case Gpu_Vk_Binding_Kind_Output_Texture: {
+			case Gpu_Vk_Binding_Kind_Storage_Texture: {
 				VkDescriptorImageInfo* image_info;
 				allocator_new(&arena->allocator, image_info, 1);
 				*image_info = (VkDescriptorImageInfo) {
 					.imageLayout = VK_IMAGE_LAYOUT_GENERAL, // todo
-					.imageView = gpu_vk_texture_get_image_view(binding.output_texture.texture),
+					.imageView = gpu_vk_texture_get_image_view(binding.storage_texture.texture),
 					.sampler = VK_NULL_HANDLE,
 				};
 

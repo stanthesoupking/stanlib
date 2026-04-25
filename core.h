@@ -181,6 +181,20 @@ sl_inline void sl_abort(const char* message) {
 	abort();
 }
 
+sl_inline u32 sl_round_down_u32(u32 x, u32 multiple) {
+	return (x / multiple) * multiple;
+}
+sl_inline u64 sl_round_down_u64(u64 x, u64 multiple) {
+	return (x / multiple) * multiple;
+}
+
+sl_inline u32 sl_round_up_u32(u32 x, u32 multiple) {
+	return ((x + (multiple - 1)) / multiple) * multiple;
+}
+sl_inline u64 sl_round_up_u64(u64 x, u64 multiple) {
+	return ((x + (multiple - 1)) / multiple) * multiple;
+}
+
 sl_inline u32 sl_next_pow2_exp_u32(u32 x) {
 	if (x <= 1) return 0;
 #if defined(_MSC_VER)
