@@ -46,7 +46,6 @@ typedef enum Gpu_Vk_Texture_Layout {
 } Gpu_Vk_Texture_Layout;
 
 typedef struct Gpu_Vk_Swapchain_Desc {
-	vec2_u32 size;
 	Gpu_Vk_Format format;
 	// colorspace
 } Gpu_Vk_Swapchain_Desc;
@@ -190,7 +189,7 @@ void gpu_vk_deinit();
 Gpu_Vk_Swapchain gpu_vk_new_swapchain(const Gpu_Vk_Swapchain_Init_Desc* init_desc);
 void gpu_vk_destroy_swapchain(Gpu_Vk_Swapchain swapchain);
 
-bool gpu_vk_fetch_swapchain_texture(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Command_Buffer cb, Gpu_Vk_Swapchain_Desc swapchain_desc, Gpu_Vk_Texture* out_texture);
+bool gpu_vk_fetch_swapchain_texture(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Command_Buffer cb, Gpu_Vk_Swapchain_Desc swapchain_desc, u64 timeout, Gpu_Vk_Texture* out_texture);
 
 // Texture
 typedef struct Gpu_Vk_Texture_Desc {

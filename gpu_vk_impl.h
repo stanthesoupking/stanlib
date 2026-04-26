@@ -160,6 +160,7 @@ sl_pool(Gpu_Vk_Compute_Pipeline_Data, Gpu_Vk_Compute_Pipeline_Pool, gpu_vk_compu
 typedef struct Gpu_Vk_Swapchain_Instance {
 	u32 rc;
 	Gpu_Vk_Swapchain_Desc desc;
+	vec2_u32 size;
 	VkSwapchainKHR swapchain;
 
 	Gpu_Vk_Texture* textures;
@@ -1003,12 +1004,18 @@ void gpu_vk_release_swapchain_instance(Gpu_Vk_Swapchain_Instance* instance) {
 	}
 }
 
-Gpu_Vk_Swapchain_Instance* gpu_vk_apply_swapchain_desc(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Swapchain_Desc desc) {
+Gpu_Vk_Swapchain_Instance* gpu_vk_get_instance(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Swapchain_Desc desc) {
 	Gpu_Vk_Swapchain_Data* swapchain_data = gpu_vk_swapchain_pool_resolve(&gpu_vk.swapchain_pool, swapchain);
+
+	VkSurfaceCapabilitiesKHR capabilities;
+	VkResult get_capabilities_result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu_vk.physical_device, swapchain_data->surface, &capabilities);
+	sl_assert(get_capabilities_result == VK_SUCCESS, "Failed to get swapchain capabilities.");
+
+	const vec2_u32 new_size = { capabilities.currentExtent.width, capabilities.currentExtent.height };
 
 	Gpu_Vk_Swapchain_Instance* current_instance = swapchain_data->current_instance;
 
-	const bool must_rebuild = (current_instance == NULL) || (current_instance->desc.size.x != desc.size.x) || (current_instance->desc.size.y != desc.size.y);
+	const bool must_rebuild = (current_instance == NULL) || (current_instance->size.x != new_size.x) || (current_instance->size.y != new_size.y);
 	if (!must_rebuild) {
 		return current_instance;
 	}
@@ -1018,11 +1025,8 @@ Gpu_Vk_Swapchain_Instance* gpu_vk_apply_swapchain_desc(Gpu_Vk_Swapchain swapchai
 	*new_instance = (Gpu_Vk_Swapchain_Instance) {
 		.rc = 1,
 		.desc = desc,
+		.size = new_size,
 	};
-
-	VkSurfaceCapabilitiesKHR capabilities;
-	VkResult get_capabilities_result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu_vk.physical_device, swapchain_data->surface, &capabilities);
-	sl_assert(get_capabilities_result == VK_SUCCESS, "Failed to get swapchain capabilities.");
 
 	VkColorSpaceKHR colorspace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 
@@ -1044,11 +1048,11 @@ Gpu_Vk_Swapchain_Instance* gpu_vk_apply_swapchain_desc(Gpu_Vk_Swapchain swapchai
 
 	const u32 min_image_count = sl_clamp(3, capabilities.minImageCount, (capabilities.maxImageCount == 0) ? u32_max : capabilities.maxImageCount);
 
-	gpu_vk_log("Rebuilding swapchain with extent (%u, %u), %u min images.", desc.size.x, desc.size.y, min_image_count);
+	gpu_vk_log("Rebuilding swapchain with extent (%u, %u), %u min images.", new_size.x, new_size.y, min_image_count);
 
 	const VkExtent2D extent = {
-		.width = desc.size.x,
-		.height = desc.size.y,
+		.width = new_size.x,
+		.height = new_size.y,
 	};
 
 	VkFormat vk_format = gpu_vk_format_to_vk_format(desc.format);
@@ -1786,24 +1790,27 @@ void gpu_vk_transition_texture_layouts(Gpu_Vk_Command_Buffer cb, const Gpu_Vk_Te
 	});
 }
 
-bool gpu_vk_fetch_swapchain_texture(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Command_Buffer cb, Gpu_Vk_Swapchain_Desc swapchain_desc, Gpu_Vk_Texture* out_texture) {
+bool gpu_vk_fetch_swapchain_texture(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Command_Buffer cb, Gpu_Vk_Swapchain_Desc swapchain_desc, u64 timeout, Gpu_Vk_Texture* out_texture) {
 	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Vk_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
-
-	Gpu_Vk_Swapchain_Instance* swapchain_instance = gpu_vk_apply_swapchain_desc(swapchain, swapchain_desc);
 
 	VkSemaphore semaphore = gpu_vk_get_next_command_buffer_semaphore(cb);
 
 	u32 image_index;
-	VkResult acquire_image_result = vkAcquireNextImageKHR(gpu_vk.device, swapchain_instance->swapchain, u64_max, semaphore, VK_NULL_HANDLE, &image_index);
+	Gpu_Vk_Swapchain_Instance* swapchain_instance;
+	while (true) {
+		swapchain_instance = gpu_vk_get_instance(swapchain, swapchain_desc);
+		VkResult acquire_image_result = vkAcquireNextImageKHR(gpu_vk.device, swapchain_instance->swapchain, timeout, semaphore, VK_NULL_HANDLE, &image_index);
 
-	if (acquire_image_result != VK_SUCCESS) {
-		// Swapchain is out of date, early out.
-
-		// Return unused semaphore.
-		cb_data->next_free_semaphore--;
-
-		return false;
+		if (acquire_image_result == VK_ERROR_OUT_OF_DATE_KHR) {
+			continue;
+		} else if (acquire_image_result == VK_NOT_READY) {
+			// Return unused semaphore.
+			cb_data->next_free_semaphore--;
+			return false;
+		} else if (acquire_image_result == VK_SUCCESS) {
+			break;
+		}
 	}
 
 	swapchain_instance->rc++;
