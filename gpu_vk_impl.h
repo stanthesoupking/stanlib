@@ -128,7 +128,6 @@ sl_pool(Gpu_Vk_Heap_Data, Gpu_Vk_Heap_Pool, gpu_vk_heap_pool);
 
 typedef enum Gpu_Vk_Texture_Data_Kind {
 	Gpu_Vk_Texture_Data_Kind_Immediate,
-	Gpu_Vk_Texture_Data_Kind_Swapchain_Reference
 } Gpu_Vk_Texture_Data_Kind;
 
 typedef struct Gpu_Vk_Texture_Data {
@@ -145,11 +144,6 @@ typedef struct Gpu_Vk_Texture_Data {
 			vec3_u32 size;
 			VkFormat format;
 		} imm;
-
-		// Gpu_Vk_Texture_Kind_Swapchain_Reference
-		struct {
-			u32 image_index;
-		} ref;
 	};
 } Gpu_Vk_Texture_Data;
 sl_pool(Gpu_Vk_Texture_Data, Gpu_Vk_Texture_Pool, gpu_vk_texture_pool);
@@ -163,6 +157,22 @@ typedef struct Gpu_Vk_Compute_Pipeline_Data {
 } Gpu_Vk_Compute_Pipeline_Data;
 sl_pool(Gpu_Vk_Compute_Pipeline_Data, Gpu_Vk_Compute_Pipeline_Pool, gpu_vk_compute_pipeline_pool);
 
+typedef struct Gpu_Vk_Swapchain_Instance {
+	u32 rc;
+	Gpu_Vk_Swapchain_Desc desc;
+	VkSwapchainKHR swapchain;
+
+	Gpu_Vk_Texture* textures;
+	u32 texture_count;
+} Gpu_Vk_Swapchain_Instance;
+
+typedef struct Gpu_Vk_Swapchain_Data {
+	u32 generation;
+	VkSurfaceKHR surface;
+	Gpu_Vk_Swapchain_Instance* current_instance;
+} Gpu_Vk_Swapchain_Data;
+sl_pool(Gpu_Vk_Swapchain_Data, Gpu_Vk_Swapchain_Pool, gpu_vk_swapchain_pool);
+
 typedef enum Gpu_Vk_Command_Buffer_State {
 	Gpu_Vk_Command_Buffer_State_Idle,
 	Gpu_Vk_Command_Buffer_State_Recording,
@@ -171,7 +181,6 @@ typedef enum Gpu_Vk_Command_Buffer_State {
 
 typedef enum Gpu_Vk_Command_Kind {
 	Gpu_Vk_Command_Kind_Transition_Texture_Layouts,
-	Gpu_Vk_Command_Kind_Fetch_Swapchain_Texture,
 	Gpu_Vk_Command_Kind_Begin_Render,
 	Gpu_Vk_Command_Kind_End_Render,
 	Gpu_Vk_Command_Kind_Dispatch,
@@ -182,11 +191,6 @@ typedef enum Gpu_Vk_Command_Kind {
 typedef struct Gpu_Vk_Command_Begin_Render {
 	Gpu_Vk_Render_Pass render_pass;
 } Gpu_Vk_Command_Begin_Render;
-
-typedef struct Gpu_Vk_Command_Fetch_Swapchain_Texture {
-	Gpu_Vk_Swapchain_Desc swapchain_desc;
-	Gpu_Vk_Texture swapchain_texture;
-} Gpu_Vk_Command_Fetch_Swapchain_Texture;
 
 typedef struct Gpu_Vk_Command_Dispatch {
 	Gpu_Vk_Compute_Pipeline pipeline;
@@ -212,7 +216,6 @@ typedef struct Gpu_Vk_Command {
 	union {
 		Gpu_Vk_Command_Transition_Texture_Layouts* transition_texture_layouts;
 		Gpu_Vk_Command_Begin_Render* begin_render;
-		Gpu_Vk_Command_Fetch_Swapchain_Texture* fetch_swapchain_texture;
 		Gpu_Vk_Command_Dispatch* dispatch;
 		Gpu_Vk_Command_Blit* blit;
 	} data;
@@ -222,6 +225,7 @@ sl_seq(Gpu_Vk_Command, Gpu_Vk_Command_Seq, gpu_vk_command_seq);
 sl_seq(VkSemaphore, Gpu_Vk_Semaphore_Seq, gpu_vk_semaphore_seq);
 
 typedef struct Gpu_Vk_Swapchain_Present {
+	Gpu_Vk_Swapchain_Instance* swapchain_instance; // retained
 	Gpu_Vk_Texture texture;
 	u32 image_index;
 	VkSemaphore image_available_semaphore;
@@ -239,8 +243,6 @@ typedef struct Gpu_Vk_Command_Buffer_Data {
 	u32 next_free_semaphore;
 
 	Gpu_Vk_Swapchain_Present_Seq swapchain_presents;
-
-	SL_Handle_Seq cleanup_textures;
 
 	SL_Arena_Allocator* arena;
 	Gpu_Vk_Command_Seq commands;
@@ -265,17 +267,10 @@ typedef struct Gpu_Vk {
 	VkInstance instance;
 	VkPhysicalDevice physical_device;
 	VkDevice device;
-	VkSurfaceKHR surface;
 	Gpu_Vk_Device_Function_Table device_function_table;
 	VkPhysicalDeviceLimits device_limits;
 
-	VkSwapchainKHR swapchain;
-	VkExtent2D swapchain_extent;
-	VkFormat swapchain_format;
-	VkImage* swapchain_images;
-	Gpu_Vk_Texture* swapchain_textures;
-	u32 swapchain_image_count;
-	Gpu_Vk_Swapchain_Init_Desc swapchain_desc;
+	Gpu_Vk_Swapchain_Init_Desc swapchain_init_desc;
 
 	Gpu_Vk_Memory_Type_Indices memory_type_indices;
 	Gpu_Vk_Queue_Family_Indices queue_family_indices;
@@ -285,6 +280,7 @@ typedef struct Gpu_Vk {
 	Gpu_Vk_Texture_Pool texture_pool;
 	Gpu_Vk_Command_Buffer_Pool_Pool command_pool_pool;
 	Gpu_Vk_Compute_Pipeline_Pool compute_pipeline_pool;
+	Gpu_Vk_Swapchain_Pool swapchain_pool;
 
 	Gpu_Vk_Framebuffer_Pool framebuffer_pool;
 	Gpu_Vk_Framebuffer_Map framebuffer_map;
@@ -390,8 +386,10 @@ Gpu_Vk_Queue_Family_Indices gpu_vk_get_physical_device_queue_families(VkPhysical
 	for (u32 queue_idx = 0; queue_idx < queue_family_count; queue_idx++) {
 		VkQueueFamilyProperties queue_family = queue_families[queue_idx];
 
-		VkBool32 present_support = false;
-		vkGetPhysicalDeviceSurfaceSupportKHR(device, queue_idx, gpu_vk.surface, &present_support);
+		// TODO
+		// VkBool32 present_support = false;
+		// vkGetPhysicalDeviceSurfaceSupportKHR(device, queue_idx, gpu_vk.surface, &present_support);
+		bool present_support = true;
 
 		const VkQueueFlagBits primary_queue_bits = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
 
@@ -564,11 +562,6 @@ VkPhysicalDevice gpu_vk_find_physical_device(void) {
 	return suitable_devices[0];
 }
 
-void gpu_vk_init_surface(void) {
-	gpu_vk_log("Creating surface.");
-	gpu_vk.surface = gpu_vk.swapchain_desc.get_surface_fn(gpu_vk.swapchain_desc.ctx, gpu_vk.instance);
-}
-
 void gpu_vk_init_device(void) {
 	Allocator* allocator = gpu_vk.allocator;
 
@@ -663,11 +656,6 @@ VkImageView gpu_vk_texture_get_image_view(Gpu_Vk_Texture texture) {
 		case Gpu_Vk_Texture_Data_Kind_Immediate: {
 			return data->imm.image_view;
 		} break;
-
-		case Gpu_Vk_Texture_Data_Kind_Swapchain_Reference: {
-			Gpu_Vk_Texture swapchain_texture = gpu_vk.swapchain_textures[data->ref.image_index];
-			return gpu_vk_texture_get_image_view(swapchain_texture);
-		} break;
 	}
 }
 Gpu_Vk_Texture gpu_vk_texture_get_root(Gpu_Vk_Texture texture) {
@@ -677,10 +665,6 @@ Gpu_Vk_Texture gpu_vk_texture_get_root(Gpu_Vk_Texture texture) {
 	switch (data->data_kind) {
 		case Gpu_Vk_Texture_Data_Kind_Immediate: {
 			return texture;
-		} break;
-
-		case Gpu_Vk_Texture_Data_Kind_Swapchain_Reference: {
-			return gpu_vk.swapchain_textures[data->ref.image_index];
 		} break;
 	}
 }
@@ -727,6 +711,7 @@ sl_inline VkImageUsageFlags gpu_vk_texture_usage_to_vk_image_usage_flags(Gpu_Vk_
 sl_inline VkFormat gpu_vk_format_to_vk_format(Gpu_Vk_Format format) {
 	switch (format) {
 		case Gpu_Vk_Format_R8G8B8A8_UNORM: return VK_FORMAT_R8G8B8A8_UNORM;
+		case Gpu_Vk_Format_B8G8R8A8_SRGB: return VK_FORMAT_B8G8R8A8_SRGB;
 	}
 }
 
@@ -871,10 +856,6 @@ void gpu_vk_destroy_texture(Gpu_Vk_Texture texture) {
 				vkDestroyImage(gpu_vk.device, data->imm.image, NULL);
 			}
 		} break;
-
-		case Gpu_Vk_Texture_Data_Kind_Swapchain_Reference: {
-			// Nothing to clean up.
-		} break;
 	}
 
 	gpu_vk_texture_pool_release(&gpu_vk.texture_pool, texture);
@@ -995,35 +976,62 @@ Gpu_Vk_Framebuffer gpu_vk_acquire_framebuffer(Gpu_Vk_Framebuffer_Key key) {
 }
 
 // Swapchain
-void gpu_vk_ensure_valid_swapchain() {
-	VkExtent2D extent = gpu_vk.swapchain_desc.get_swapchain_extent_fn(gpu_vk.swapchain_desc.ctx);
+Gpu_Vk_Swapchain gpu_vk_new_swapchain(const Gpu_Vk_Swapchain_Init_Desc* init_desc) {
+	Gpu_Vk_Swapchain swapchain = gpu_vk_swapchain_pool_acquire(&gpu_vk.swapchain_pool);
+	Gpu_Vk_Swapchain_Data* swapchain_data = gpu_vk_swapchain_pool_resolve(&gpu_vk.swapchain_pool, swapchain);
 
-	const bool must_rebuild = (gpu_vk.swapchain == VK_NULL_HANDLE) || (extent.width != gpu_vk.swapchain_extent.width) || (extent.height != gpu_vk.swapchain_extent.height);
+	// Create surface
+	swapchain_data->surface = init_desc->get_surface_fn(init_desc->ctx, gpu_vk.instance);
+
+	return swapchain;
+}
+void gpu_vk_destroy_swapchain(Gpu_Vk_Swapchain swapchain) {
+	// todo
+}
+
+void gpu_vk_release_swapchain_instance(Gpu_Vk_Swapchain_Instance* instance) {
+	gpu_vk_validate(instance->rc > 0, "Over-released");
+	instance->rc--;
+
+	if (instance->rc == 0) {
+		for (u32 texture_idx = 0; texture_idx < instance->texture_count; texture_idx++) {
+			gpu_vk_destroy_texture(instance->textures[texture_idx]);
+		}
+		vkDestroySwapchainKHR(gpu_vk.device, instance->swapchain, NULL);
+		allocator_free(gpu_vk.allocator, instance->textures, instance->texture_count);
+		allocator_free(gpu_vk.allocator, instance, 1);
+	}
+}
+
+Gpu_Vk_Swapchain_Instance* gpu_vk_apply_swapchain_desc(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Swapchain_Desc desc) {
+	Gpu_Vk_Swapchain_Data* swapchain_data = gpu_vk_swapchain_pool_resolve(&gpu_vk.swapchain_pool, swapchain);
+
+	Gpu_Vk_Swapchain_Instance* current_instance = swapchain_data->current_instance;
+
+	const bool must_rebuild = (current_instance == NULL) || (current_instance->desc.size.x != desc.size.x) || (current_instance->desc.size.y != desc.size.y);
 	if (!must_rebuild) {
-		return;
+		return current_instance;
 	}
 
-	vkDeviceWaitIdle(gpu_vk.device);
-
-	// Free old image views/framebuffers
-	for (u32 image_idx = 0; image_idx < gpu_vk.swapchain_image_count; image_idx++) {
-		gpu_vk_destroy_texture(gpu_vk.swapchain_textures[image_idx]);
-	}
-
-	gpu_vk.swapchain_extent = extent;
+	Gpu_Vk_Swapchain_Instance* new_instance;
+	allocator_new(gpu_vk.allocator, new_instance, 1);
+	*new_instance = (Gpu_Vk_Swapchain_Instance) {
+		.rc = 1,
+		.desc = desc,
+	};
 
 	VkSurfaceCapabilitiesKHR capabilities;
-	VkResult get_capabilities_result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu_vk.physical_device, gpu_vk.surface, &capabilities);
+	VkResult get_capabilities_result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu_vk.physical_device, swapchain_data->surface, &capabilities);
 	sl_assert(get_capabilities_result == VK_SUCCESS, "Failed to get swapchain capabilities.");
 
 	VkColorSpaceKHR colorspace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 
 	u32 available_present_mode_count;
-	vkGetPhysicalDeviceSurfacePresentModesKHR(gpu_vk.physical_device, gpu_vk.surface, &available_present_mode_count, NULL);
+	vkGetPhysicalDeviceSurfacePresentModesKHR(gpu_vk.physical_device, swapchain_data->surface, &available_present_mode_count, NULL);
 
 	VkPresentModeKHR* available_present_modes;
 	allocator_new(gpu_vk.allocator, available_present_modes, available_present_mode_count);
-	vkGetPhysicalDeviceSurfacePresentModesKHR(gpu_vk.physical_device, gpu_vk.surface, &available_present_mode_count, available_present_modes);
+	vkGetPhysicalDeviceSurfacePresentModesKHR(gpu_vk.physical_device, swapchain_data->surface, &available_present_mode_count, available_present_modes);
 
 	VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR; // default
 	for (u32 available_present_mode_idx = 0; available_present_mode_idx < available_present_mode_count; available_present_mode_idx++) {
@@ -1036,12 +1044,19 @@ void gpu_vk_ensure_valid_swapchain() {
 
 	const u32 min_image_count = sl_clamp(3, capabilities.minImageCount, (capabilities.maxImageCount == 0) ? u32_max : capabilities.maxImageCount);
 
-	gpu_vk_log("Rebuilding swapchain with extent (%u, %u), %u min images.", extent.width, extent.height, min_image_count);
+	gpu_vk_log("Rebuilding swapchain with extent (%u, %u), %u min images.", desc.size.x, desc.size.y, min_image_count);
+
+	const VkExtent2D extent = {
+		.width = desc.size.x,
+		.height = desc.size.y,
+	};
+
+	VkFormat vk_format = gpu_vk_format_to_vk_format(desc.format);
 
 	VkSwapchainCreateInfoKHR create_info = {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-		.surface = gpu_vk.surface,
-		.imageFormat = gpu_vk.swapchain_format,
+		.surface = swapchain_data->surface,
+		.imageFormat = vk_format,
 		.imageColorSpace = colorspace,
 		.imageExtent = extent,
 		.minImageCount = min_image_count,
@@ -1050,7 +1065,7 @@ void gpu_vk_ensure_valid_swapchain() {
 		.preTransform = capabilities.currentTransform,
 		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
 		.clipped = VK_TRUE,
-		.oldSwapchain = gpu_vk.swapchain,
+		.oldSwapchain = current_instance ? current_instance->swapchain : NULL,
 		.presentMode = present_mode,
 	};
 
@@ -1063,33 +1078,27 @@ void gpu_vk_ensure_valid_swapchain() {
     	create_info.pQueueFamilyIndices = queue_indices.index;
 	}
 
-	VkResult create_result = vkCreateSwapchainKHR(gpu_vk.device, &create_info, NULL, &gpu_vk.swapchain);
+	VkResult create_result = vkCreateSwapchainKHR(gpu_vk.device, &create_info, NULL, &new_instance->swapchain);
 	sl_assert(create_result == VK_SUCCESS, "Failed to create swapchain.");
 
 	u32 swapchain_image_count;
-	vkGetSwapchainImagesKHR(gpu_vk.device, gpu_vk.swapchain, &swapchain_image_count, NULL);
+	vkGetSwapchainImagesKHR(gpu_vk.device, new_instance->swapchain, &swapchain_image_count, NULL);
 
-	// Resize image arrays
-	if (gpu_vk.swapchain_image_count != swapchain_image_count) {
-		if (gpu_vk.swapchain_image_count > 0) {
-			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_images, gpu_vk.swapchain_image_count);
-			allocator_free(gpu_vk.allocator, gpu_vk.swapchain_textures, gpu_vk.swapchain_image_count);
-		}
-		gpu_vk.swapchain_image_count = swapchain_image_count;
-		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_images, swapchain_image_count);
-		allocator_new(gpu_vk.allocator, gpu_vk.swapchain_textures, swapchain_image_count);
-	}
+	new_instance->texture_count = swapchain_image_count;
+	allocator_new(gpu_vk.allocator, new_instance->textures, swapchain_image_count);
 
 	// Get images
-	vkGetSwapchainImagesKHR(gpu_vk.device, gpu_vk.swapchain, &swapchain_image_count, gpu_vk.swapchain_images);
+	VkImage* images;
+	allocator_new(gpu_vk.allocator, images, swapchain_image_count);
+	vkGetSwapchainImagesKHR(gpu_vk.device, new_instance->swapchain, &swapchain_image_count, images);
 
 	// Create image views
 	for (u32 image_idx = 0; image_idx < swapchain_image_count; image_idx++) {
 		const VkImageViewCreateInfo view_create_info = {
 			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-			.image = gpu_vk.swapchain_images[image_idx],
+			.image = images[image_idx],
 			.viewType = VK_IMAGE_VIEW_TYPE_2D,
-			.format = gpu_vk.swapchain_format,
+			.format = vk_format,
 			.components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
 			.components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
 			.components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -1105,14 +1114,24 @@ void gpu_vk_ensure_valid_swapchain() {
 		Gpu_Vk_Texture_Data* texture_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, texture);
 		texture_data->data_kind = Gpu_Vk_Texture_Data_Kind_Immediate;
 		texture_data->imm.size = (vec3_u32) { extent.width, extent.height, 1 };
-		texture_data->imm.format = gpu_vk.swapchain_format;
+		texture_data->imm.format = vk_format;
 		texture_data->imm.layout = Gpu_Vk_Texture_Layout_Undefined;
-		texture_data->imm.image = gpu_vk.swapchain_images[image_idx];
+		texture_data->imm.image = images[image_idx];
 		const VkResult view_create_result = vkCreateImageView(gpu_vk.device, &view_create_info, NULL, &texture_data->imm.image_view);
 		sl_assert(view_create_result == VK_SUCCESS, "Failed to create image view for swapchain.");
 
-		gpu_vk.swapchain_textures[image_idx] = texture;
+		new_instance->textures[image_idx] = texture;
 	}
+
+	allocator_free(gpu_vk.allocator, images, swapchain_image_count);
+
+	swapchain_data->current_instance = new_instance;
+
+	if (current_instance != NULL) {
+		gpu_vk_release_swapchain_instance(current_instance);
+	}
+
+	return new_instance;
 }
 
 void gpu_vk_init_resource_pools() {
@@ -1120,6 +1139,7 @@ void gpu_vk_init_resource_pools() {
 	gpu_vk.texture_pool = gpu_vk_texture_pool_new(gpu_vk.allocator, 0);
 	gpu_vk.command_pool_pool = gpu_vk_command_buffer_pool_pool_new(gpu_vk.allocator, 0);
 	gpu_vk.compute_pipeline_pool = gpu_vk_compute_pipeline_pool_new(gpu_vk.allocator, 0);
+	gpu_vk.swapchain_pool = gpu_vk_swapchain_pool_new(gpu_vk.allocator, 0);
 
 	gpu_vk.framebuffer_pool = gpu_vk_framebuffer_pool_new(gpu_vk.allocator, 0);
 	gpu_vk.framebuffer_map = gpu_vk_framebuffer_map_new(gpu_vk.allocator, 64);
@@ -1132,13 +1152,10 @@ void gpu_vk_init_resource_pools() {
 void gpu_vk_init(const Gpu_Vk_Desc* desc) {
 	gpu_vk = (Gpu_Vk) {};
 	gpu_vk.allocator = desc->allocator;
-	gpu_vk.swapchain_desc = desc->swapchain_desc;
-	gpu_vk.swapchain_format = VK_FORMAT_B8G8R8A8_SRGB;
+	gpu_vk.swapchain_init_desc = desc->swapchain_desc;
 	gpu_vk_init_instance(desc);
-	gpu_vk_init_surface();
 	gpu_vk_init_device();
 	gpu_vk_init_resource_pools();
-	gpu_vk_ensure_valid_swapchain();
 }
 void gpu_vk_deinit() {
 	vkDestroyInstance(gpu_vk.instance, NULL);
@@ -1273,7 +1290,6 @@ void gpu_init_command_buffer(Gpu_Vk_Command_Buffer_Data* command_buffer) {
 		.arena = sl_arena_allocator_new(gpu_vk.allocator, 256 << 10),
 		.commands = gpu_vk_command_seq_new(gpu_vk.allocator, 8),
 		.semaphores = gpu_vk_semaphore_seq_new(gpu_vk.allocator, 0),
-		.cleanup_textures = sl_handle_seq_new(gpu_vk.allocator, 0),
 		.swapchain_presents = gpu_vk_swapchain_present_seq_new(gpu_vk.allocator, 0),
 	};
 
@@ -1551,33 +1567,6 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 				gpu_vk_execute_transition_textures_to_layout(cb_data->arena, vk_cb, transition_texture_layouts->textures, transition_texture_layouts->layouts, transition_texture_layouts->count);
 			} break;
 
-			case Gpu_Vk_Command_Kind_Fetch_Swapchain_Texture: {
-				Gpu_Vk_Command_Fetch_Swapchain_Texture* fetch_swapchain_texture = command.data.fetch_swapchain_texture;
-
-				VkSemaphore semaphore = gpu_vk_get_next_command_buffer_semaphore(cb);
-
-				// todo: rebuild swapchain using desc.
-
-				Gpu_Vk_Texture_Data* swapchain_texture_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, fetch_swapchain_texture->swapchain_texture);
-
-				u32 image_index;
-				VkResult acquire_image_result = vkAcquireNextImageKHR(gpu_vk.device, gpu_vk.swapchain, u64_max, semaphore, VK_NULL_HANDLE, &image_index);
-				sl_assert(acquire_image_result == VK_SUCCESS, "Failed to acquire next swapchain image.");
-
-				swapchain_texture_data->ref.image_index = image_index;
-
-				Gpu_Vk_Texture_Data* root_texture_data = gpu_vk_texture_get_root_data(fetch_swapchain_texture->swapchain_texture);
-
-				// Always discard the original contents of swapchain texture.
-				root_texture_data->imm.layout = Gpu_Vk_Texture_Layout_Undefined;
-
-				gpu_vk_swapchain_present_seq_push(&cb_data->swapchain_presents, (Gpu_Vk_Swapchain_Present) {
-					.texture = fetch_swapchain_texture->swapchain_texture,
-					.image_index = image_index,
-					.image_available_semaphore = semaphore,
-				});
-			} break;
-
 			case Gpu_Vk_Command_Kind_Begin_Render: {
 				Gpu_Vk_Command_Begin_Render* begin_render = command.data.begin_render;
 				sl_assert(begin_render->render_pass.attachment_count > 0, "Must have at least one attachment in render pass.");
@@ -1744,7 +1733,7 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 
 		for (u32 present_idx = 0; present_idx < present_count; present_idx++) {
 			const Gpu_Vk_Swapchain_Present present_info = gpu_vk_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
-			swapchains[present_idx] = gpu_vk.swapchain;
+			swapchains[present_idx] = present_info.swapchain_instance->swapchain;
 			image_indices[present_idx] = present_info.image_index;
 		}
 
@@ -1764,10 +1753,10 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 		sl_assert((present_result == VK_SUCCESS) || (present_result == VK_ERROR_OUT_OF_DATE_KHR) || (present_result == VK_SUBOPTIMAL_KHR), "Failed to present command buffer.");
 	}
 
-	Gpu_Vk_Texture cleanup_texture;
-	while (sl_handle_seq_pop(&cb_data->cleanup_textures, &cleanup_texture)) {
-		gpu_vk_destroy_texture(cleanup_texture);
-	}
+	// for (u32 present_idx = 0; present_idx < present_count; present_idx++) {
+	// 	const Gpu_Vk_Swapchain_Present present_info = gpu_vk_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
+	// 	gpu_vk_release_swapchain_instance(present_info.swapchain_instance); // probs needs to happen when GPU actually completes (we're accessing image views etc.)
+	// }
 }
 
 void gpu_vk_transition_texture_layouts(Gpu_Vk_Command_Buffer cb, const Gpu_Vk_Texture* textures, const Gpu_Vk_Texture_Layout* layouts, u32 count) {
@@ -1797,33 +1786,44 @@ void gpu_vk_transition_texture_layouts(Gpu_Vk_Command_Buffer cb, const Gpu_Vk_Te
 	});
 }
 
-Gpu_Vk_Texture gpu_vk_fetch_swapchain_texture(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Swapchain_Desc swapchain_desc) {
+bool gpu_vk_fetch_swapchain_texture(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Command_Buffer cb, Gpu_Vk_Swapchain_Desc swapchain_desc, Gpu_Vk_Texture* out_texture) {
 	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Vk_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 
-	Gpu_Vk_Texture swapchain_texture = gpu_vk_texture_pool_acquire(&gpu_vk.texture_pool);
-	sl_handle_seq_push(&cb_data->cleanup_textures, swapchain_texture);
+	Gpu_Vk_Swapchain_Instance* swapchain_instance = gpu_vk_apply_swapchain_desc(swapchain, swapchain_desc);
+
+	VkSemaphore semaphore = gpu_vk_get_next_command_buffer_semaphore(cb);
+
+	u32 image_index;
+	VkResult acquire_image_result = vkAcquireNextImageKHR(gpu_vk.device, swapchain_instance->swapchain, u64_max, semaphore, VK_NULL_HANDLE, &image_index);
+
+	if (acquire_image_result != VK_SUCCESS) {
+		// Swapchain is out of date, early out.
+
+		// Return unused semaphore.
+		cb_data->next_free_semaphore--;
+
+		return false;
+	}
+
+	swapchain_instance->rc++;
+
+	Gpu_Vk_Texture swapchain_texture = swapchain_instance->textures[image_index];
 	Gpu_Vk_Texture_Data* swapchain_texture_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, swapchain_texture);
-	swapchain_texture_data->data_kind = Gpu_Vk_Texture_Data_Kind_Swapchain_Reference;
 
-	// Populated at enqueue-time.
-	swapchain_texture_data->ref.image_index = u32_max;
+	// Always discard the original contents of swapchain texture.
+	swapchain_texture_data->imm.layout = Gpu_Vk_Texture_Layout_Undefined;
 
-	Gpu_Vk_Command_Fetch_Swapchain_Texture* fetch_swapchain_texture;
-	allocator_new(&cb_data->arena->allocator, fetch_swapchain_texture, 1);
-	*fetch_swapchain_texture = (Gpu_Vk_Command_Fetch_Swapchain_Texture) {
-		.swapchain_desc = swapchain_desc,
-		.swapchain_texture = swapchain_texture,
-	};
-
-	gpu_vk_command_seq_push(&cb_data->commands, (Gpu_Vk_Command) {
-		.kind = Gpu_Vk_Command_Kind_Fetch_Swapchain_Texture,
-		.data = {
-			.fetch_swapchain_texture = fetch_swapchain_texture,
-		},
+	// Automatically present image when command buffer completes
+	gpu_vk_swapchain_present_seq_push(&cb_data->swapchain_presents, (Gpu_Vk_Swapchain_Present) {
+		.swapchain_instance = swapchain_instance,
+		.texture = swapchain_texture,
+		.image_index = image_index,
+		.image_available_semaphore = semaphore,
 	});
 
-	return swapchain_texture;
+	*out_texture = swapchain_texture;
+	return true;
 }
 
 void gpu_vk_begin_render(Gpu_Vk_Command_Buffer cb, const Gpu_Vk_Render_Pass* render_pass) {

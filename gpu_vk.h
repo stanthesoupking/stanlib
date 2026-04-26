@@ -10,9 +10,11 @@ typedef SL_Handle Gpu_Vk_Command_Buffer_Pool;
 typedef SL_Handle Gpu_Vk_Texture;
 typedef SL_Handle Gpu_Vk_Sampler;
 typedef SL_Handle Gpu_Vk_Compute_Pipeline;
+typedef SL_Handle Gpu_Vk_Swapchain;
 
 typedef enum Gpu_Vk_Format {
 	Gpu_Vk_Format_R8G8B8A8_UNORM,
+	Gpu_Vk_Format_B8G8R8A8_SRGB,
 } Gpu_Vk_Format;
 
 typedef struct Gpu_Vk_Size_And_Align {
@@ -45,7 +47,7 @@ typedef enum Gpu_Vk_Texture_Layout {
 
 typedef struct Gpu_Vk_Swapchain_Desc {
 	vec2_u32 size;
-	// format
+	Gpu_Vk_Format format;
 	// colorspace
 } Gpu_Vk_Swapchain_Desc;
 
@@ -170,7 +172,6 @@ typedef VkExtent2D (*Gpu_Vk_Get_Swapchain_Extent_Fn)(void* ctx);
 typedef struct Gpu_Vk_Swapchain_Init_Desc {
 	void* ctx;
 	Gpu_Vk_Get_Surface_Fn get_surface_fn;
-	Gpu_Vk_Get_Swapchain_Extent_Fn get_swapchain_extent_fn;
 } Gpu_Vk_Swapchain_Init_Desc;
 
 typedef struct Gpu_Vk_Desc {
@@ -184,6 +185,12 @@ typedef struct Gpu_Vk_Desc {
 
 void gpu_vk_init(const Gpu_Vk_Desc* desc);
 void gpu_vk_deinit();
+
+// Swapchain
+Gpu_Vk_Swapchain gpu_vk_new_swapchain(const Gpu_Vk_Swapchain_Init_Desc* init_desc);
+void gpu_vk_destroy_swapchain(Gpu_Vk_Swapchain swapchain);
+
+bool gpu_vk_fetch_swapchain_texture(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Command_Buffer cb, Gpu_Vk_Swapchain_Desc swapchain_desc, Gpu_Vk_Texture* out_texture);
 
 // Texture
 typedef struct Gpu_Vk_Texture_Desc {
@@ -205,9 +212,6 @@ u64 gpu_vk_get_heap_size(Gpu_Vk_Heap heap);
 Gpu_Vk_Slice gpu_vk_get_heap_slice(Gpu_Vk_Heap heap);
 
 // Sampler
-
-// Swapchain
-Gpu_Vk_Texture gpu_vk_fetch_swapchain_texture(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Swapchain_Desc swapchain_desc);
 
 // Command Buffer Pool
 Gpu_Vk_Command_Buffer_Pool gpu_vk_new_command_buffer_pool(u32 size);
