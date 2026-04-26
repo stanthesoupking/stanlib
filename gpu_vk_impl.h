@@ -207,8 +207,7 @@ typedef struct Gpu_Vk_Command_Transition_Texture_Layouts {
 } Gpu_Vk_Command_Transition_Texture_Layouts;
 
 typedef struct Gpu_Vk_Command_Blit {
-	Gpu_Vk_Texture src;
-	Gpu_Vk_Texture dst;
+	Gpu_Vk_Blit_Desc desc;
 } Gpu_Vk_Command_Blit;
 
 typedef struct Gpu_Vk_Command {
@@ -1633,28 +1632,29 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 
 			case Gpu_Vk_Command_Kind_Blit: {
 				Gpu_Vk_Command_Blit* blit = command.data.blit;
-				Gpu_Vk_Texture_Data* src_data = gpu_vk_texture_get_root_data(blit->src);
-				Gpu_Vk_Texture_Data* dst_data = gpu_vk_texture_get_root_data(blit->dst);
+				const Gpu_Vk_Blit_Desc* blit_desc = &blit->desc;
+				Gpu_Vk_Texture_Data* src_data = gpu_vk_texture_get_root_data(blit_desc->src);
+				Gpu_Vk_Texture_Data* dst_data = gpu_vk_texture_get_root_data(blit_desc->dst);
 				VkImageBlit region = {
 				 	.srcSubresource = {
 			            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-			            .mipLevel       = 0,
-			            .baseArrayLayer = 0,
+			            .mipLevel       = blit_desc->src_mip_level,
+			            .baseArrayLayer = blit_desc->src_array_layer,
 			            .layerCount     = 1,
 			        },
 			        .srcOffsets = {
-			            { 0, 0, 0 },
-			            { src_data->imm.size.x, src_data->imm.size.y, 1 },
+			            { blit_desc->src_start.x, blit_desc->src_start.y, blit_desc->src_start.z },
+			            { blit_desc->src_end.x, blit_desc->src_end.y, blit_desc->src_end.z },
 			        },
 			        .dstSubresource = {
 			            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-			            .mipLevel       = 0,
-			            .baseArrayLayer = 0,
+			            .mipLevel       = blit_desc->dst_mip_level,
+			            .baseArrayLayer = blit_desc->dst_array_layer,
 			            .layerCount     = 1,
 			        },
 			        .dstOffsets = {
-			            { 0, 0, 0 },
-			            { src_data->imm.size.x, src_data->imm.size.y, 1 },
+					  { blit_desc->dst_start.x, blit_desc->dst_start.y, blit_desc->dst_start.z },
+					  { blit_desc->dst_end.x, blit_desc->dst_end.y, blit_desc->dst_end.z },
 			        },
 				};
 				vkCmdBlitImage(vk_cb, src_data->imm.image, gpu_vk_texture_layout_to_vk_image_layout(src_data->imm.layout), dst_data->imm.image, gpu_vk_texture_layout_to_vk_image_layout(dst_data->imm.layout), 1, &region, VK_FILTER_NEAREST);
@@ -1979,7 +1979,7 @@ void gpu_vk_dispatch(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Compute_Pipeline pipeline,
 	});
 }
 
-void gpu_vk_blit(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Texture src, Gpu_Vk_Texture dst) {
+void gpu_vk_blit(Gpu_Vk_Command_Buffer cb, const Gpu_Vk_Blit_Desc* desc) {
 	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb);
 	gpu_vk_validate(cb_data, "Invalid command buffer.");
 	sl_assert(cb_data->state == Gpu_Vk_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
@@ -1987,8 +1987,7 @@ void gpu_vk_blit(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Texture src, Gpu_Vk_Texture ds
 	Gpu_Vk_Command_Blit* blit;
 	allocator_new(&cb_data->arena->allocator, blit, 1);
 	*blit = (Gpu_Vk_Command_Blit) {
-		.src = src,
-		.dst = dst,
+		.desc = *desc,
 	};
 
 	gpu_vk_command_seq_push(&cb_data->commands, (Gpu_Vk_Command) {

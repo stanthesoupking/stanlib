@@ -157,6 +157,7 @@ typedef float4x4 mat4x4_f32;
 #include <stdalign.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <time.h>
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -168,6 +169,12 @@ typedef int32_t s32;
 typedef int64_t s64;
 typedef float f32;
 typedef double f64;
+
+sl_inline f64 sl_now(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
 
 sl_inline void sl_assert(bool condition, const char* message) {
 	if (!condition) {

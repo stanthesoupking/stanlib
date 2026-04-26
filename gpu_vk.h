@@ -239,6 +239,19 @@ Gpu_Vk_Compute_Pipeline gpu_vk_new_compute_pipeline(const Gpu_Vk_Compute_Pipelin
 
 void gpu_vk_dispatch(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Compute_Pipeline pipeline, const Gpu_Vk_Binding* bindings, u32 binding_count, vec3_u32 group_count);
 
-void gpu_vk_blit(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Texture src, Gpu_Vk_Texture dst);
+typedef struct Gpu_Vk_Blit_Desc {
+	Gpu_Vk_Texture src;
+	vec3_u32 src_start;
+	vec3_u32 src_end;
+	u32 src_array_layer;
+	u32 src_mip_level;
+
+	Gpu_Vk_Texture dst;
+	vec3_u32 dst_start;
+	vec3_u32 dst_end;
+	u32 dst_array_layer;
+	u32 dst_mip_level;
+} Gpu_Vk_Blit_Desc;
+void gpu_vk_blit(Gpu_Vk_Command_Buffer cb, const Gpu_Vk_Blit_Desc* desc);
 
 void gpu_vk_barrier(Gpu_Vk_Command_Buffer cb);
