@@ -13,8 +13,12 @@ typedef SL_Handle Gpu_Vk_Compute_Pipeline;
 typedef SL_Handle Gpu_Vk_Swapchain;
 
 typedef enum Gpu_Vk_Format {
-	Gpu_Vk_Format_R8G8B8A8_UNORM,
-	Gpu_Vk_Format_B8G8R8A8_SRGB,
+	Gpu_Vk_Format_RGBA8_Unorm,
+	Gpu_Vk_Format_RGBA8_sRGB,
+	Gpu_Vk_Format_BGRA8_Unorm,
+	Gpu_Vk_Format_BGRA8_sRGB,
+	Gpu_Vk_Format_RGBA16_Float,
+	Gpu_Vk_Format_RGBA32_Float,
 } Gpu_Vk_Format;
 
 typedef struct Gpu_Vk_Size_And_Align {
@@ -45,9 +49,15 @@ typedef enum Gpu_Vk_Texture_Layout {
 	Gpu_Vk_Texture_Layout_Present,
 } Gpu_Vk_Texture_Layout;
 
+typedef enum Gpu_Vk_Colorspace {
+	Gpu_Vk_Colorspace_sRGB,
+	Gpu_Vk_Colorspace_Extended_sRGB_Linear,
+} Gpu_Vk_Colorspace;
+
 typedef struct Gpu_Vk_Swapchain_Desc {
+    vec2_u32 size;
 	Gpu_Vk_Format format;
-	// colorspace
+	Gpu_Vk_Colorspace colorspace;
 } Gpu_Vk_Swapchain_Desc;
 
 typedef struct Gpu_Vk_Command_Buffer {

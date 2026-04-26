@@ -3,7 +3,7 @@
 #include "core.h"
 #include "vulkan/vulkan_core.h"
 #define GPU_VK_LOGGING 1
-#define GPU_VK_VALIDATION 1
+#define GPU_VK_VALIDATION 0
 
 #include "gpu_vk.h"
 #include <string.h>
@@ -160,9 +160,9 @@ sl_pool(Gpu_Vk_Compute_Pipeline_Data, Gpu_Vk_Compute_Pipeline_Pool, gpu_vk_compu
 typedef struct Gpu_Vk_Swapchain_Instance {
 	u32 rc;
 	Gpu_Vk_Swapchain_Desc desc;
-	vec2_u32 size;
 	VkSwapchainKHR swapchain;
 
+	VkSemaphore* present_semaphores;
 	Gpu_Vk_Texture* textures;
 	u32 texture_count;
 } Gpu_Vk_Swapchain_Instance;
@@ -229,15 +229,15 @@ typedef struct Gpu_Vk_Swapchain_Present {
 	Gpu_Vk_Texture texture;
 	u32 image_index;
 	VkSemaphore image_available_semaphore;
+	VkSemaphore present_semaphore;
 } Gpu_Vk_Swapchain_Present;
 sl_seq(Gpu_Vk_Swapchain_Present, Gpu_Vk_Swapchain_Present_Seq, gpu_vk_swapchain_present_seq);
 
 typedef struct Gpu_Vk_Command_Buffer_Data {
 	Gpu_Vk_Command_Buffer_State state;
-	VkCommandPool command_pool[Gpu_Vk_Queue_Count];
+	VkCommandPool command_pool;
+	VkCommandBuffer vk_cb;
 	VkFence fence;
-
-	VkSemaphore timeline_semaphore;
 
 	Gpu_Vk_Semaphore_Seq semaphores;
 	u32 next_free_semaphore;
@@ -710,8 +710,19 @@ sl_inline VkImageUsageFlags gpu_vk_texture_usage_to_vk_image_usage_flags(Gpu_Vk_
 
 sl_inline VkFormat gpu_vk_format_to_vk_format(Gpu_Vk_Format format) {
 	switch (format) {
-		case Gpu_Vk_Format_R8G8B8A8_UNORM: return VK_FORMAT_R8G8B8A8_UNORM;
-		case Gpu_Vk_Format_B8G8R8A8_SRGB: return VK_FORMAT_B8G8R8A8_SRGB;
+		case Gpu_Vk_Format_RGBA8_Unorm: return VK_FORMAT_R8G8B8A8_UNORM;
+		case Gpu_Vk_Format_RGBA8_sRGB: return VK_FORMAT_R8G8B8A8_SRGB;
+		case Gpu_Vk_Format_BGRA8_Unorm: return VK_FORMAT_B8G8R8A8_UNORM;
+		case Gpu_Vk_Format_BGRA8_sRGB: return VK_FORMAT_B8G8R8A8_SRGB;
+		case Gpu_Vk_Format_RGBA16_Float: return VK_FORMAT_R16G16B16A16_SFLOAT;
+		case Gpu_Vk_Format_RGBA32_Float: return VK_FORMAT_R32G32B32A32_SFLOAT;
+	}
+}
+
+sl_inline VkColorSpaceKHR gpu_vk_colorspace_to_vk_colorspace(Gpu_Vk_Colorspace colorspace) {
+	switch (colorspace) {
+		case Gpu_Vk_Colorspace_sRGB: return VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+		case Gpu_Vk_Colorspace_Extended_sRGB_Linear: return VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT;
 	}
 }
 
@@ -996,9 +1007,11 @@ void gpu_vk_release_swapchain_instance(Gpu_Vk_Swapchain_Instance* instance) {
 	if (instance->rc == 0) {
 		for (u32 texture_idx = 0; texture_idx < instance->texture_count; texture_idx++) {
 			gpu_vk_destroy_texture(instance->textures[texture_idx]);
+			vkDestroySemaphore(gpu_vk.device, instance->present_semaphores[texture_idx], NULL);
 		}
 		vkDestroySwapchainKHR(gpu_vk.device, instance->swapchain, NULL);
 		allocator_free(gpu_vk.allocator, instance->textures, instance->texture_count);
+		allocator_free(gpu_vk.allocator, instance->present_semaphores, instance->texture_count);
 		allocator_free(gpu_vk.allocator, instance, 1);
 	}
 }
@@ -1010,11 +1023,12 @@ Gpu_Vk_Swapchain_Instance* gpu_vk_get_instance(Gpu_Vk_Swapchain swapchain, Gpu_V
 	VkResult get_capabilities_result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu_vk.physical_device, swapchain_data->surface, &capabilities);
 	sl_assert(get_capabilities_result == VK_SUCCESS, "Failed to get swapchain capabilities.");
 
-	const vec2_u32 new_size = { capabilities.currentExtent.width, capabilities.currentExtent.height };
+	// use the surface's size, if it has one.
+	desc.size = (vec2_u32) { capabilities.currentExtent.width == u32_max ? desc.size.x : capabilities.currentExtent.width, capabilities.currentExtent.height == u32_max ? desc.size.y : capabilities.currentExtent.height };
 
 	Gpu_Vk_Swapchain_Instance* current_instance = swapchain_data->current_instance;
 
-	const bool must_rebuild = (current_instance == NULL) || (current_instance->size.x != new_size.x) || (current_instance->size.y != new_size.y);
+	const bool must_rebuild = (current_instance == NULL) || (current_instance->desc.size.x != desc.size.x) || (current_instance->desc.size.y != desc.size.y) || (current_instance->desc.colorspace != desc.colorspace);
 	if (!must_rebuild) {
 		return current_instance;
 	}
@@ -1024,10 +1038,9 @@ Gpu_Vk_Swapchain_Instance* gpu_vk_get_instance(Gpu_Vk_Swapchain swapchain, Gpu_V
 	*new_instance = (Gpu_Vk_Swapchain_Instance) {
 		.rc = 1,
 		.desc = desc,
-		.size = new_size,
 	};
 
-	VkColorSpaceKHR colorspace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+	const VkColorSpaceKHR colorspace = gpu_vk_colorspace_to_vk_colorspace(desc.colorspace);
 
 	u32 available_present_mode_count;
 	vkGetPhysicalDeviceSurfacePresentModesKHR(gpu_vk.physical_device, swapchain_data->surface, &available_present_mode_count, NULL);
@@ -1047,11 +1060,11 @@ Gpu_Vk_Swapchain_Instance* gpu_vk_get_instance(Gpu_Vk_Swapchain swapchain, Gpu_V
 
 	const u32 min_image_count = sl_clamp(3, capabilities.minImageCount, (capabilities.maxImageCount == 0) ? u32_max : capabilities.maxImageCount);
 
-	gpu_vk_log("Rebuilding swapchain with extent (%u, %u), %u min images.", new_size.x, new_size.y, min_image_count);
+	gpu_vk_log("Rebuilding swapchain with extent (%u, %u), %u min images.", desc.size.x, desc.size.y, min_image_count);
 
 	const VkExtent2D extent = {
-		.width = new_size.x,
-		.height = new_size.y,
+		.width = desc.size.x,
+		.height = desc.size.y,
 	};
 
 	VkFormat vk_format = gpu_vk_format_to_vk_format(desc.format);
@@ -1089,6 +1102,7 @@ Gpu_Vk_Swapchain_Instance* gpu_vk_get_instance(Gpu_Vk_Swapchain swapchain, Gpu_V
 
 	new_instance->texture_count = swapchain_image_count;
 	allocator_new(gpu_vk.allocator, new_instance->textures, swapchain_image_count);
+	allocator_new(gpu_vk.allocator, new_instance->present_semaphores, swapchain_image_count);
 
 	// Get images
 	VkImage* images;
@@ -1124,6 +1138,15 @@ Gpu_Vk_Swapchain_Instance* gpu_vk_get_instance(Gpu_Vk_Swapchain swapchain, Gpu_V
 		sl_assert(view_create_result == VK_SUCCESS, "Failed to create image view for swapchain.");
 
 		new_instance->textures[image_idx] = texture;
+	}
+
+	// Create semaphores
+	for (u32 image_idx = 0; image_idx < swapchain_image_count; image_idx++) {
+		VkSemaphoreCreateInfo semaphore_create_info = {
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+		};
+		VkResult create_semaphore_result = vkCreateSemaphore(gpu_vk.device, &semaphore_create_info, NULL, &new_instance->present_semaphores[image_idx]);
+		sl_assert(create_semaphore_result == VK_SUCCESS, "Failed to create semaphore.");
 	}
 
 	allocator_free(gpu_vk.allocator, images, swapchain_image_count);
@@ -1296,15 +1319,20 @@ void gpu_init_command_buffer(Gpu_Vk_Command_Buffer_Data* command_buffer) {
 		.swapchain_presents = gpu_vk_swapchain_present_seq_new(gpu_vk.allocator, 0),
 	};
 
-	// Command Pools
-	for (Gpu_Vk_Queue queue = 0; queue < Gpu_Vk_Queue_Count; queue++) {
-		VkCommandPoolCreateInfo command_pool_create_info = {
-			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-			.queueFamilyIndex = gpu_vk.queue_family_indices.index[queue],
-		};
-		VkResult command_pool_result = vkCreateCommandPool(gpu_vk.device, &command_pool_create_info, NULL, &command_buffer->command_pool[queue]);
-		sl_assert(command_pool_result == VK_SUCCESS, "Failed to create command pool.");
-	}
+	VkCommandPoolCreateInfo command_pool_create_info = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.queueFamilyIndex = gpu_vk.queue_family_indices.index[Gpu_Vk_Queue_Primary],
+	};
+	VkResult command_pool_result = vkCreateCommandPool(gpu_vk.device, &command_pool_create_info, NULL, &command_buffer->command_pool);
+	sl_assert(command_pool_result == VK_SUCCESS, "Failed to create command pool.");
+
+	VkCommandBufferAllocateInfo alloc_info = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = command_buffer->command_pool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1,
+	};
+	vkAllocateCommandBuffers(gpu_vk.device, &alloc_info, &command_buffer->vk_cb);
 
 	// Fence
 	VkFenceCreateInfo fence_create_info = {
@@ -1313,19 +1341,6 @@ void gpu_init_command_buffer(Gpu_Vk_Command_Buffer_Data* command_buffer) {
 	};
 	VkResult fence_result = vkCreateFence(gpu_vk.device, &fence_create_info, NULL, &command_buffer->fence);
 	sl_assert(fence_result == VK_SUCCESS, "Failed to create fence.");
-
-	// Timeline Semaphore
-	VkSemaphoreTypeCreateInfo timeline_semaphore_type_info = {
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-		.initialValue = 0, // starting counter
-	};
-	VkSemaphoreCreateInfo timeline_semaphore_create_info = {
- 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-   		.pNext = &timeline_semaphore_type_info,
-	};
-	VkResult timeline_semaphore_result = vkCreateSemaphore(gpu_vk.device, &timeline_semaphore_create_info, NULL, &command_buffer->timeline_semaphore);
-	sl_assert(timeline_semaphore_result == VK_SUCCESS, "Failed to create timeline semaphore.");
 }
 
 // Command Buffer Pool
@@ -1376,9 +1391,7 @@ bool gpu_vk_new_command_buffer(Gpu_Vk_Command_Buffer_Pool pool, Gpu_Vk_Command_B
 	vkWaitForFences(gpu_vk.device, 1, &cb_data->fence, true, u64_max);
 	vkResetFences(gpu_vk.device, 1, &cb_data->fence);
 
-	for (Gpu_Vk_Queue queue = 0; queue < Gpu_Vk_Queue_Count; queue++) {
-		vkResetCommandPool(gpu_vk.device, cb_data->command_pool[queue], 0);
-	}
+	vkResetCommandPool(gpu_vk.device, cb_data->command_pool, 0);
 
 	cb_data->state = Gpu_Vk_Command_Buffer_State_Recording;
 	sl_arena_allocator_reset(cb_data->arena, 0);
@@ -1544,15 +1557,7 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 	sl_assert(cb_data->state == Gpu_Vk_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 	cb_data->state = Gpu_Vk_Command_Buffer_State_Enqueued;
 
-	VkCommandBuffer vk_cb;
-	VkCommandBufferAllocateInfo vk_cb_allocate_info = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.commandPool = cb_data->command_pool[Gpu_Vk_Queue_Primary],
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1,
-	};
-	VkResult vk_cb_allocate_result = vkAllocateCommandBuffers(gpu_vk.device, &vk_cb_allocate_info, &vk_cb);
-	sl_assert(vk_cb_allocate_result == VK_SUCCESS, "Failed to allocate command buffer.");
+	VkCommandBuffer vk_cb = cb_data->vk_cb;
 
 	VkCommandBufferBeginInfo vk_cb_begin_info = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1691,28 +1696,27 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 
 	vkEndCommandBuffer(vk_cb);
 
-	// Semaphore for main command buffer
-	VkSemaphore vk_cb_semaphore = gpu_vk_get_next_command_buffer_semaphore(cb);
-
 	// Submit command buffer
 	{
 		u32 wait_semaphore_count = present_count;
+		u32 signal_semaphore_count = present_count;
 		VkSemaphore* wait_semaphores;
 		VkPipelineStageFlags* wait_stage_flags;
+		VkSemaphore* signal_semaphores;
 		allocator_new(&cb_data->arena->allocator, wait_semaphores, wait_semaphore_count);
 		allocator_new(&cb_data->arena->allocator, wait_stage_flags, wait_semaphore_count);
+		allocator_new(&cb_data->arena->allocator, signal_semaphores, signal_semaphore_count);
 
 		u32 next_wait_semaphore_idx = 0;
+		u32 next_signal_semaphore_idx = 0;
 		for (u32 present_idx = 0; present_idx < present_count; present_idx++) {
 			const Gpu_Vk_Swapchain_Present present_info = gpu_vk_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
 			wait_semaphores[next_wait_semaphore_idx] = present_info.image_available_semaphore;
 			wait_stage_flags[next_wait_semaphore_idx] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+			signal_semaphores[next_signal_semaphore_idx] = present_info.present_semaphore;
+			next_signal_semaphore_idx++;
 			next_wait_semaphore_idx++;
 		}
-
-		VkSemaphore signal_semaphores[] = {
-			vk_cb_semaphore,
-		};
 
 		const VkSubmitInfo submit_info = {
 			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1721,7 +1725,7 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 			.waitSemaphoreCount = wait_semaphore_count,
 			.pWaitSemaphores = wait_semaphores,
 			.pWaitDstStageMask = wait_stage_flags,
-			.signalSemaphoreCount = sl_array_count(signal_semaphores),
+			.signalSemaphoreCount = signal_semaphore_count,
 			.pSignalSemaphores = signal_semaphores,
 		};
 		const VkResult submit_result = vkQueueSubmit(gpu_vk.queue[Gpu_Vk_Queue_Primary], 1, &submit_info, cb_data->fence);
@@ -1731,19 +1735,19 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 	// Presents
 	if (present_count > 0) {
 		VkSwapchainKHR* swapchains;
+		VkSemaphore* wait_semaphores;
 		u32* image_indices;
 		allocator_new(&cb_data->arena->allocator, swapchains, present_count);
+		allocator_new(&cb_data->arena->allocator, wait_semaphores, present_count);
 		allocator_new(&cb_data->arena->allocator, image_indices, present_count);
 
 		for (u32 present_idx = 0; present_idx < present_count; present_idx++) {
 			const Gpu_Vk_Swapchain_Present present_info = gpu_vk_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
 			swapchains[present_idx] = present_info.swapchain_instance->swapchain;
+			wait_semaphores[present_idx] = present_info.present_semaphore;
 			image_indices[present_idx] = present_info.image_index;
 		}
 
-		VkSemaphore wait_semaphores[] = {
-			vk_cb_semaphore,
-		};
 		VkPresentInfoKHR present_info = {
 			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 			.waitSemaphoreCount = sl_array_count(wait_semaphores),
@@ -1824,6 +1828,7 @@ bool gpu_vk_fetch_swapchain_texture(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Command_B
 	// Automatically present image when command buffer completes
 	gpu_vk_swapchain_present_seq_push(&cb_data->swapchain_presents, (Gpu_Vk_Swapchain_Present) {
 		.swapchain_instance = swapchain_instance,
+		.present_semaphore = swapchain_instance->present_semaphores[image_index],
 		.texture = swapchain_texture,
 		.image_index = image_index,
 		.image_available_semaphore = semaphore,
