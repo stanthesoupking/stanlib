@@ -270,6 +270,9 @@ typedef struct Gpu_Vk {
 	Gpu_Vk_Device_Function_Table device_function_table;
 	VkPhysicalDeviceLimits device_limits;
 
+	VkSemaphore timeline_semaphore;
+	u64 timeline_semaphore_value;
+
 	Gpu_Vk_Swapchain_Init_Desc swapchain_init_desc;
 
 	Gpu_Vk_Memory_Type_Indices memory_type_indices;
@@ -416,8 +419,8 @@ bool gpu_vk_queue_family_indices_is_complete(Gpu_Vk_Queue_Family_Indices indices
 }
 
 Gpu_Vk_Memory_Type_Indices gpu_vk_get_physical_device_memory_type_indices(VkPhysicalDevice physical_device) {
-    VkPhysicalDeviceMemoryProperties properties;
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &properties);
+	VkPhysicalDeviceMemoryProperties properties;
+	vkGetPhysicalDeviceMemoryProperties(physical_device, &properties);
 
 	VkMemoryPropertyFlagBits required_flags[Gpu_Vk_Memory_Type_Count] = {
 		[Gpu_Vk_Memory_Type_Host_Visible] = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
@@ -621,14 +624,14 @@ void gpu_vk_init_device(void) {
 	device_create_info.enabledExtensionCount = sl_array_count(GPU_VK_DEVICE_EXTENSIONS);
 
 	VkPhysicalDeviceSynchronization2FeaturesKHR sync2_features = {
-    	.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
-    	.synchronization2 = VK_TRUE,
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
+		.synchronization2 = VK_TRUE,
 	};
 	device_create_info.pNext = &sync2_features;
 
 	VkPhysicalDeviceTimelineSemaphoreFeatures timeline_semaphore_features = {
-    	.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES,
-    	.timelineSemaphore = VK_TRUE,
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES,
+		.timelineSemaphore = VK_TRUE,
 	};
 	sync2_features.pNext = &timeline_semaphore_features;
 
@@ -645,6 +648,20 @@ void gpu_vk_init_device(void) {
 		.vkCmdPipelineBarrier2KHR = (PFN_vkCmdPipelineBarrier2KHR)vkGetDeviceProcAddr(gpu_vk.device, "vkCmdPipelineBarrier2KHR"),
 		.vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(gpu_vk.device, "vkCmdPushDescriptorSetKHR"),
 	};
+
+	VkSemaphoreTypeCreateInfo semaphore_type_create_info = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+		.initialValue = 0,
+	};
+	VkSemaphoreCreateInfo semaphore_create_info = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+		.pNext = &semaphore_type_create_info,
+	};
+	VkResult create_semaphore_result = vkCreateSemaphore(gpu_vk.device, &semaphore_create_info, NULL, &gpu_vk.timeline_semaphore);
+	sl_assert(create_semaphore_result == VK_SUCCESS, "Failed to create timeline semaphore");
+
+	gpu_vk.timeline_semaphore_value = 0;
 }
 
 // Texture
@@ -1090,8 +1107,8 @@ Gpu_Vk_Swapchain_Instance* gpu_vk_get_instance(Gpu_Vk_Swapchain swapchain, Gpu_V
 		create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	} else {
 		create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-    	create_info.queueFamilyIndexCount = 3;
-    	create_info.pQueueFamilyIndices = queue_indices.index;
+		create_info.queueFamilyIndexCount = 3;
+		create_info.pQueueFamilyIndices = queue_indices.index;
 	}
 
 	VkResult create_result = vkCreateSwapchainKHR(gpu_vk.device, &create_info, NULL, &new_instance->swapchain);
@@ -1641,46 +1658,46 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 				Gpu_Vk_Texture_Data* src_data = gpu_vk_texture_get_root_data(blit_desc->src);
 				Gpu_Vk_Texture_Data* dst_data = gpu_vk_texture_get_root_data(blit_desc->dst);
 				VkImageBlit region = {
-				 	.srcSubresource = {
-			            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-			            .mipLevel       = blit_desc->src_mip_level,
-			            .baseArrayLayer = blit_desc->src_array_layer,
-			            .layerCount     = 1,
-			        },
-			        .srcOffsets = {
-			            { blit_desc->src_start.x, blit_desc->src_start.y, blit_desc->src_start.z },
-			            { blit_desc->src_end.x, blit_desc->src_end.y, blit_desc->src_end.z },
-			        },
-			        .dstSubresource = {
-			            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-			            .mipLevel       = blit_desc->dst_mip_level,
-			            .baseArrayLayer = blit_desc->dst_array_layer,
-			            .layerCount     = 1,
-			        },
-			        .dstOffsets = {
+					.srcSubresource = {
+						.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+						.mipLevel       = blit_desc->src_mip_level,
+						.baseArrayLayer = blit_desc->src_array_layer,
+						.layerCount     = 1,
+					},
+					.srcOffsets = {
+						{ blit_desc->src_start.x, blit_desc->src_start.y, blit_desc->src_start.z },
+						{ blit_desc->src_end.x, blit_desc->src_end.y, blit_desc->src_end.z },
+					},
+					.dstSubresource = {
+						.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+						.mipLevel       = blit_desc->dst_mip_level,
+						.baseArrayLayer = blit_desc->dst_array_layer,
+						.layerCount     = 1,
+					},
+					.dstOffsets = {
 					  { blit_desc->dst_start.x, blit_desc->dst_start.y, blit_desc->dst_start.z },
 					  { blit_desc->dst_end.x, blit_desc->dst_end.y, blit_desc->dst_end.z },
-			        },
+					},
 				};
 				vkCmdBlitImage(vk_cb, src_data->imm.image, gpu_vk_texture_layout_to_vk_image_layout(src_data->imm.layout), dst_data->imm.image, gpu_vk_texture_layout_to_vk_image_layout(dst_data->imm.layout), 1, &region, VK_FILTER_NEAREST);
 			} break;
 
 			case Gpu_Vk_Command_Kind_Barrier: {
 				VkMemoryBarrier2 barrier = {
-			        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-			        .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-			        .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-			        .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-			        .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-			    };
+					.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+					.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+					.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+					.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+					.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+				};
 
-			    VkDependencyInfo dep = {
-			        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			        .memoryBarrierCount = 1,
-			        .pMemoryBarriers = &barrier,
-			    };
+				VkDependencyInfo dep = {
+					.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+					.memoryBarrierCount = 1,
+					.pMemoryBarriers = &barrier,
+				};
 
-			    gpu_vk.device_function_table.vkCmdPipelineBarrier2KHR(vk_cb, &dep);
+				gpu_vk.device_function_table.vkCmdPipelineBarrier2KHR(vk_cb, &dep);
 			} break;
 		}
 	}
@@ -1698,14 +1715,18 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 
 	// Submit command buffer
 	{
-		u32 wait_semaphore_count = present_count;
-		u32 signal_semaphore_count = present_count;
+		u32 wait_semaphore_count = present_count + 1;
+		u32 signal_semaphore_count = present_count + 1;
 		VkSemaphore* wait_semaphores;
 		VkPipelineStageFlags* wait_stage_flags;
+		u64* wait_values;
 		VkSemaphore* signal_semaphores;
+		u64* signal_values;
+		allocator_new(&cb_data->arena->allocator, wait_values, wait_semaphore_count);
 		allocator_new(&cb_data->arena->allocator, wait_semaphores, wait_semaphore_count);
 		allocator_new(&cb_data->arena->allocator, wait_stage_flags, wait_semaphore_count);
 		allocator_new(&cb_data->arena->allocator, signal_semaphores, signal_semaphore_count);
+		allocator_new(&cb_data->arena->allocator, signal_values, signal_semaphore_count);
 
 		u32 next_wait_semaphore_idx = 0;
 		u32 next_signal_semaphore_idx = 0;
@@ -1713,13 +1734,36 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 			const Gpu_Vk_Swapchain_Present present_info = gpu_vk_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
 			wait_semaphores[next_wait_semaphore_idx] = present_info.image_available_semaphore;
 			wait_stage_flags[next_wait_semaphore_idx] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-			signal_semaphores[next_signal_semaphore_idx] = present_info.present_semaphore;
-			next_signal_semaphore_idx++;
+			wait_values[next_wait_semaphore_idx] = 0; // ignored
 			next_wait_semaphore_idx++;
+
+			signal_semaphores[next_signal_semaphore_idx] = present_info.present_semaphore;
+			signal_values[next_signal_semaphore_idx] = 0; // ignored
+			next_signal_semaphore_idx++;
 		}
+
+		const u64 old_value = gpu_vk.timeline_semaphore_value;
+		const u64 new_value = ++gpu_vk.timeline_semaphore_value;
+
+		wait_semaphores[next_wait_semaphore_idx] = gpu_vk.timeline_semaphore;
+		wait_values[next_wait_semaphore_idx] = old_value;
+		next_wait_semaphore_idx++;
+
+		signal_semaphores[next_signal_semaphore_idx] = gpu_vk.timeline_semaphore;
+		signal_values[next_signal_semaphore_idx] = new_value;
+		next_signal_semaphore_idx++;
+
+		const VkTimelineSemaphoreSubmitInfo timeline_info = {
+			.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+			.pWaitSemaphoreValues = wait_values,
+			.waitSemaphoreValueCount = wait_semaphore_count,
+			.signalSemaphoreValueCount = signal_semaphore_count,
+			.pSignalSemaphoreValues = signal_values
+		};
 
 		const VkSubmitInfo submit_info = {
 			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+			.pNext = &timeline_info,
 			.pCommandBuffers = &vk_cb,
 			.commandBufferCount = 1,
 			.waitSemaphoreCount = wait_semaphore_count,
