@@ -2609,3 +2609,44 @@ sl_shared_struct(Quad_f32) {
 #define u16_max 65535u
 #define u32_max 4294967295u
 #define u64_max 18446744073709551615ull
+
+#include <pthread.h>
+
+// Mutex
+typedef struct SL_Mutex {
+	pthread_mutex_t mutex;
+} SL_Mutex;
+
+sl_inline SL_Mutex sl_mutex_new(void) {
+	SL_Mutex result;
+	pthread_mutex_init(&result.mutex, NULL);
+	return result;
+}
+sl_inline void sl_mutex_destroy(SL_Mutex* mutex) {
+	pthread_mutex_destroy(&mutex->mutex);
+	*mutex = (SL_Mutex) {0};
+}
+sl_inline void sl_mutex_lock(SL_Mutex* mutex) {
+	pthread_mutex_lock(&mutex->mutex);
+}
+sl_inline void sl_mutex_unlock(SL_Mutex* mutex) {
+	pthread_mutex_unlock(&mutex->mutex);
+}
+
+// Thread
+typedef struct SL_Thread {
+	pthread_t thread;
+} SL_Thread;
+
+typedef void* (*SL_Thread_Fn)(void* ctx);
+sl_inline SL_Thread sl_thread_new(void* ctx, SL_Thread_Fn fn) {
+	SL_Thread result;
+	pthread_create(&result.thread, NULL, fn, ctx);
+	return result;
+}
+sl_inline void* sl_thread_join(SL_Thread* thread) {
+	void* ret;
+	pthread_join(thread->thread, &ret);
+	*thread = (SL_Thread) {0};
+	return ret;
+}

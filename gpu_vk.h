@@ -11,6 +11,7 @@ typedef SL_Handle Gpu_Vk_Texture;
 typedef SL_Handle Gpu_Vk_Sampler;
 typedef SL_Handle Gpu_Vk_Compute_Pipeline;
 typedef SL_Handle Gpu_Vk_Swapchain;
+typedef SL_Handle Gpu_Vk_Semaphore;
 
 typedef enum Gpu_Vk_Format {
 	Gpu_Vk_Format_RGBA8_Unorm,
@@ -265,3 +266,16 @@ typedef struct Gpu_Vk_Blit_Desc {
 void gpu_vk_blit(Gpu_Vk_Command_Buffer cb, const Gpu_Vk_Blit_Desc* desc);
 
 void gpu_vk_barrier(Gpu_Vk_Command_Buffer cb);
+
+// Semaphore
+Gpu_Vk_Semaphore gpu_vk_new_semaphore(void);
+void gpu_vk_destroy_semaphore(Gpu_Vk_Semaphore semaphore);
+
+typedef void (*Gpu_Vk_On_Notify_Fn)(void* ctx);
+void gpu_vk_notify(Gpu_Vk_Semaphore semaphore, u64 value, void* ctx, Gpu_Vk_On_Notify_Fn fn);
+
+void gpu_vk_wait_gpu(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Semaphore semaphore, u64 value);
+void gpu_vk_signal_gpu(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Semaphore semaphore, u64 value);
+
+void gpu_vk_wait_cpu(Gpu_Vk_Semaphore semaphore, u64 value);
+void gpu_vk_signal_cpu(Gpu_Vk_Semaphore semaphore, u64 value);
