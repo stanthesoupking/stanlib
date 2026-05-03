@@ -2,6 +2,7 @@
 
 #include "core.h"
 #include "vulkan/vulkan_core.h"
+#include <stdatomic.h>
 #define GPU_VK_LOGGING 1
 #define GPU_VK_VALIDATION 0
 
@@ -138,6 +139,7 @@ typedef struct Gpu_Vk_Texture_Data {
 	union {
 		// Gpu_Vk_Texture_Kind_Immediate
 		struct {
+			bool owned_image;
 			VkImage image;
 			VkImageView image_view;
 			Gpu_Vk_Texture_Layout layout;
@@ -183,7 +185,7 @@ typedef struct Gpu_Vk_Semaphore_Data {
 sl_pool(Gpu_Vk_Semaphore_Data, Gpu_Vk_Semaphore_Pool, gpu_vk_semaphore_pool);
 
 typedef struct Gpu_Vk_Swapchain_Instance {
-	u32 rc;
+	atomic_u32 rc;
 	Gpu_Vk_Swapchain_Desc desc;
 	VkSwapchainKHR swapchain;
 
@@ -276,7 +278,9 @@ sl_seq(Gpu_Vk_Swapchain_Present, Gpu_Vk_Swapchain_Present_Seq, gpu_vk_swapchain_
 typedef struct Gpu_Vk_Command_Buffer_Data {
 	Gpu_Vk_Command_Buffer_State state;
 	VkCommandPool command_pool;
-	u64 wait_global_semaphore_value;
+
+	// On the global semaphore, the value that indicates that GPU work for the command buffer has completed.
+	u64 gpu_complete_semaphore_value;
 
 	Gpu_Vk_Semaphore_Seq semaphores;
 	u32 next_free_semaphore;
@@ -835,6 +839,7 @@ Gpu_Vk_Texture gpu_vk_new_texture(const Gpu_Vk_Texture_Desc* desc, Gpu_Vk_Slice 
 	texture_data->data_kind = Gpu_Vk_Texture_Data_Kind_Immediate;
 	texture_data->imm.layout = Gpu_Vk_Texture_Layout_Undefined;
 	texture_data->imm.size = desc->size;
+	texture_data->imm.owned_image = true;
 
 	if (!gpu_vk_new_image_for_texture_desc(desc, &texture_data->imm.image)) {
 		gpu_vk_texture_pool_release(&gpu_vk.texture_pool, texture);
@@ -899,17 +904,16 @@ void gpu_vk_destroy_texture(Gpu_Vk_Texture texture) {
 	Gpu_Vk_Texture_Data* data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, texture);
 	sl_assert(data != NULL, "Texture is invalid.");
 
-	// 1. flush any pending command buffer cleanups
-	// ...
+	// TODO: Assert that it is not in-use
 
-	// 2. destroy all cached framebuffers that retain this texture (can assert that rc == 0).
+	// destroy all cached framebuffers that retain this texture (can assert that rc == 0).
 	// ...
 
 	switch (data->data_kind) {
 		case Gpu_Vk_Texture_Data_Kind_Immediate: {
 			vkDestroyImageView(gpu_vk.device, data->imm.image_view, NULL);
 
-			if (data->imm.image != VK_NULL_HANDLE) {
+			if (data->imm.owned_image) {
 				vkDestroyImage(gpu_vk.device, data->imm.image, NULL);
 			}
 		} break;
@@ -1046,11 +1050,16 @@ void gpu_vk_destroy_swapchain(Gpu_Vk_Swapchain swapchain) {
 	// todo
 }
 
+void gpu_vk_retain_swapchain_instance(Gpu_Vk_Swapchain_Instance* instance) {
+	const u32 pre = atomic_fetch_add_explicit(&instance->rc, 1, memory_order_acq_rel);
+	gpu_vk_validate(pre > 0, "Can't retain a released swapchain.");
+}
 void gpu_vk_release_swapchain_instance(Gpu_Vk_Swapchain_Instance* instance) {
-	gpu_vk_validate(instance->rc > 0, "Over-released");
-	instance->rc--;
+	const u32 pre = atomic_fetch_sub_explicit(&instance->rc, 1, memory_order_acq_rel);
+	gpu_vk_validate(pre > 0, "Over-released");
 
-	if (instance->rc == 0) {
+	if (pre == 1) {
+		gpu_vk_log("Destroying swapchain instance %p\n", instance);
 		for (u32 texture_idx = 0; texture_idx < instance->texture_count; texture_idx++) {
 			gpu_vk_destroy_texture(instance->textures[texture_idx]);
 			vkDestroySemaphore(gpu_vk.device, instance->present_semaphores[texture_idx], NULL);
@@ -1106,7 +1115,7 @@ Gpu_Vk_Swapchain_Instance* gpu_vk_get_instance(Gpu_Vk_Swapchain swapchain, Gpu_V
 
 	const u32 min_image_count = sl_clamp(3, capabilities.minImageCount, (capabilities.maxImageCount == 0) ? u32_max : capabilities.maxImageCount);
 
-	gpu_vk_log("Rebuilding swapchain with extent (%u, %u), %u min images.", desc.size.x, desc.size.y, min_image_count);
+	gpu_vk_log("Rebuilding swapchain with extent (%u, %u), %u min images, instance %p.", desc.size.x, desc.size.y, min_image_count, new_instance);
 
 	const VkExtent2D extent = {
 		.width = desc.size.x,
@@ -1180,6 +1189,7 @@ Gpu_Vk_Swapchain_Instance* gpu_vk_get_instance(Gpu_Vk_Swapchain swapchain, Gpu_V
 		texture_data->imm.format = vk_format;
 		texture_data->imm.layout = Gpu_Vk_Texture_Layout_Undefined;
 		texture_data->imm.image = images[image_idx];
+		texture_data->imm.owned_image = false;
 		const VkResult view_create_result = vkCreateImageView(gpu_vk.device, &view_create_info, NULL, &texture_data->imm.image_view);
 		sl_assert(view_create_result == VK_SUCCESS, "Failed to create image view for swapchain.");
 
@@ -1229,10 +1239,12 @@ void gpu_vk_init(const Gpu_Vk_Desc* desc) {
 	gpu_vk_init_instance(desc);
 	gpu_vk_init_device();
 	gpu_vk_init_resource_pools();
-
 	gpu_vk.global_semaphore = gpu_vk_new_semaphore();
 }
 void gpu_vk_deinit() {
+	gpu_vk_log("Deinit");
+	gpu_vk_wait_cpu(gpu_vk.global_semaphore, gpu_vk.global_semaphore_value);
+	gpu_vk_destroy_semaphore(gpu_vk.global_semaphore);
 	vkDestroyInstance(gpu_vk.instance, NULL);
 	gpu_vk = (Gpu_Vk) {};
 }
@@ -1306,6 +1318,7 @@ void gpu_vk_destroy_heap(Gpu_Vk_Heap heap) {
 	}
 
 	vkFreeMemory(gpu_vk.device, heap_data->device_memory, NULL);
+
 	gpu_vk_heap_pool_release(&gpu_vk.heap_pool, heap);
 }
 u64 gpu_vk_get_heap_size(Gpu_Vk_Heap heap) {
@@ -1422,7 +1435,8 @@ bool gpu_vk_new_command_buffer(Gpu_Vk_Command_Buffer_Pool pool, Gpu_Vk_Command_B
 	}
 
 	// Wait for inflight work associated with the recorder to be completed.
-	gpu_vk_wait_cpu(gpu_vk.global_semaphore, cb_data->wait_global_semaphore_value);
+	// Note: it is guaranteed that the on completion callback is processed prior to this function returning.
+	gpu_vk_wait_cpu(gpu_vk.global_semaphore, cb_data->gpu_complete_semaphore_value);
 
 	vkResetCommandPool(gpu_vk.device, cb_data->command_pool, 0);
 
@@ -1437,6 +1451,16 @@ bool gpu_vk_new_command_buffer(Gpu_Vk_Command_Buffer_Pool pool, Gpu_Vk_Command_B
 
 	*out_cb = cb_handle;
 	return true;
+}
+
+void gpu_vk_on_complete_command_buffer_callback(void* ctx) {
+	Gpu_Vk_Command_Buffer_Data* cb_data = ctx;
+
+	const u32 present_count = gpu_vk_swapchain_present_seq_get_count(&cb_data->swapchain_presents);
+	for (u32 present_idx = 0; present_idx < present_count; present_idx++) {
+		const Gpu_Vk_Swapchain_Present present_info = gpu_vk_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
+		gpu_vk_release_swapchain_instance(present_info.swapchain_instance);
+	}
 }
 
 VkSemaphore gpu_vk_get_next_command_buffer_semaphore(Gpu_Vk_Command_Buffer cb) {
@@ -1497,6 +1521,8 @@ sl_inline void gpu_vk_execute_transition_textures_to_layout(SL_Arena_Allocator* 
 
 	for (u32 texture_idx = 0; texture_idx < count; texture_idx++) {
 		Gpu_Vk_Texture_Data* texture_data = gpu_vk_texture_get_root_data(textures[texture_idx]);
+		gpu_vk_validate(texture_data != NULL, "Invalid texture.");
+
 		Gpu_Vk_Texture_Layout old_layout = texture_data->imm.layout;
 		Gpu_Vk_Texture_Layout new_layout = layouts[texture_idx];
 		if (old_layout == new_layout) {
@@ -1627,20 +1653,6 @@ void gpu_vk_init_command_buffer_emitter(Gpu_Vk_Command_Buffer_Data* cb_data, Gpu
 		.cb = VK_NULL_HANDLE,
 	};
 }
-void gpu_vk_add_wait_to_command_buffer_emitter(Gpu_Vk_Command_Buffer_Emitter* emitter, VkSemaphore semaphore, u64 value) {
-	Gpu_Vk_Command_Buffer_Emitter_Semaphore entry = {
-		.semaphore = semaphore,
-		.value = value,
-	};
-	gpu_vk_command_buffer_emitter_semaphore_seq_push(&emitter->wait, entry);
-}
-void gpu_vk_add_signal_to_command_buffer_emitter(Gpu_Vk_Command_Buffer_Emitter* emitter, VkSemaphore semaphore, u64 value) {
-	Gpu_Vk_Command_Buffer_Emitter_Semaphore entry = {
-		.semaphore = semaphore,
-		.value = value,
-	};
-	gpu_vk_command_buffer_emitter_semaphore_seq_push(&emitter->signal, entry);
-}
 void gpu_vk_flush_command_buffer_emitter(Gpu_Vk_Command_Buffer_Emitter* emitter) {
 	const u32 wait_count = gpu_vk_command_buffer_emitter_semaphore_seq_get_count(&emitter->wait);
 	const u32 signal_count = gpu_vk_command_buffer_emitter_semaphore_seq_get_count(&emitter->signal);
@@ -1734,6 +1746,25 @@ VkCommandBuffer gpu_vk_fetch_command_buffer_emitter(Gpu_Vk_Command_Buffer_Emitte
 	}
 
 	return emitter->cb;
+}
+void gpu_vk_add_wait_to_command_buffer_emitter(Gpu_Vk_Command_Buffer_Emitter* emitter, VkSemaphore semaphore, u64 value) {
+	if (emitter->cb != VK_NULL_HANDLE) {
+		// Flush, so all prior commands can execute before waiting on semaphore
+		gpu_vk_flush_command_buffer_emitter(emitter);
+	}
+
+	Gpu_Vk_Command_Buffer_Emitter_Semaphore entry = {
+		.semaphore = semaphore,
+		.value = value,
+	};
+	gpu_vk_command_buffer_emitter_semaphore_seq_push(&emitter->wait, entry);
+}
+void gpu_vk_add_signal_to_command_buffer_emitter(Gpu_Vk_Command_Buffer_Emitter* emitter, VkSemaphore semaphore, u64 value) {
+	Gpu_Vk_Command_Buffer_Emitter_Semaphore entry = {
+		.semaphore = semaphore,
+		.value = value,
+	};
+	gpu_vk_command_buffer_emitter_semaphore_seq_push(&emitter->signal, entry);
 }
 
 void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
@@ -1916,7 +1947,7 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 
 		const u64 signal_value = ++gpu_vk.global_semaphore_value;
 		gpu_vk_add_signal_to_command_buffer_emitter(&cb_emitter, global_semaphore_data->vk_semaphore, signal_value);
-		cb_data->wait_global_semaphore_value = signal_value;
+		cb_data->gpu_complete_semaphore_value = signal_value;
 	}
 
 	gpu_vk_flush_command_buffer_emitter(&cb_emitter);
@@ -1950,10 +1981,12 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 		sl_assert((present_result == VK_SUCCESS) || (present_result == VK_ERROR_OUT_OF_DATE_KHR) || (present_result == VK_SUBOPTIMAL_KHR), "Failed to present command buffer.");
 	}
 
-	// for (u32 present_idx = 0; present_idx < present_count; present_idx++) {
-	// 	const Gpu_Vk_Swapchain_Present present_info = gpu_vk_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
-	// 	gpu_vk_release_swapchain_instance(present_info.swapchain_instance); // probs needs to happen when GPU actually completes (we're accessing image views etc.)
-	// }
+	// Clean up notification
+	gpu_vk_notify(gpu_vk.global_semaphore, cb_data->gpu_complete_semaphore_value, cb_data, gpu_vk_on_complete_command_buffer_callback);
+
+	if (wait_until_completed) {
+		gpu_vk_wait_cpu(gpu_vk.global_semaphore, cb_data->gpu_complete_semaphore_value);
+	}
 }
 
 void gpu_vk_transition_texture_layouts(Gpu_Vk_Command_Buffer cb, const Gpu_Vk_Texture* textures, const Gpu_Vk_Texture_Layout* layouts, u32 count) {
@@ -2006,7 +2039,8 @@ bool gpu_vk_fetch_swapchain_texture(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Command_B
 		}
 	}
 
-	swapchain_instance->rc++;
+	// Retain swapchain until command buffer completes.
+	gpu_vk_retain_swapchain_instance(swapchain_instance);
 
 	Gpu_Vk_Texture swapchain_texture = swapchain_instance->textures[image_index];
 	Gpu_Vk_Texture_Data* swapchain_texture_data = gpu_vk_texture_pool_resolve(&gpu_vk.texture_pool, swapchain_texture);
@@ -2407,5 +2441,10 @@ void gpu_vk_wait_cpu(Gpu_Vk_Semaphore semaphore, u64 value) {
 		};
 		VkResult result = vkWaitSemaphores(gpu_vk.device, &wait_info, u64_max);
 		sl_assert(result == VK_SUCCESS, "Failed to wait on semaphore.");
+
+		sl_mutex_lock(&data->mutex);
+		data->current_value = sl_max(data->current_value, value);
+		gpu_vk_semaphore_flush_pending_callbacks(data);
+		sl_mutex_unlock(&data->mutex);
 	}
 }

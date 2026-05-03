@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <stdatomic.h>
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
@@ -169,6 +170,15 @@ typedef int32_t s32;
 typedef int64_t s64;
 typedef float f32;
 typedef double f64;
+
+typedef atomic_uint_fast8_t atomic_u8;
+typedef atomic_uint_fast16_t atomic_u16;
+typedef atomic_uint_fast32_t atomic_u32;
+typedef atomic_uint_fast64_t atomic_u64;
+typedef atomic_int_fast8_t atomic_s8;
+typedef atomic_int_fast16_t atomic_s16;
+typedef atomic_int_fast32_t atomic_s32;
+typedef atomic_int_fast64_t atomic_s64;
 
 sl_inline f64 sl_now(void) {
 	struct timespec ts;
@@ -2632,6 +2642,43 @@ sl_inline void sl_mutex_lock(SL_Mutex* mutex) {
 sl_inline void sl_mutex_unlock(SL_Mutex* mutex) {
 	pthread_mutex_unlock(&mutex->mutex);
 }
+
+// Warning: it is illegal to call `return` within this block.
+#define sl_with_mutex_lock(mutex_ptr) \
+    for (s32 _once = (sl_mutex_lock(mutex_ptr), 0); !_once; sl_mutex_unlock(mutex_ptr), _once = 1)
+
+// Recursive Mutex
+typedef struct SL_Rec_Mutex {
+	pthread_mutex_t mutex;
+} SL_Rec_Mutex;
+
+sl_inline SL_Rec_Mutex sl_rec_mutex_new(void) {
+	SL_Rec_Mutex result;
+
+ 	pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+
+	pthread_mutex_init(&result.mutex, NULL);
+
+    pthread_mutexattr_destroy(&attr);
+
+	return result;
+}
+sl_inline void sl_rec_mutex_destroy(SL_Rec_Mutex* mutex) {
+	pthread_mutex_destroy(&mutex->mutex);
+	*mutex = (SL_Rec_Mutex) {0};
+}
+sl_inline void sl_rec_mutex_lock(SL_Rec_Mutex* mutex) {
+	pthread_mutex_lock(&mutex->mutex);
+}
+sl_inline void sl_rec_mutex_unlock(SL_Rec_Mutex* mutex) {
+	pthread_mutex_unlock(&mutex->mutex);
+}
+
+// Warning: it is illegal to call `return` within this block.
+#define sl_with_rec_mutex_lock(mutex_ptr) \
+    for (s32 _once = (sl_rec_mutex_lock(mutex_ptr), 0); !_once; sl_rec_mutex_unlock(mutex_ptr), _once = 1)
 
 // Thread
 typedef struct SL_Thread {
