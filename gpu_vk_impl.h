@@ -238,12 +238,12 @@ typedef struct Gpu_Vk_Command_Blit {
 } Gpu_Vk_Command_Blit;
 
 typedef struct Gpu_Vk_Command_Wait {
-	Gpu_Vk_Semaphore semaphore;
+	VkSemaphore semaphore;
 	u64 value;
 } Gpu_Vk_Command_Wait;
 
 typedef struct Gpu_Vk_Command_Signal {
-	Gpu_Vk_Semaphore semaphore;
+	VkSemaphore semaphore;
 	u64 value;
 } Gpu_Vk_Command_Signal;
 
@@ -276,7 +276,7 @@ sl_seq(Gpu_Vk_Swapchain_Present, Gpu_Vk_Swapchain_Present_Seq, gpu_vk_swapchain_
 typedef struct Gpu_Vk_Command_Buffer_Data {
 	Gpu_Vk_Command_Buffer_State state;
 	VkCommandPool command_pool;
-	VkFence fence;
+	u64 wait_global_semaphore_value;
 
 	Gpu_Vk_Semaphore_Seq semaphores;
 	u32 next_free_semaphore;
@@ -312,8 +312,8 @@ typedef struct Gpu_Vk {
 	Gpu_Vk_Device_Function_Table device_function_table;
 	VkPhysicalDeviceLimits device_limits;
 
-	VkSemaphore timeline_semaphore;
-	u64 timeline_semaphore_value;
+	Gpu_Vk_Semaphore global_semaphore;
+	u64 global_semaphore_value;
 
 	Gpu_Vk_Swapchain_Init_Desc swapchain_init_desc;
 
@@ -691,20 +691,6 @@ void gpu_vk_init_device(void) {
 		.vkCmdPipelineBarrier2KHR = (PFN_vkCmdPipelineBarrier2KHR)vkGetDeviceProcAddr(gpu_vk.device, "vkCmdPipelineBarrier2KHR"),
 		.vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(gpu_vk.device, "vkCmdPushDescriptorSetKHR"),
 	};
-
-	VkSemaphoreTypeCreateInfo semaphore_type_create_info = {
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-		.initialValue = 0,
-	};
-	VkSemaphoreCreateInfo semaphore_create_info = {
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-		.pNext = &semaphore_type_create_info,
-	};
-	VkResult create_semaphore_result = vkCreateSemaphore(gpu_vk.device, &semaphore_create_info, NULL, &gpu_vk.timeline_semaphore);
-	sl_assert(create_semaphore_result == VK_SUCCESS, "Failed to create timeline semaphore");
-
-	gpu_vk.timeline_semaphore_value = 0;
 }
 
 // Texture
@@ -1243,6 +1229,8 @@ void gpu_vk_init(const Gpu_Vk_Desc* desc) {
 	gpu_vk_init_instance(desc);
 	gpu_vk_init_device();
 	gpu_vk_init_resource_pools();
+
+	gpu_vk.global_semaphore = gpu_vk_new_semaphore();
 }
 void gpu_vk_deinit() {
 	vkDestroyInstance(gpu_vk.instance, NULL);
@@ -1387,14 +1375,6 @@ void gpu_init_command_buffer(Gpu_Vk_Command_Buffer_Data* command_buffer) {
 	};
 	VkResult command_pool_result = vkCreateCommandPool(gpu_vk.device, &command_pool_create_info, NULL, &command_buffer->command_pool);
 	sl_assert(command_pool_result == VK_SUCCESS, "Failed to create command pool.");
-
-	// Fence
-	VkFenceCreateInfo fence_create_info = {
-		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
-	};
-	VkResult fence_result = vkCreateFence(gpu_vk.device, &fence_create_info, NULL, &command_buffer->fence);
-	sl_assert(fence_result == VK_SUCCESS, "Failed to create fence.");
 }
 
 // Command Buffer Pool
@@ -1442,8 +1422,7 @@ bool gpu_vk_new_command_buffer(Gpu_Vk_Command_Buffer_Pool pool, Gpu_Vk_Command_B
 	}
 
 	// Wait for inflight work associated with the recorder to be completed.
-	vkWaitForFences(gpu_vk.device, 1, &cb_data->fence, true, u64_max);
-	vkResetFences(gpu_vk.device, 1, &cb_data->fence);
+	gpu_vk_wait_cpu(gpu_vk.global_semaphore, cb_data->wait_global_semaphore_value);
 
 	vkResetCommandPool(gpu_vk.device, cb_data->command_pool, 0);
 
@@ -1478,8 +1457,7 @@ VkSemaphore gpu_vk_get_next_command_buffer_semaphore(Gpu_Vk_Command_Buffer cb) {
 	}
 }
 
-VkCommandBuffer gpu_vk_get_next_vk_command_buffer(Gpu_Vk_Command_Buffer cb) {
-	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb);
+VkCommandBuffer gpu_vk_get_next_vk_command_buffer(Gpu_Vk_Command_Buffer_Data* cb_data) {
 	if (cb_data->next_free_command_buffer < gpu_vk_command_buffer_seq_get_count(&cb_data->command_buffers)) {
 		return gpu_vk_command_buffer_seq_get(&cb_data->command_buffers, cb_data->next_free_command_buffer++);
 	} else {
@@ -1628,18 +1606,149 @@ sl_inline void gpu_vk_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer 
 	sl_arena_allocator_reset(arena, reset_position);
 }
 
+typedef struct Gpu_Vk_Command_Buffer_Emitter_Semaphore {
+	VkSemaphore semaphore;
+	u64 value;
+} Gpu_Vk_Command_Buffer_Emitter_Semaphore;
+sl_seq(Gpu_Vk_Command_Buffer_Emitter_Semaphore, Gpu_Vk_Command_Buffer_Emitter_Semaphore_Seq, gpu_vk_command_buffer_emitter_semaphore_seq);
+
+typedef struct Gpu_Vk_Command_Buffer_Emitter {
+	Gpu_Vk_Command_Buffer_Data* cb_data;
+	Gpu_Vk_Command_Buffer_Emitter_Semaphore_Seq wait;
+	Gpu_Vk_Command_Buffer_Emitter_Semaphore_Seq signal;
+	VkCommandBuffer cb;
+} Gpu_Vk_Command_Buffer_Emitter;
+
+void gpu_vk_init_command_buffer_emitter(Gpu_Vk_Command_Buffer_Data* cb_data, Gpu_Vk_Command_Buffer_Emitter* emitter) {
+	*emitter = (Gpu_Vk_Command_Buffer_Emitter) {
+		.cb_data = cb_data,
+		.wait = gpu_vk_command_buffer_emitter_semaphore_seq_new(&cb_data->arena->allocator, 0),
+		.signal = gpu_vk_command_buffer_emitter_semaphore_seq_new(&cb_data->arena->allocator, 0),
+		.cb = VK_NULL_HANDLE,
+	};
+}
+void gpu_vk_add_wait_to_command_buffer_emitter(Gpu_Vk_Command_Buffer_Emitter* emitter, VkSemaphore semaphore, u64 value) {
+	Gpu_Vk_Command_Buffer_Emitter_Semaphore entry = {
+		.semaphore = semaphore,
+		.value = value,
+	};
+	gpu_vk_command_buffer_emitter_semaphore_seq_push(&emitter->wait, entry);
+}
+void gpu_vk_add_signal_to_command_buffer_emitter(Gpu_Vk_Command_Buffer_Emitter* emitter, VkSemaphore semaphore, u64 value) {
+	Gpu_Vk_Command_Buffer_Emitter_Semaphore entry = {
+		.semaphore = semaphore,
+		.value = value,
+	};
+	gpu_vk_command_buffer_emitter_semaphore_seq_push(&emitter->signal, entry);
+}
+void gpu_vk_flush_command_buffer_emitter(Gpu_Vk_Command_Buffer_Emitter* emitter) {
+	const u32 wait_count = gpu_vk_command_buffer_emitter_semaphore_seq_get_count(&emitter->wait);
+	const u32 signal_count = gpu_vk_command_buffer_emitter_semaphore_seq_get_count(&emitter->signal);
+
+	if ((emitter->cb == VK_NULL_HANDLE) && (wait_count == 0) && (signal_count == 0)) {
+		return;
+	}
+
+	SL_Arena_Allocator* arena = emitter->cb_data->arena;
+	const u64 arena_reset_position = sl_arena_allocator_get_position(arena);
+
+	VkCommandBuffer cb;
+	if (emitter->cb == VK_NULL_HANDLE) {
+		cb = gpu_vk_get_next_vk_command_buffer(emitter->cb_data);
+		const VkCommandBufferBeginInfo vk_cb_begin_info = {
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+		};
+		vkBeginCommandBuffer(cb, &vk_cb_begin_info);
+	} else {
+		cb = emitter->cb;
+		emitter->cb = VK_NULL_HANDLE;
+	}
+
+	vkEndCommandBuffer(cb);
+
+	VkSemaphore* wait_semaphores;
+	VkPipelineStageFlags* wait_stage_flags;
+	u64* wait_values;
+	VkSemaphore* signal_semaphores;
+	u64* signal_values;
+	allocator_new(&arena->allocator, wait_values, wait_count);
+	allocator_new(&arena->allocator, wait_semaphores, wait_count);
+	allocator_new(&arena->allocator, wait_stage_flags, wait_count);
+	allocator_new(&arena->allocator, signal_semaphores, signal_count);
+	allocator_new(&arena->allocator, signal_values, signal_count);
+
+	for (u32 wait_idx = 0; wait_idx < wait_count; wait_idx++) {
+		const Gpu_Vk_Command_Buffer_Emitter_Semaphore* semaphore = gpu_vk_command_buffer_emitter_semaphore_seq_get_ptr(&emitter->wait, wait_idx);
+		wait_semaphores[wait_idx] = semaphore->semaphore;
+		wait_values[wait_idx] = semaphore->value;
+		wait_stage_flags[wait_idx] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+	}
+
+	for (u32 signal_idx = 0; signal_idx < signal_count; signal_idx++) {
+		const Gpu_Vk_Command_Buffer_Emitter_Semaphore* semaphore = gpu_vk_command_buffer_emitter_semaphore_seq_get_ptr(&emitter->signal, signal_idx);
+		signal_semaphores[signal_idx] = semaphore->semaphore;
+		signal_values[signal_idx] = semaphore->value;
+	}
+
+	const VkTimelineSemaphoreSubmitInfo timeline_info = {
+		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+		.pWaitSemaphoreValues = wait_values,
+		.waitSemaphoreValueCount = wait_count,
+		.signalSemaphoreValueCount = signal_count,
+		.pSignalSemaphoreValues = signal_values
+	};
+
+	const VkSubmitInfo submit_info = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pNext = &timeline_info,
+		.pCommandBuffers = &cb,
+		.commandBufferCount = 1,
+		.waitSemaphoreCount = wait_count,
+		.pWaitSemaphores = wait_semaphores,
+		.pWaitDstStageMask = wait_stage_flags,
+		.signalSemaphoreCount = signal_count,
+		.pSignalSemaphores = signal_semaphores,
+	};
+	const VkResult submit_result = vkQueueSubmit(gpu_vk.queue[Gpu_Vk_Queue_Primary], 1, &submit_info, VK_NULL_HANDLE);
+	sl_assert(submit_result == VK_SUCCESS, "Failed to submit command buffer.");
+
+	gpu_vk_command_buffer_emitter_semaphore_seq_clear(&emitter->wait);
+	gpu_vk_command_buffer_emitter_semaphore_seq_clear(&emitter->signal);
+
+	sl_arena_allocator_reset(arena, arena_reset_position);
+}
+VkCommandBuffer gpu_vk_fetch_command_buffer_emitter(Gpu_Vk_Command_Buffer_Emitter* emitter) {
+	const u32 signal_count = gpu_vk_command_buffer_emitter_semaphore_seq_get_count(&emitter->signal);
+	if ((emitter->cb != VK_NULL_HANDLE) && (signal_count > 0)) {
+		gpu_vk_flush_command_buffer_emitter(emitter);
+	}
+
+	if (emitter->cb == VK_NULL_HANDLE) {
+		emitter->cb = gpu_vk_get_next_vk_command_buffer(emitter->cb_data);
+		const VkCommandBufferBeginInfo vk_cb_begin_info = {
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+		};
+		vkBeginCommandBuffer(emitter->cb, &vk_cb_begin_info);
+	}
+
+	return emitter->cb;
+}
+
 void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Vk_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 	cb_data->state = Gpu_Vk_Command_Buffer_State_Enqueued;
 
-	VkCommandBuffer vk_cb = gpu_vk_get_next_vk_command_buffer(cb);
+	Gpu_Vk_Command_Buffer_Emitter cb_emitter;
+	gpu_vk_init_command_buffer_emitter(cb_data, &cb_emitter);
 
-	VkCommandBufferBeginInfo vk_cb_begin_info = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-	};
-	vkBeginCommandBuffer(vk_cb, &vk_cb_begin_info);
+	// Wait on global semaphore
+	{
+		Gpu_Vk_Semaphore_Data* global_semaphore_data = gpu_vk_semaphore_pool_resolve(&gpu_vk.semaphore_pool, gpu_vk.global_semaphore);
+		gpu_vk_add_signal_to_command_buffer_emitter(&cb_emitter, global_semaphore_data->vk_semaphore, gpu_vk.global_semaphore_value);
+	}
 
 	const u64 command_count = gpu_vk_command_seq_get_count(&cb_data->commands);
 	for (u64 command_idx = 0; command_idx < command_count; command_idx++) {
@@ -1647,11 +1756,15 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 
 		switch (command.kind) {
 			case Gpu_Vk_Command_Kind_Transition_Texture_Layouts: {
+				VkCommandBuffer vk_cb = gpu_vk_fetch_command_buffer_emitter(&cb_emitter);
+
 				Gpu_Vk_Command_Transition_Texture_Layouts* transition_texture_layouts = command.data.transition_texture_layouts;
 				gpu_vk_execute_transition_textures_to_layout(cb_data->arena, vk_cb, transition_texture_layouts->textures, transition_texture_layouts->layouts, transition_texture_layouts->count);
 			} break;
 
 			case Gpu_Vk_Command_Kind_Begin_Render: {
+				VkCommandBuffer vk_cb = gpu_vk_fetch_command_buffer_emitter(&cb_emitter);
+
 				Gpu_Vk_Command_Begin_Render* begin_render = command.data.begin_render;
 				sl_assert(begin_render->render_pass.attachment_count > 0, "Must have at least one attachment in render pass.");
 
@@ -1700,10 +1813,14 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 			} break;
 
 			case Gpu_Vk_Command_Kind_End_Render: {
+				VkCommandBuffer vk_cb = gpu_vk_fetch_command_buffer_emitter(&cb_emitter);
+
 				vkCmdEndRenderPass(vk_cb);
 			} break;
 
 			case Gpu_Vk_Command_Kind_Dispatch: {
+				VkCommandBuffer vk_cb = gpu_vk_fetch_command_buffer_emitter(&cb_emitter);
+
 				Gpu_Vk_Command_Dispatch* dispatch = command.data.dispatch;
 				Gpu_Vk_Compute_Pipeline_Data* pipeline_data = gpu_vk_compute_pipeline_pool_resolve(&gpu_vk.compute_pipeline_pool, dispatch->pipeline);
 				gpu_vk_write_bindings(cb_data->arena, vk_cb, pipeline_data->pipeline_layout, dispatch->bindings, dispatch->binding_count);
@@ -1712,6 +1829,8 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 			} break;
 
 			case Gpu_Vk_Command_Kind_Blit: {
+				VkCommandBuffer vk_cb = gpu_vk_fetch_command_buffer_emitter(&cb_emitter);
+
 				Gpu_Vk_Command_Blit* blit = command.data.blit;
 				const Gpu_Vk_Blit_Desc* blit_desc = &blit->desc;
 				Gpu_Vk_Texture_Data* src_data = gpu_vk_texture_get_root_data(blit_desc->src);
@@ -1742,6 +1861,8 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 			} break;
 
 			case Gpu_Vk_Command_Kind_Barrier: {
+				VkCommandBuffer vk_cb = gpu_vk_fetch_command_buffer_emitter(&cb_emitter);
+
 				VkMemoryBarrier2 barrier = {
 					.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
 					.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
@@ -1760,11 +1881,13 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 			} break;
 
 			case Gpu_Vk_Command_Kind_Wait: {
-				// not yet implemented
+				Gpu_Vk_Command_Wait* wait = command.data.wait;
+				gpu_vk_add_wait_to_command_buffer_emitter(&cb_emitter, wait->semaphore, wait->value);
 			} break;
 
 			case Gpu_Vk_Command_Kind_Signal: {
-				// not yet implemented
+				Gpu_Vk_Command_Signal* signal = command.data.signal;
+				gpu_vk_add_signal_to_command_buffer_emitter(&cb_emitter, signal->semaphore, signal->value);
 			} break;
 		}
 	}
@@ -1772,76 +1895,31 @@ void gpu_vk_enqueue(Gpu_Vk_Command_Buffer cb, bool wait_until_completed) {
 	const u32 present_count = gpu_vk_swapchain_present_seq_get_count(&cb_data->swapchain_presents);
 
 	// Transition all swapchain images for present
-	for (u32 present_idx = 0; present_idx < present_count; present_idx++) {
-		const Gpu_Vk_Swapchain_Present present_info = gpu_vk_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
-		Gpu_Vk_Texture_Layout present_layout = Gpu_Vk_Texture_Layout_Present;
-		gpu_vk_execute_transition_textures_to_layout(cb_data->arena, vk_cb, &present_info.texture, &present_layout, 1);
-	}
-
-	vkEndCommandBuffer(vk_cb);
-
-	// Submit command buffer
-	{
-		u32 wait_semaphore_count = present_count + 1;
-		u32 signal_semaphore_count = present_count + 1;
-		VkSemaphore* wait_semaphores;
-		VkPipelineStageFlags* wait_stage_flags;
-		u64* wait_values;
-		VkSemaphore* signal_semaphores;
-		u64* signal_values;
-		allocator_new(&cb_data->arena->allocator, wait_values, wait_semaphore_count);
-		allocator_new(&cb_data->arena->allocator, wait_semaphores, wait_semaphore_count);
-		allocator_new(&cb_data->arena->allocator, wait_stage_flags, wait_semaphore_count);
-		allocator_new(&cb_data->arena->allocator, signal_semaphores, signal_semaphore_count);
-		allocator_new(&cb_data->arena->allocator, signal_values, signal_semaphore_count);
-
-		u32 next_wait_semaphore_idx = 0;
-		u32 next_signal_semaphore_idx = 0;
+	if (present_count > 0) {
+		VkCommandBuffer vk_cb = gpu_vk_fetch_command_buffer_emitter(&cb_emitter);
 		for (u32 present_idx = 0; present_idx < present_count; present_idx++) {
 			const Gpu_Vk_Swapchain_Present present_info = gpu_vk_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
-			wait_semaphores[next_wait_semaphore_idx] = present_info.image_available_semaphore;
-			wait_stage_flags[next_wait_semaphore_idx] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-			wait_values[next_wait_semaphore_idx] = 0; // ignored
-			next_wait_semaphore_idx++;
-
-			signal_semaphores[next_signal_semaphore_idx] = present_info.present_semaphore;
-			signal_values[next_signal_semaphore_idx] = 0; // ignored
-			next_signal_semaphore_idx++;
+			Gpu_Vk_Texture_Layout present_layout = Gpu_Vk_Texture_Layout_Present;
+			gpu_vk_execute_transition_textures_to_layout(cb_data->arena, vk_cb, &present_info.texture, &present_layout, 1);
 		}
-
-		const u64 old_value = gpu_vk.timeline_semaphore_value;
-		const u64 new_value = ++gpu_vk.timeline_semaphore_value;
-
-		wait_semaphores[next_wait_semaphore_idx] = gpu_vk.timeline_semaphore;
-		wait_values[next_wait_semaphore_idx] = old_value;
-		next_wait_semaphore_idx++;
-
-		signal_semaphores[next_signal_semaphore_idx] = gpu_vk.timeline_semaphore;
-		signal_values[next_signal_semaphore_idx] = new_value;
-		next_signal_semaphore_idx++;
-
-		const VkTimelineSemaphoreSubmitInfo timeline_info = {
-			.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-			.pWaitSemaphoreValues = wait_values,
-			.waitSemaphoreValueCount = wait_semaphore_count,
-			.signalSemaphoreValueCount = signal_semaphore_count,
-			.pSignalSemaphoreValues = signal_values
-		};
-
-		const VkSubmitInfo submit_info = {
-			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-			.pNext = &timeline_info,
-			.pCommandBuffers = &vk_cb,
-			.commandBufferCount = 1,
-			.waitSemaphoreCount = wait_semaphore_count,
-			.pWaitSemaphores = wait_semaphores,
-			.pWaitDstStageMask = wait_stage_flags,
-			.signalSemaphoreCount = signal_semaphore_count,
-			.pSignalSemaphores = signal_semaphores,
-		};
-		const VkResult submit_result = vkQueueSubmit(gpu_vk.queue[Gpu_Vk_Queue_Primary], 1, &submit_info, cb_data->fence);
-		sl_assert(submit_result == VK_SUCCESS, "Failed to submit command buffer.");
 	}
+
+	// Signal all swapchain semaphores
+	for (u32 present_idx = 0; present_idx < present_count; present_idx++) {
+		const Gpu_Vk_Swapchain_Present present_info = gpu_vk_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
+		gpu_vk_add_signal_to_command_buffer_emitter(&cb_emitter, present_info.present_semaphore, 0);
+	}
+
+	// Signal global semaphore
+	{
+		Gpu_Vk_Semaphore_Data* global_semaphore_data = gpu_vk_semaphore_pool_resolve(&gpu_vk.semaphore_pool, gpu_vk.global_semaphore);
+
+		const u64 signal_value = ++gpu_vk.global_semaphore_value;
+		gpu_vk_add_signal_to_command_buffer_emitter(&cb_emitter, global_semaphore_data->vk_semaphore, signal_value);
+		cb_data->wait_global_semaphore_value = signal_value;
+	}
+
+	gpu_vk_flush_command_buffer_emitter(&cb_emitter);
 
 	// Presents
 	if (present_count > 0) {
@@ -1935,6 +2013,23 @@ bool gpu_vk_fetch_swapchain_texture(Gpu_Vk_Swapchain swapchain, Gpu_Vk_Command_B
 
 	// Always discard the original contents of swapchain texture.
 	swapchain_texture_data->imm.layout = Gpu_Vk_Texture_Layout_Undefined;
+
+	// Wait for swapchain image to be available.
+	{
+		Gpu_Vk_Command_Wait* wait;
+		allocator_new(&cb_data->arena->allocator, wait, 1);
+		*wait = (Gpu_Vk_Command_Wait) {
+			.semaphore = semaphore,
+			.value = 0,
+		};
+
+		gpu_vk_command_seq_push(&cb_data->commands, (Gpu_Vk_Command) {
+			.kind = Gpu_Vk_Command_Kind_Wait,
+			.data = {
+				.wait = wait,
+			},
+		});
+	}
 
 	// Automatically present image when command buffer completes
 	gpu_vk_swapchain_present_seq_push(&cb_data->swapchain_presents, (Gpu_Vk_Swapchain_Present) {
@@ -2154,8 +2249,6 @@ void* gpu_vk_semaphore_thread(void* ctx) {
 		VkResult counter_result = vkGetSemaphoreCounterValue(gpu_vk.device, data->vk_semaphore, &wait_value);
 		sl_assert(counter_result == VK_SUCCESS, "Failed to get current semaphore value.");
 
-		gpu_vk_log("Semaphore hit value %lu", wait_value);
-
 		sl_mutex_lock(&data->mutex);
 		data->current_value = sl_max(data->current_value, wait_value);
 
@@ -2236,10 +2329,13 @@ void gpu_vk_wait_gpu(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Semaphore semaphore, u64 v
 	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Vk_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 
+	Gpu_Vk_Semaphore_Data* semaphore_data = gpu_vk_semaphore_pool_resolve(&gpu_vk.semaphore_pool, semaphore);
+	sl_assert(semaphore_data != NULL, "Invalid semaphore");
+
 	Gpu_Vk_Command_Wait* wait;
 	allocator_new(&cb_data->arena->allocator, wait, 1);
 	*wait = (Gpu_Vk_Command_Wait) {
-		.semaphore = semaphore,
+		.semaphore = semaphore_data->vk_semaphore,
 		.value = value,
 	};
 
@@ -2254,10 +2350,13 @@ void gpu_vk_signal_gpu(Gpu_Vk_Command_Buffer cb, Gpu_Vk_Semaphore semaphore, u64
 	Gpu_Vk_Command_Buffer_Data* cb_data = gpu_vk_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Vk_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 
+	Gpu_Vk_Semaphore_Data* semaphore_data = gpu_vk_semaphore_pool_resolve(&gpu_vk.semaphore_pool, semaphore);
+	sl_assert(semaphore_data != NULL, "Invalid semaphore");
+
 	Gpu_Vk_Command_Signal* signal;
 	allocator_new(&cb_data->arena->allocator, signal, 1);
 	*signal = (Gpu_Vk_Command_Signal) {
-		.semaphore = semaphore,
+		.semaphore = semaphore_data->vk_semaphore,
 		.value = value,
 	};
 
