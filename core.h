@@ -2527,16 +2527,25 @@ sl_inline bool sl_handle_is_null(SL_Handle handle) {
 	return (handle.index == 0) && (handle.generation == 0);
 }
 
+// to make pool thread safe:
+//   - fixed size
+//   - lock-free stack
+
+// or
+// each thread has a shard:
+//   - free list
+//   - chunks etc.
+
 #define sl_pool(element, type, function_prefix)\
 	sl_seq(element, sl_concat(type, _Backing_Seq), sl_concat(function_prefix, _backing_seq));\
 	typedef struct type {\
 		sl_concat(type, _Backing_Seq) backing;\
 		Seq_u32 free_list;\
 	} type;\
-	sl_inline type sl_concat(function_prefix, _new)(Allocator* allocator, u64 initial_capacity) {\
+	sl_inline type sl_concat(function_prefix, _new)(Allocator* allocator) {\
 		type result = {\
-			.backing = sl_concat(function_prefix, _backing_seq_new)(allocator, initial_capacity),\
-			.free_list = seq_u32_new(allocator, initial_capacity),\
+			.backing = sl_concat(function_prefix, _backing_seq_new)(allocator, 0),\
+			.free_list = seq_u32_new(allocator, 0),\
 		};\
 		return result;\
 	}\
@@ -2575,7 +2584,89 @@ sl_inline bool sl_handle_is_null(SL_Handle handle) {
 		sl_assert(e != NULL, "Can't release a stale handle.");\
 		seq_u32_push(&p->free_list, handle.index);\
 		e->generation++;\
+	}
+
+#define SL_THREADSAFE_POOL_SEGMENT_SIZE_EXP 8
+#define SL_THREADSAFE_POOL_SEGMENT_SIZE (1 << SL_THREADSAFE_POOL_SEGMENT_SIZE_EXP)
+#define SL_THREADSAFE_POOL_MAX_SEGMENTS 256
+#define SL_THREADSAFE_POOL_MAX_ELEMENTS (SL_THREADSAFE_POOL_SEGMENT_SIZE * SL_THREADSAFE_POOL_MAX_SEGMENTS)
+
+#define sl_threadsafe_pool(element, type, function_prefix)\
+	typedef struct type {\
+		Allocator* allocator;\
+		element** segments;\
+		u32 segment_count;\
+		Seq_u32 free_list;\
+		SL_Mutex mutex;\
+	} type;\
+	sl_inline type sl_concat(function_prefix, _new)(Allocator* allocator) {\
+		type result = {\
+			.allocator = allocator,\
+			.segment_count = 0,\
+			.free_list = seq_u32_new(allocator, 0),\
+			.mutex = sl_mutex_new(),\
+		};\
+		allocator_new(allocator, result.segments, SL_THREADSAFE_POOL_MAX_SEGMENTS);\
+		return result;\
 	}\
+	sl_inline void sl_concat(function_prefix, _destroy)(type* p) {\
+		for (u32 i = 0; i < p->segment_count; i++) {\
+			allocator_free(p->allocator, p->segments[i], SL_THREADSAFE_POOL_SEGMENT_SIZE);\
+		}\
+		allocator_free(p->allocator, p->segments, SL_THREADSAFE_POOL_MAX_SEGMENTS);\
+		seq_u32_destroy(&p->free_list);\
+		sl_mutex_destroy(&p->mutex);\
+		*p = (type) {0};\
+	}\
+	sl_inline element* sl_concat(function_prefix, _resolve)(type* p, SL_Handle handle) {\
+		const u32 segment_index = handle.index >> SL_THREADSAFE_POOL_SEGMENT_SIZE_EXP;\
+		if (segment_index > p->segment_count) {\
+			return NULL;\
+		}\
+		element* e = &p->segments[segment_index][handle.index & (SL_THREADSAFE_POOL_SEGMENT_SIZE - 1)];\
+		if (e->generation == handle.generation) {\
+			return e;\
+		} else {\
+			return NULL;\
+		}\
+	}\
+	sl_inline SL_Handle sl_concat(function_prefix, _acquire)(type* p) {\
+		sl_mutex_lock(&p->mutex);\
+		u32 index;\
+		if (!seq_u32_pop(&p->free_list, &index)) {\
+			if (p->segment_count >= SL_THREADSAFE_POOL_MAX_SEGMENTS) {\
+				sl_mutex_unlock(&p->mutex);\
+				return SL_HANDLE_NULL;\
+			}\
+			const u32 segment_idx = p->segment_count++;\
+			element* segment;\
+			allocator_new(p->allocator, segment, SL_THREADSAFE_POOL_SEGMENT_SIZE);\
+			for (u32 i = 0; i < SL_THREADSAFE_POOL_SEGMENT_SIZE; i++) {\
+				segment[i].generation = 0;\
+				seq_u32_push(&p->free_list, (segment_idx << SL_THREADSAFE_POOL_SEGMENT_SIZE_EXP) | i);\
+			}\
+			p->segments[segment_idx] = segment;\
+			seq_u32_pop(&p->free_list, &index);\
+		}\
+		sl_mutex_unlock(&p->mutex);\
+		element* e = &p->segments[index >> SL_THREADSAFE_POOL_SEGMENT_SIZE_EXP][index & (SL_THREADSAFE_POOL_SEGMENT_SIZE - 1)];\
+		const u32 new_generation = ++e->generation;\
+		*e = (element) {\
+			.generation = new_generation,\
+		};\
+		return (SL_Handle) {\
+			.index = index,\
+			.generation = new_generation,\
+		};\
+	}\
+	sl_inline void sl_concat(function_prefix, _release)(type* p, SL_Handle handle) {\
+		element* e = sl_concat(function_prefix, _resolve)(p, handle);\
+		sl_assert(e != NULL, "Can't release a stale handle.");\
+		e->generation++;\
+		sl_mutex_lock(&p->mutex);\
+		seq_u32_push(&p->free_list, handle.index);\
+		sl_mutex_unlock(&p->mutex);\
+	}
 
 sl_inline u64 sl_hash_bytes(Immutable_Buffer buffer) {
 	// FNV-1a

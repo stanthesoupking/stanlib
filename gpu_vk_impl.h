@@ -96,7 +96,7 @@ sl_inline bool gpu_vk_framebuffer_key_equals(Gpu_Vk_Framebuffer_Key a, Gpu_Vk_Fr
 	return true;
 }
 
-sl_pool(Gpu_Vk_Framebuffer_Data, Gpu_Vk_Framebuffer_Pool, gpu_vk_framebuffer_pool);
+sl_threadsafe_pool(Gpu_Vk_Framebuffer_Data, Gpu_Vk_Framebuffer_Pool, gpu_vk_framebuffer_pool);
 sl_hashmap(Gpu_Vk_Framebuffer_Key, Gpu_Vk_Framebuffer, Gpu_Vk_Framebuffer_Map, gpu_vk_framebuffer_map, gpu_vk_framebuffer_key_hash, gpu_vk_framebuffer_key_equals);
 
 typedef enum Gpu_Vk_Queue {
@@ -125,7 +125,7 @@ typedef struct Gpu_Vk_Heap_Data {
 	u64 size;
 	void* host_ptr;
 } Gpu_Vk_Heap_Data;
-sl_pool(Gpu_Vk_Heap_Data, Gpu_Vk_Heap_Pool, gpu_vk_heap_pool);
+sl_threadsafe_pool(Gpu_Vk_Heap_Data, Gpu_Vk_Heap_Pool, gpu_vk_heap_pool);
 
 typedef enum Gpu_Vk_Texture_Data_Kind {
 	Gpu_Vk_Texture_Data_Kind_Immediate,
@@ -148,7 +148,7 @@ typedef struct Gpu_Vk_Texture_Data {
 		} imm;
 	};
 } Gpu_Vk_Texture_Data;
-sl_pool(Gpu_Vk_Texture_Data, Gpu_Vk_Texture_Pool, gpu_vk_texture_pool);
+sl_threadsafe_pool(Gpu_Vk_Texture_Data, Gpu_Vk_Texture_Pool, gpu_vk_texture_pool);
 
 typedef struct Gpu_Vk_Compute_Pipeline_Data {
 	u32 generation;
@@ -157,7 +157,7 @@ typedef struct Gpu_Vk_Compute_Pipeline_Data {
 	VkPipelineLayout pipeline_layout;
 	VkPipeline pipeline;
 } Gpu_Vk_Compute_Pipeline_Data;
-sl_pool(Gpu_Vk_Compute_Pipeline_Data, Gpu_Vk_Compute_Pipeline_Pool, gpu_vk_compute_pipeline_pool);
+sl_threadsafe_pool(Gpu_Vk_Compute_Pipeline_Data, Gpu_Vk_Compute_Pipeline_Pool, gpu_vk_compute_pipeline_pool);
 
 typedef struct Gpu_Vk_Semaphore_On_Notify_Callback {
 	u64 value;
@@ -182,7 +182,7 @@ typedef struct Gpu_Vk_Semaphore_Data {
 	SL_Mutex mutex;
 	SL_Thread thread;
 } Gpu_Vk_Semaphore_Data;
-sl_pool(Gpu_Vk_Semaphore_Data, Gpu_Vk_Semaphore_Pool, gpu_vk_semaphore_pool);
+sl_threadsafe_pool(Gpu_Vk_Semaphore_Data, Gpu_Vk_Semaphore_Pool, gpu_vk_semaphore_pool);
 
 typedef struct Gpu_Vk_Swapchain_Instance {
 	atomic_u32 rc;
@@ -199,7 +199,7 @@ typedef struct Gpu_Vk_Swapchain_Data {
 	VkSurfaceKHR surface;
 	Gpu_Vk_Swapchain_Instance* current_instance;
 } Gpu_Vk_Swapchain_Data;
-sl_pool(Gpu_Vk_Swapchain_Data, Gpu_Vk_Swapchain_Pool, gpu_vk_swapchain_pool);
+sl_threadsafe_pool(Gpu_Vk_Swapchain_Data, Gpu_Vk_Swapchain_Pool, gpu_vk_swapchain_pool);
 
 typedef enum Gpu_Vk_Command_Buffer_State {
 	Gpu_Vk_Command_Buffer_State_Idle,
@@ -301,7 +301,7 @@ typedef struct Gpu_Vk_Command_Buffer_Pool_Data {
 	u32 command_buffer_count;
 	u32 next_command_buffer;
 } Gpu_Vk_Command_Buffer_Pool_Data;
-sl_pool(Gpu_Vk_Command_Buffer_Pool_Data, Gpu_Vk_Command_Buffer_Pool_Pool, gpu_vk_command_buffer_pool_pool);
+sl_threadsafe_pool(Gpu_Vk_Command_Buffer_Pool_Data, Gpu_Vk_Command_Buffer_Pool_Pool, gpu_vk_command_buffer_pool_pool);
 
 typedef struct Gpu_Vk_Device_Function_Table {
 	PFN_vkCmdPipelineBarrier2KHR vkCmdPipelineBarrier2KHR;
@@ -1217,14 +1217,14 @@ Gpu_Vk_Swapchain_Instance* gpu_vk_get_instance(Gpu_Vk_Swapchain swapchain, Gpu_V
 }
 
 void gpu_vk_init_resource_pools() {
-	gpu_vk.heap_pool = gpu_vk_heap_pool_new(gpu_vk.allocator, 0);
-	gpu_vk.texture_pool = gpu_vk_texture_pool_new(gpu_vk.allocator, 0);
-	gpu_vk.command_pool_pool = gpu_vk_command_buffer_pool_pool_new(gpu_vk.allocator, 0);
-	gpu_vk.compute_pipeline_pool = gpu_vk_compute_pipeline_pool_new(gpu_vk.allocator, 0);
-	gpu_vk.swapchain_pool = gpu_vk_swapchain_pool_new(gpu_vk.allocator, 0);
-	gpu_vk.semaphore_pool = gpu_vk_semaphore_pool_new(gpu_vk.allocator, 0);
+	gpu_vk.heap_pool = gpu_vk_heap_pool_new(gpu_vk.allocator);
+	gpu_vk.texture_pool = gpu_vk_texture_pool_new(gpu_vk.allocator);
+	gpu_vk.command_pool_pool = gpu_vk_command_buffer_pool_pool_new(gpu_vk.allocator);
+	gpu_vk.compute_pipeline_pool = gpu_vk_compute_pipeline_pool_new(gpu_vk.allocator);
+	gpu_vk.swapchain_pool = gpu_vk_swapchain_pool_new(gpu_vk.allocator);
+	gpu_vk.semaphore_pool = gpu_vk_semaphore_pool_new(gpu_vk.allocator);
 
-	gpu_vk.framebuffer_pool = gpu_vk_framebuffer_pool_new(gpu_vk.allocator, 0);
+	gpu_vk.framebuffer_pool = gpu_vk_framebuffer_pool_new(gpu_vk.allocator);
 	gpu_vk.framebuffer_map = gpu_vk_framebuffer_map_new(gpu_vk.allocator, 64);
 	gpu_vk.framebuffer_lru = (Gpu_Vk_Framebuffer_LRU) {
 		.oldest = SL_HANDLE_NULL,
