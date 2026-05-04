@@ -2700,17 +2700,6 @@ sl_inline u64 sl_hasher_finalise(SL_Hasher* hasher) {
 	return hasher->hash;
 }
 
-#endif
-
-sl_shared_struct(Quad_f32) {
-	vec2_f32 v[4];
-};
-
-#define u8_max 255u
-#define u16_max 65535u
-#define u32_max 4294967295u
-#define u64_max 18446744073709551615ull
-
 #include <pthread.h>
 
 // Mutex
@@ -2788,3 +2777,14 @@ sl_inline void* sl_thread_join(SL_Thread* thread) {
 	*thread = (SL_Thread) {0};
 	return ret;
 }
+
+#endif
+
+sl_shared_struct(Quad_f32) {
+	vec2_f32 v[4];
+};
+
+#define u8_max 255u
+#define u16_max 65535u
+#define u32_max 4294967295u
+#define u64_max 18446744073709551615ull
