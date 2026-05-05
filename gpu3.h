@@ -66,6 +66,23 @@ typedef enum Gpu_Colorspace {
 	Gpu_Colorspace_Extended_sRGB_Linear,
 } Gpu_Colorspace;
 
+typedef enum Gpu_Filter {
+	Gpu_Filter_Nearest,
+	Gpu_Filter_Linear,
+} Gpu_Filter;
+
+typedef enum Gpu_Sampler_Coordinate {
+	Gpu_Sampler_Coordinate_Normalised,
+	Gpu_Sampler_Coordinate_Pixel,
+} Gpu_Sampler_Coordinate;
+
+typedef enum Gpu_Sampler_Address_Mode {
+	Gpu_Sampler_Address_Mode_Clamp_To_Edge,
+	Gpu_Sampler_Address_Mode_Repeat,
+	Gpu_Sampler_Address_Mode_Mirrored_Repeat,
+	// todo: clamp to border
+} Gpu_Sampler_Address_Mode;
+
 typedef struct Gpu_Swapchain_Desc {
     vec2_u32 size;
 	Gpu_Format format;
@@ -160,24 +177,16 @@ void gpu_flush_slice_from_gpu(Gpu_Slice slice);
 
 typedef enum Gpu_Binding_Kind {
 	Gpu_Binding_Kind_Storage_Texture,
-	Gpu_Binding_Kind_Sampled_Texture, // todo
+	Gpu_Binding_Kind_Sampled_Texture,
+	Gpu_Binding_Kind_Sampler,
 	Gpu_Binding_Kind_Slice,
 } Gpu_Binding_Kind;
-
-typedef struct Gpu_Binding_Storage_Texture {
-	Gpu_Texture texture;
-} Gpu_Binding_Storage_Texture;
-
-typedef struct Gpu_Binding_Sampled_Texture {
-	Gpu_Texture texture;
-	Gpu_Sampler sampler;
-} Gpu_Binding_Sampled_Texture;
 
 typedef struct Gpu_Binding {
 	Gpu_Binding_Kind kind;
 	union {
-		Gpu_Binding_Storage_Texture storage_texture;
-		Gpu_Binding_Sampled_Texture sampled_texture;
+		Gpu_Texture texture;
+		Gpu_Sampler sampler;
 		Gpu_Slice slice;
 	};
 	u32 index;
@@ -244,6 +253,19 @@ u64 gpu_get_heap_size(Gpu_Heap heap);
 Gpu_Slice gpu_get_heap_slice(Gpu_Heap heap);
 
 // Sampler
+typedef struct Gpu_Sampler_Desc {
+	Gpu_Filter min_filter;
+	Gpu_Filter mag_filter;
+	Gpu_Filter mip_filter;
+
+	Gpu_Sampler_Address_Mode address_mode_x;
+	Gpu_Sampler_Address_Mode address_mode_y;
+	Gpu_Sampler_Address_Mode address_mode_z;
+
+	Gpu_Sampler_Coordinate coordinate;
+} Gpu_Sampler_Desc;
+Gpu_Sampler gpu_new_sampler(const Gpu_Sampler_Desc* desc);
+void gpu_destroy_sampler(Gpu_Sampler sampler);
 
 // Command Buffer Pool
 Gpu_Command_Buffer_Pool gpu_new_command_buffer_pool(u32 size);

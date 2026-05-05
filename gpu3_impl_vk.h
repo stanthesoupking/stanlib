@@ -3,7 +3,7 @@
 #include "core.h"
 #include "vulkan/vulkan_core.h"
 #define gpu_LOGGING 1
-#define gpu_VALIDATION 0
+#define gpu_VALIDATION 1
 
 #include "gpu3.h"
 #include <string.h>
@@ -256,6 +256,12 @@ typedef struct Gpu_Swapchain_Data {
 } Gpu_Swapchain_Data;
 sl_threadsafe_pool(Gpu_Swapchain_Data, Gpu_Swapchain_Pool, gpu_swapchain_pool);
 
+typedef struct Gpu_Sampler_Data {
+	u32 generation;
+	VkSampler sampler;
+} Gpu_Sampler_Data;
+sl_threadsafe_pool(Gpu_Sampler_Data, Gpu_Sampler_Pool, gpu_sampler_pool);
+
 typedef enum Gpu_Command_Buffer_State {
 	Gpu_Command_Buffer_State_Idle,
 	Gpu_Command_Buffer_State_Recording,
@@ -397,6 +403,7 @@ typedef struct Gpu {
 	Gpu_Compute_Pipeline_Pool compute_pipeline_pool;
 	Gpu_Swapchain_Pool swapchain_pool;
 	Gpu_Semaphore_Pool semaphore_pool;
+	Gpu_Sampler_Pool sampler_pool;
 
 	Gpu_Render_Pass_Object_Pool render_pass_object_pool;
 	Gpu_Render_Pass_Object_Map render_pass_object_map;
@@ -861,6 +868,28 @@ sl_inline VkImageLayout gpu_texture_layout_to_vk_image_layout(Gpu_Texture_Layout
 		case Gpu_Texture_Layout_Shader_Write: return VK_IMAGE_LAYOUT_GENERAL;
 		case Gpu_Texture_Layout_Color_Attachment: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 		case Gpu_Texture_Layout_Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	}
+}
+
+sl_inline VkFilter gpu_filter_to_vk_filter(Gpu_Filter filter) {
+	switch (filter) {
+		case Gpu_Filter_Nearest: return VK_FILTER_NEAREST;
+		case Gpu_Filter_Linear: return VK_FILTER_LINEAR;
+	}
+}
+
+sl_inline VkSamplerMipmapMode gpu_filter_to_vk_sampler_mipmap_mode(Gpu_Filter filter) {
+	switch (filter) {
+		case Gpu_Filter_Nearest: return VK_SAMPLER_MIPMAP_MODE_NEAREST;
+		case Gpu_Filter_Linear: return VK_SAMPLER_MIPMAP_MODE_LINEAR;
+	}
+}
+
+sl_inline VkSamplerAddressMode gpu_sampler_address_mode_to_vk_sampler_address_mode(Gpu_Sampler_Address_Mode mode) {
+	switch (mode) {
+		case Gpu_Sampler_Address_Mode_Clamp_To_Edge: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		case Gpu_Sampler_Address_Mode_Repeat: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		case Gpu_Sampler_Address_Mode_Mirrored_Repeat: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
 	}
 }
 
@@ -1343,6 +1372,7 @@ void gpu_init_resource_pools() {
 	gpu.compute_pipeline_pool = gpu_compute_pipeline_pool_new(gpu.allocator);
 	gpu.swapchain_pool = gpu_swapchain_pool_new(gpu.allocator);
 	gpu.semaphore_pool = gpu_semaphore_pool_new(gpu.allocator);
+	gpu.sampler_pool = gpu_sampler_pool_new(gpu.allocator);
 
 	gpu.framebuffer_pool = gpu_framebuffer_pool_new(gpu.allocator);
 	gpu.framebuffer_map = gpu_framebuffer_map_new(gpu.allocator, 64);
@@ -1501,6 +1531,37 @@ void gpu_flush_slice_from_gpu(Gpu_Slice slice) {
 	sl_assert(invalidate_result == VK_SUCCESS, "Failed to invalidate slice.");
 }
 
+// Sampler
+Gpu_Sampler gpu_new_sampler(const Gpu_Sampler_Desc* desc) {
+	gpu_log("Created sampler.");
+
+	Gpu_Sampler result = gpu_sampler_pool_acquire(&gpu.sampler_pool);
+	Gpu_Sampler_Data* data = gpu_sampler_pool_resolve(&gpu.sampler_pool, result);
+
+	const VkSamplerCreateInfo create_info = {
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+		.minFilter = gpu_filter_to_vk_filter(desc->min_filter),
+		.magFilter = gpu_filter_to_vk_filter(desc->min_filter),
+		.mipmapMode = gpu_filter_to_vk_sampler_mipmap_mode(desc->mip_filter),
+		.addressModeU = gpu_sampler_address_mode_to_vk_sampler_address_mode(desc->address_mode_x),
+		.addressModeV = gpu_sampler_address_mode_to_vk_sampler_address_mode(desc->address_mode_y),
+		.addressModeW = gpu_sampler_address_mode_to_vk_sampler_address_mode(desc->address_mode_z),
+		.unnormalizedCoordinates = (desc->coordinate == Gpu_Sampler_Coordinate_Pixel),
+	};
+	VkResult create_result = vkCreateSampler(gpu.device, &create_info, NULL, &data->sampler);
+	if (create_result != VK_SUCCESS) {
+		gpu_sampler_pool_release(&gpu.sampler_pool, result);
+		return SL_HANDLE_NULL;
+	}
+
+	return result;
+}
+void gpu_destroy_sampler(Gpu_Sampler sampler) {
+	Gpu_Sampler_Data* data = gpu_sampler_pool_resolve(&gpu.sampler_pool, sampler);
+	vkDestroySampler(gpu.device, data->sampler, NULL);
+	gpu_sampler_pool_release(&gpu.sampler_pool, sampler);
+}
+
 // Command Buffer
 void gpu_init_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 	*command_buffer = (Gpu_Command_Buffer_Data) {
@@ -1633,7 +1694,8 @@ VkCommandBuffer gpu_get_next_vk_command_buffer(Gpu_Command_Buffer_Data* cb_data)
 sl_inline VkDescriptorType gpu_binding_kind_to_vk_descriptor_type(Gpu_Binding_Kind binding_kind) {
 	switch (binding_kind) {
 		case Gpu_Binding_Kind_Storage_Texture: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-		case Gpu_Binding_Kind_Sampled_Texture: return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		case Gpu_Binding_Kind_Sampled_Texture: return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+		case Gpu_Binding_Kind_Sampler: return VK_DESCRIPTOR_TYPE_SAMPLER;
 		case Gpu_Binding_Kind_Slice: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	}
 }
@@ -1708,12 +1770,15 @@ sl_inline void gpu_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer vk_
 		VkWriteDescriptorSet* write = &writes[binding_idx];
 		Gpu_Binding binding = bindings[binding_idx];
 		switch (binding.kind) {
-			case Gpu_Binding_Kind_Storage_Texture: {
+			case Gpu_Binding_Kind_Storage_Texture:
+			case Gpu_Binding_Kind_Sampled_Texture: {
+				Gpu_Texture_Data* texture_data = gpu_texture_pool_resolve(&gpu.texture_pool, binding.texture);
+
 				VkDescriptorImageInfo* image_info;
 				allocator_new(&arena->allocator, image_info, 1);
 				*image_info = (VkDescriptorImageInfo) {
-					.imageLayout = VK_IMAGE_LAYOUT_GENERAL, // todo
-					.imageView = gpu_texture_get_image_view(binding.storage_texture.texture),
+					.imageLayout = gpu_texture_layout_to_vk_image_layout(texture_data->imm.layout),
+					.imageView = texture_data->imm.image_view,
 					.sampler = VK_NULL_HANDLE,
 				};
 
@@ -1728,8 +1793,24 @@ sl_inline void gpu_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer vk_
 				};
 			} break;
 
-			case Gpu_Binding_Kind_Sampled_Texture: {
-				// todo
+			case Gpu_Binding_Kind_Sampler: {
+				Gpu_Sampler_Data* sampler_data = gpu_sampler_pool_resolve(&gpu.sampler_pool, binding.sampler);
+
+				VkDescriptorImageInfo* image_info;
+				allocator_new(&arena->allocator, image_info, 1);
+				*image_info = (VkDescriptorImageInfo) {
+					.sampler = sampler_data->sampler,
+				};
+
+				*write = (VkWriteDescriptorSet) {
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = VK_NULL_HANDLE,
+					.dstBinding = binding.index,
+					.descriptorType = gpu_binding_kind_to_vk_descriptor_type(binding.kind),
+					.pImageInfo = image_info,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+				};
 			} break;
 
 			case Gpu_Binding_Kind_Slice: {
