@@ -275,6 +275,7 @@ typedef enum Gpu_Command_Kind {
 	Gpu_Command_Kind_Draw,
 	Gpu_Command_Kind_Dispatch,
 	Gpu_Command_Kind_Blit,
+	Gpu_Command_Kind_Blit_Slice_To_Texture,
 	Gpu_Command_Kind_Barrier,
 	Gpu_Command_Kind_Wait,
 	Gpu_Command_Kind_Signal,
@@ -306,6 +307,10 @@ typedef struct Gpu_Command_Blit {
 	Gpu_Blit_Desc desc;
 } Gpu_Command_Blit;
 
+typedef struct Gpu_Command_Blit_Slice_To_Texture {
+	Gpu_Blit_Slice_To_Texture_Desc desc;
+} Gpu_Command_Blit_Slice_To_Texture;
+
 typedef struct Gpu_Command_Wait {
 	VkSemaphore semaphore;
 	u64 value;
@@ -325,6 +330,7 @@ typedef struct Gpu_Command {
 		Gpu_Command_Draw* draw;
 		Gpu_Command_Dispatch* dispatch;
 		Gpu_Command_Blit* blit;
+		Gpu_Command_Blit_Slice_To_Texture* blit_slice_to_texture;
 		Gpu_Command_Wait* wait;
 		Gpu_Command_Signal* signal;
 	} data;
@@ -1434,7 +1440,7 @@ Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type) {
 		.pQueueFamilyIndices = &gpu.queue_family_indices.index[Gpu_Queue_Primary],
 		.queueFamilyIndexCount = 1,
 		.flags = 0,
-		.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 	};
 	VkResult create_buffer_result = vkCreateBuffer(gpu.device, &buffer_create_info, NULL, &heap_data->buffer);
 	sl_assert(create_buffer_result == VK_SUCCESS, "Failed to create buffer.");
@@ -1757,7 +1763,7 @@ sl_inline void gpu_execute_transition_textures_to_layout(SL_Arena_Allocator* are
 	sl_arena_allocator_reset(arena, reset_position);
 }
 
-sl_inline void gpu_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer vk_cb, VkPipelineLayout pipeline_layout, const Gpu_Binding* bindings, u32 binding_count) {
+sl_inline void gpu_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer vk_cb, VkPipelineLayout pipeline_layout, VkPipelineBindPoint bind_point, const Gpu_Binding* bindings, u32 binding_count) {
 	if (binding_count == 0) {
 		return;
 	}
@@ -1837,7 +1843,7 @@ sl_inline void gpu_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer vk_
 		}
 	}
 
-	gpu.device_function_table.vkCmdPushDescriptorSetKHR(vk_cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, binding_count, writes);
+	gpu.device_function_table.vkCmdPushDescriptorSetKHR(vk_cb, bind_point, pipeline_layout, 0, binding_count, writes);
 
 	sl_arena_allocator_reset(arena, reset_position);
 }
@@ -2084,7 +2090,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 				VkCommandBuffer vk_cb = gpu_fetch_command_buffer_emitter(&cb_emitter);
 				Gpu_Command_Draw* draw = command.data.draw;
 				Gpu_Render_Pipeline_Data* pipeline_data = gpu_render_pipeline_pool_resolve(&gpu.render_pipeline_pool, draw->desc.pipeline);
-				gpu_write_bindings(cb_data->arena, vk_cb, pipeline_data->pipeline_layout, draw->desc.bindings, draw->desc.binding_count);
+				gpu_write_bindings(cb_data->arena, vk_cb, pipeline_data->pipeline_layout, VK_PIPELINE_BIND_POINT_GRAPHICS, draw->desc.bindings, draw->desc.binding_count);
 				vkCmdBindPipeline(vk_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_data->pipeline);
 				vkCmdDraw(vk_cb, draw->desc.vertex_count, draw->desc.instance_count, 0, 0);
 			} break;
@@ -2094,7 +2100,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 
 				Gpu_Command_Dispatch* dispatch = command.data.dispatch;
 				Gpu_Compute_Pipeline_Data* pipeline_data = gpu_compute_pipeline_pool_resolve(&gpu.compute_pipeline_pool, dispatch->pipeline);
-				gpu_write_bindings(cb_data->arena, vk_cb, pipeline_data->pipeline_layout, dispatch->bindings, dispatch->binding_count);
+				gpu_write_bindings(cb_data->arena, vk_cb, pipeline_data->pipeline_layout, VK_PIPELINE_BIND_POINT_COMPUTE, dispatch->bindings, dispatch->binding_count);
 				vkCmdBindPipeline(vk_cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_data->pipeline);
 				vkCmdDispatch(vk_cb, dispatch->group_count.x, dispatch->group_count.y, dispatch->group_count.z);
 			} break;
@@ -2129,6 +2135,32 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 					},
 				};
 				vkCmdBlitImage(vk_cb, src_data->imm.image, gpu_texture_layout_to_vk_image_layout(src_data->imm.layout), dst_data->imm.image, gpu_texture_layout_to_vk_image_layout(dst_data->imm.layout), 1, &region, VK_FILTER_NEAREST);
+			} break;
+
+			case Gpu_Command_Kind_Blit_Slice_To_Texture: {
+				VkCommandBuffer vk_cb = gpu_fetch_command_buffer_emitter(&cb_emitter);
+
+				const Gpu_Blit_Slice_To_Texture_Desc* blit = &command.data.blit_slice_to_texture->desc;
+				Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, blit->src.heap);
+
+				Gpu_Texture_Data* texture_data = gpu_texture_pool_resolve(&gpu.texture_pool, blit->dst);
+				const vec3_u32 texture_size = texture_data->imm.size;
+
+				const VkBufferImageCopy region = {
+					.bufferOffset = blit->src.offset,
+					.bufferRowLength = blit->src_row_length,
+					.bufferImageHeight = blit->dst_end.y - blit->dst_start.y,
+					.imageOffset = { blit->dst_start.x, blit->dst_start.y, blit->dst_start.z },
+					.imageExtent = { blit->dst_end.x, blit->dst_end.y, blit->dst_end.z },
+					.imageSubresource = {
+						.mipLevel = blit->dst_mip_level,
+						.baseArrayLayer = blit->dst_array_layer,
+						.layerCount = 1,
+						.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					},
+				};
+
+				vkCmdCopyBufferToImage(vk_cb, heap_data->buffer, texture_data->imm.image, gpu_texture_layout_to_vk_image_layout(texture_data->imm.layout), 1, &region);
 			} break;
 
 			case Gpu_Command_Kind_Barrier: {
@@ -2662,6 +2694,23 @@ void gpu_blit(Gpu_Command_Buffer cb, const Gpu_Blit_Desc* desc) {
 	gpu_command_seq_push(&cb_data->commands, (Gpu_Command) {
 		.kind = Gpu_Command_Kind_Blit,
 		.data.blit = blit,
+	});
+}
+
+void gpu_blit_slice_to_texture(Gpu_Command_Buffer cb, const Gpu_Blit_Slice_To_Texture_Desc* desc) {
+	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
+	gpu_validate(cb_data, "Invalid command buffer.");
+	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+
+	Gpu_Command_Blit_Slice_To_Texture* blit;
+	allocator_new(&cb_data->arena->allocator, blit, 1);
+	*blit = (Gpu_Command_Blit_Slice_To_Texture) {
+		.desc = *desc,
+	};
+
+	gpu_command_seq_push(&cb_data->commands, (Gpu_Command) {
+		.kind = Gpu_Command_Kind_Blit_Slice_To_Texture,
+		.data.blit_slice_to_texture = blit,
 	});
 }
 

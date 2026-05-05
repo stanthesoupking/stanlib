@@ -336,6 +336,18 @@ typedef struct Gpu_Blit_Desc {
 } Gpu_Blit_Desc;
 void gpu_blit(Gpu_Command_Buffer cb, const Gpu_Blit_Desc* desc);
 
+typedef struct Gpu_Blit_Slice_To_Texture_Desc {
+	Gpu_Slice src;
+	u32 src_row_length; // in pixels
+
+	Gpu_Texture dst;
+	vec3_u32 dst_start;
+	vec3_u32 dst_end;
+	u32 dst_array_layer;
+	u32 dst_mip_level;
+} Gpu_Blit_Slice_To_Texture_Desc;
+void gpu_blit_slice_to_texture(Gpu_Command_Buffer cb, const Gpu_Blit_Slice_To_Texture_Desc* desc);
+
 void gpu_barrier(Gpu_Command_Buffer cb);
 
 // Semaphore
