@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include <stdatomic.h>
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
@@ -159,6 +158,7 @@ typedef float4x4 mat4x4_f32;
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <stdatomic.h>
 
 typedef uint8_t u8;
 typedef uint16_t u16;

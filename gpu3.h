@@ -9,6 +9,7 @@ typedef SL_Handle Gpu_Heap;
 typedef SL_Handle Gpu_Command_Buffer_Pool;
 typedef SL_Handle Gpu_Texture;
 typedef SL_Handle Gpu_Sampler;
+typedef SL_Handle Gpu_Render_Pipeline;
 typedef SL_Handle Gpu_Compute_Pipeline;
 typedef SL_Handle Gpu_Swapchain;
 typedef SL_Handle Gpu_Semaphore;
@@ -27,6 +28,16 @@ typedef struct Gpu_Size_And_Align {
 	u64 align;
 } Gpu_Size_And_Align;
 #define gpu_size_and_align_of_type(x) ((Gpu_Size_And_Align) { .size = sizeof(x), .align = sl_align_of(x) })
+
+typedef enum Gpu_Primitive_Kind {
+	Gpu_Primitive_Kind_Triangle,
+} Gpu_Primitive_Kind;
+
+typedef enum Gpu_Cull_Mode {
+	Gpu_Cull_Mode_None,
+	Gpu_Cull_Mode_Front,
+	Gpu_Cull_Mode_Back,
+} Gpu_Cull_Mode;
 
 typedef enum Gpu_Texture_Kind {
 	Gpu_Texture_Kind_1D,
@@ -77,17 +88,29 @@ typedef enum Gpu_Store_Op {
 	Gpu_Store_Op_Dont_Care
 } Gpu_Store_Op;
 
-typedef struct Gpu_Render_Attachment {
-	Gpu_Texture texture;
-	vec4_f32 clear_value;
+typedef struct Gpu_Render_Pass_Layout_Attachment {
+	Gpu_Format format;
 	Gpu_Load_Op load_op;
 	Gpu_Store_Op store_op;
-} Gpu_Render_Attachment;
 
-typedef struct Gpu_Render_Pass {
-	Gpu_Render_Attachment attachments[GPU_MAX_ATTACHMENTS];
+	Gpu_Texture_Layout initial_layout;
+	Gpu_Texture_Layout final_layout;
+} Gpu_Render_Pass_Layout_Attachment;
+
+typedef struct Gpu_Render_Pass_Layout {
+	Gpu_Render_Pass_Layout_Attachment attachments[GPU_MAX_ATTACHMENTS];
 	u8 attachment_count;
-} Gpu_Render_Pass;
+} Gpu_Render_Pass_Layout;
+
+typedef struct Gpu_Render_Pass_Values_Attachment {
+	Gpu_Texture texture;
+	vec4_f32 clear_value;
+} Gpu_Render_Pass_Values_Attachment;
+
+typedef struct Gpu_Render_Pass_Values {
+	Gpu_Render_Pass_Values_Attachment attachments[GPU_MAX_ATTACHMENTS];
+	u8 attachment_count;
+} Gpu_Render_Pass_Values;
 
 typedef struct Gpu_Slice {
 	Gpu_Heap heap;
@@ -177,7 +200,6 @@ typedef struct Gpu_Code {
 } Gpu_Code;
 
 typedef VkSurfaceKHR (*Gpu_Get_Surface_Fn)(void* ctx, VkInstance instance);
-typedef VkExtent2D (*Gpu_Get_Swapchain_Extent_Fn)(void* ctx);
 
 typedef struct Gpu_Swapchain_Init_Desc {
 	void* ctx;
@@ -234,9 +256,36 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed);
 void gpu_transition_texture_layouts(Gpu_Command_Buffer cb, const Gpu_Texture* textures, const Gpu_Texture_Layout* layouts, u32 count);
 
 // Render
-void gpu_begin_render(Gpu_Command_Buffer cb, const Gpu_Render_Pass* render_pass);
+void gpu_begin_render(Gpu_Command_Buffer cb, const Gpu_Render_Pass_Layout* layout, const Gpu_Render_Pass_Values* values);
 void gpu_end_render(Gpu_Command_Buffer cb);
-// void gpu_draw(Gpu_Command_Buffer cb);
+
+typedef struct Gpu_Render_Pipeline_Desc {
+	Gpu_Primitive_Kind primitive_kind;
+	Gpu_Cull_Mode cull_mode;
+
+	Gpu_Render_Pass_Layout render_pass_layout;
+
+	Gpu_Code vertex_code;
+	Gpu_Code fragment_code;
+
+	const char* vertex_entry_point;
+	const char* fragment_entry_point;
+
+	const Gpu_Layout_Binding* bindings;
+	u32 binding_count;
+} Gpu_Render_Pipeline_Desc;
+Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc);
+
+typedef struct Gpu_Draw_Desc {
+	Gpu_Render_Pipeline pipeline;
+
+	const Gpu_Binding* bindings;
+	u32 binding_count;
+
+	u32 instance_count;
+	u32 vertex_count;
+} Gpu_Draw_Desc;
+void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Draw_Desc* desc);
 
 // Compute
 typedef struct Gpu_Compute_Pipeline_Desc {

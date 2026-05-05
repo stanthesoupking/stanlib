@@ -2,7 +2,6 @@
 
 #include "core.h"
 #include "vulkan/vulkan_core.h"
-#include <stdatomic.h>
 #define gpu_LOGGING 1
 #define gpu_VALIDATION 0
 
@@ -28,30 +27,75 @@ const char* gpu_DEVICE_EXTENSIONS[] = {
 	VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME
 };
 
+typedef SL_Handle Gpu_Render_Pass_Object;
+
+typedef struct Gpu_Render_Pass_Object_Key {
+	Gpu_Render_Pass_Layout layout;
+} Gpu_Render_Pass_Object_Key;
+
+typedef struct Gpu_Render_Pass_Object_Data {
+	u32 generation;
+	u32 rc;
+
+	Gpu_Render_Pass_Object_Key key;
+	VkRenderPass render_pass;
+
+	// todo
+	Gpu_Render_Pass_Object older;
+	Gpu_Render_Pass_Object newer;
+} Gpu_Render_Pass_Object_Data;
+
+typedef struct Gpu_Render_Pass_Object_LRU {
+	Gpu_Render_Pass_Object oldest;
+	Gpu_Render_Pass_Object newest;
+} Gpu_Render_Pass_Object_LRU;
+
+sl_inline bool gpu_render_pass_layout_equals(const Gpu_Render_Pass_Layout* a, const Gpu_Render_Pass_Layout* b) {
+	if (a->attachment_count != b->attachment_count) {
+		return false;
+	}
+	for (u8 attachment_idx = 0; attachment_idx < a->attachment_count; attachment_idx++) {
+		if ((a->attachments[attachment_idx].format != b->attachments[attachment_idx].format) || (a->attachments[attachment_idx].load_op != b->attachments[attachment_idx].load_op) || (a->attachments[attachment_idx].store_op != b->attachments[attachment_idx].store_op)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+sl_inline u64 gpu_render_pass_object_key_hash(Gpu_Render_Pass_Object_Key key) {
+	SL_Hasher hasher;
+	sl_hasher_init(&hasher);
+	sl_hasher_push(&hasher, immutable_buffer_for(key.layout.attachment_count));
+	for (u8 attachment_idx = 0; attachment_idx < key.layout.attachment_count; attachment_idx++) {
+		sl_hasher_push(&hasher, immutable_buffer_for(key.layout.attachments[attachment_idx]));
+	}
+	return sl_hasher_finalise(&hasher);
+}
+sl_inline bool gpu_render_pass_object_key_equals(Gpu_Render_Pass_Object_Key a, Gpu_Render_Pass_Object_Key b) {
+	return gpu_render_pass_layout_equals(&a.layout, &b.layout);
+}
+
+sl_threadsafe_pool(Gpu_Render_Pass_Object_Data, Gpu_Render_Pass_Object_Pool, gpu_render_pass_object_pool);
+sl_hashmap(Gpu_Render_Pass_Object_Key, Gpu_Render_Pass_Object, Gpu_Render_Pass_Object_Map, gpu_render_pass_object_map, gpu_render_pass_object_key_hash, gpu_render_pass_object_key_equals);
+
 typedef SL_Handle Gpu_Framebuffer;
 
 typedef struct Gpu_Framebuffer_Key_Attachment {
 	Gpu_Texture texture;
-	Gpu_Load_Op load_op;
-	Gpu_Store_Op store_op;
 } Gpu_Framebuffer_Key_Attachment;
 
 typedef struct Gpu_Framebuffer_Key {
-	Gpu_Framebuffer_Key_Attachment attachments[GPU_MAX_ATTACHMENTS];
-	u8 attachment_count;
+	Gpu_Render_Pass_Layout layout;
+	Gpu_Texture textures[GPU_MAX_ATTACHMENTS];
 } Gpu_Framebuffer_Key;
 
-sl_inline Gpu_Framebuffer_Key gpu_framebuffer_key_for_render_pass(const Gpu_Render_Pass* render_pass) {
+sl_inline Gpu_Framebuffer_Key gpu_new_framebuffer_key(const Gpu_Render_Pass_Layout* layout, const Gpu_Render_Pass_Values* values) {
 	Gpu_Framebuffer_Key result = {
-		.attachment_count = render_pass->attachment_count,
+		.layout = *layout,
 	};
-	for (u8 attachment_idx = 0; attachment_idx < render_pass->attachment_count; attachment_idx++) {
-		const Gpu_Render_Attachment* render_attachment = &render_pass->attachments[attachment_idx];
-		result.attachments[attachment_idx] = (Gpu_Framebuffer_Key_Attachment) {
-			.texture = render_attachment->texture,
-			.load_op = render_attachment->load_op,
-			.store_op = render_attachment->store_op,
-		};
+	for (u8 attachment_idx = 0; attachment_idx < values->attachment_count; attachment_idx++) {
+		const Gpu_Render_Pass_Values_Attachment* att = &values->attachments[attachment_idx];
+		result.textures[attachment_idx] = att->texture;
 	}
 	return result;
 }
@@ -62,8 +106,8 @@ typedef struct Gpu_Framebuffer_Data {
 	Gpu_Framebuffer_Key key;
 	u32 rc;
 
-	VkFramebuffer framebuffer;
-	VkRenderPass render_pass;
+	VkFramebuffer framebuffer; // owned
+	Gpu_Render_Pass_Object render_pass_object; // retained
 
 	// todo
 	Gpu_Framebuffer older;
@@ -78,18 +122,19 @@ typedef struct Gpu_Framebuffer_LRU {
 sl_inline u64 gpu_framebuffer_key_hash(Gpu_Framebuffer_Key key) {
 	SL_Hasher hasher;
 	sl_hasher_init(&hasher);
-	sl_hasher_push(&hasher, immutable_buffer_for(key.attachment_count));
-	for (u8 attachment_idx = 0; attachment_idx < key.attachment_count; attachment_idx++) {
-		sl_hasher_push(&hasher, immutable_buffer_for(key.attachments[attachment_idx]));
+	sl_hasher_push(&hasher, immutable_buffer_for(key.layout.attachment_count));
+	for (u8 attachment_idx = 0; attachment_idx < key.layout.attachment_count; attachment_idx++) {
+		sl_hasher_push(&hasher, immutable_buffer_for(key.layout.attachments[attachment_idx]));
+		sl_hasher_push(&hasher, immutable_buffer_for(key.textures[attachment_idx]));
 	}
 	return sl_hasher_finalise(&hasher);
 }
 sl_inline bool gpu_framebuffer_key_equals(Gpu_Framebuffer_Key a, Gpu_Framebuffer_Key b) {
-	if (a.attachment_count != b.attachment_count) {
+	if (!gpu_render_pass_layout_equals(&a.layout, &b.layout)) {
 		return false;
 	}
-	for (u8 attachment_idx = 0; attachment_idx < a.attachment_count; attachment_idx++) {
-		if ((a.attachments[attachment_idx].texture.index != b.attachments[attachment_idx].texture.index) || (a.attachments[attachment_idx].texture.generation != b.attachments[attachment_idx].texture.generation) || (a.attachments[attachment_idx].load_op != b.attachments[attachment_idx].load_op) || (a.attachments[attachment_idx].store_op != b.attachments[attachment_idx].store_op)) {
+	for (u8 attachment_idx = 0; attachment_idx < a.layout.attachment_count; attachment_idx++) {
+		if ((a.textures[attachment_idx].index != b.textures[attachment_idx].index) || (a.textures[attachment_idx].generation != b.textures[attachment_idx].generation)) {
 			return false;
 		}
 	}
@@ -159,6 +204,16 @@ typedef struct Gpu_Compute_Pipeline_Data {
 } Gpu_Compute_Pipeline_Data;
 sl_threadsafe_pool(Gpu_Compute_Pipeline_Data, Gpu_Compute_Pipeline_Pool, gpu_compute_pipeline_pool);
 
+typedef struct Gpu_Render_Pipeline_Data {
+	u32 generation;
+
+	Gpu_Render_Pass_Object render_pass_object; // retained
+
+	VkPipelineLayout pipeline_layout;
+	VkPipeline pipeline;
+} Gpu_Render_Pipeline_Data;
+sl_threadsafe_pool(Gpu_Render_Pipeline_Data, Gpu_Render_Pipeline_Pool, gpu_render_pipeline_pool);
+
 typedef struct Gpu_Semaphore_On_Notify_Callback {
 	u64 value;
 	void* ctx;
@@ -211,6 +266,7 @@ typedef enum Gpu_Command_Kind {
 	Gpu_Command_Kind_Transition_Texture_Layouts,
 	Gpu_Command_Kind_Begin_Render,
 	Gpu_Command_Kind_End_Render,
+	Gpu_Command_Kind_Draw,
 	Gpu_Command_Kind_Dispatch,
 	Gpu_Command_Kind_Blit,
 	Gpu_Command_Kind_Barrier,
@@ -219,8 +275,13 @@ typedef enum Gpu_Command_Kind {
 } Gpu_Command_Kind;
 
 typedef struct Gpu_Command_Begin_Render {
-	Gpu_Render_Pass render_pass;
+	Gpu_Render_Pass_Layout layout;
+	Gpu_Render_Pass_Values values;
 } Gpu_Command_Begin_Render;
+
+typedef struct Gpu_Command_Draw {
+	Gpu_Draw_Desc desc;
+} Gpu_Command_Draw;
 
 typedef struct Gpu_Command_Dispatch {
 	Gpu_Compute_Pipeline pipeline;
@@ -255,6 +316,7 @@ typedef struct Gpu_Command {
 	union {
 		Gpu_Command_Transition_Texture_Layouts* transition_texture_layouts;
 		Gpu_Command_Begin_Render* begin_render;
+		Gpu_Command_Draw* draw;
 		Gpu_Command_Dispatch* dispatch;
 		Gpu_Command_Blit* blit;
 		Gpu_Command_Wait* wait;
@@ -316,6 +378,9 @@ typedef struct Gpu {
 	Gpu_Device_Function_Table device_function_table;
 	VkPhysicalDeviceLimits device_limits;
 
+	// Currently necessary due to how texture transitions are tracked.
+	SL_Mutex enqueue_mutex;
+
 	Gpu_Semaphore global_semaphore;
 	u64 global_semaphore_value;
 
@@ -328,9 +393,14 @@ typedef struct Gpu {
 	Gpu_Heap_Pool heap_pool;
 	Gpu_Texture_Pool texture_pool;
 	Gpu_Command_Buffer_Pool_Pool command_pool_pool;
+	Gpu_Render_Pipeline_Pool render_pipeline_pool;
 	Gpu_Compute_Pipeline_Pool compute_pipeline_pool;
 	Gpu_Swapchain_Pool swapchain_pool;
 	Gpu_Semaphore_Pool semaphore_pool;
+
+	Gpu_Render_Pass_Object_Pool render_pass_object_pool;
+	Gpu_Render_Pass_Object_Map render_pass_object_map;
+	Gpu_Render_Pass_Object_LRU render_pass_object_lru;
 
 	Gpu_Framebuffer_Pool framebuffer_pool;
 	Gpu_Framebuffer_Map framebuffer_map;
@@ -682,6 +752,13 @@ void gpu_init_device(void) {
 	};
 	sync2_features.pNext = &timeline_semaphore_features;
 
+
+	VkPhysicalDeviceVulkan11Features device_features_11 = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+		.shaderDrawParameters = true,
+	};
+	timeline_semaphore_features.pNext = &device_features_11;
+
 	VkResult create_device_result = vkCreateDevice(physical_device, &device_create_info, NULL, &gpu.device);
 	sl_assert(create_device_result == VK_SUCCESS, "Failed to create logical device.");
 
@@ -936,6 +1013,80 @@ VkAttachmentStoreOp gpu_store_op_to_vk(Gpu_Store_Op op) {
 	}
 }
 
+// Render Pass Object
+void gpu_retain_render_pass_object(Gpu_Render_Pass_Object render_pass_object) {
+	Gpu_Render_Pass_Object_Data* data = gpu_render_pass_object_pool_resolve(&gpu.render_pass_object_pool, render_pass_object);
+	data->rc++;
+}
+void gpu_release_render_pass_object(Gpu_Render_Pass_Object render_pass_object) {
+	Gpu_Render_Pass_Object_Data* data = gpu_render_pass_object_pool_resolve(&gpu.render_pass_object_pool, render_pass_object);
+	sl_assert(data->rc > 0, "Over-released render pass object.");
+	data->rc--;
+
+	// TODO: Put on evictable LRU
+}
+Gpu_Render_Pass_Object gpu_acquire_render_pass_object(Gpu_Render_Pass_Object_Key key) {
+	// Find existing entry
+	{
+		Gpu_Render_Pass_Object result;
+		if (gpu_render_pass_object_map_get(&gpu.render_pass_object_map, key, &result)) {
+			gpu_retain_render_pass_object(result);
+			return result;
+		}
+	}
+
+	// Make new entry
+	{
+		gpu_log("Created render pass object.");
+		Gpu_Render_Pass_Object result = gpu_render_pass_object_pool_acquire(&gpu.render_pass_object_pool);
+		Gpu_Render_Pass_Object_Data* data = gpu_render_pass_object_pool_resolve(&gpu.render_pass_object_pool, result);
+		data->rc = 1;
+		data->key = key;
+
+		// Create render pass
+		VkAttachmentDescription attachments[GPU_MAX_ATTACHMENTS];
+		VkAttachmentReference attachment_refs[GPU_MAX_ATTACHMENTS];
+		for (u8 attachment_idx = 0; attachment_idx < key.layout.attachment_count; attachment_idx++) {
+			const Gpu_Render_Pass_Layout_Attachment* att = &key.layout.attachments[attachment_idx];
+			attachments[attachment_idx] = (VkAttachmentDescription) {
+				.format = gpu_format_to_vk_format(att->format),
+				.samples = VK_SAMPLE_COUNT_1_BIT,
+				.loadOp = gpu_load_op_to_vk(att->load_op),
+				.storeOp = gpu_store_op_to_vk(att->store_op),
+				.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+				.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+				.initialLayout = gpu_texture_layout_to_vk_image_layout(att->initial_layout),
+				.finalLayout = gpu_texture_layout_to_vk_image_layout(att->final_layout)
+			};
+			attachment_refs[attachment_idx] = (VkAttachmentReference) {
+				.attachment = attachment_idx,
+				.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			};
+		}
+
+		VkSubpassDescription subpass = {
+			.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+			.colorAttachmentCount = key.layout.attachment_count,
+			.pColorAttachments = attachment_refs,
+		};
+
+		VkRenderPassCreateInfo render_pass_create_info = {
+			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+			.attachmentCount = key.layout.attachment_count,
+			.pAttachments = attachments,
+			.subpassCount = 1,
+			.pSubpasses = &subpass,
+		};
+
+		VkResult create_render_pass_result = vkCreateRenderPass(gpu.device, &render_pass_create_info, NULL, &data->render_pass);
+		sl_assert(create_render_pass_result == VK_SUCCESS, "Failed to create render pass.");
+
+		gpu_render_pass_object_map_insert(&gpu.render_pass_object_map, key, result);
+
+		return result;
+	}
+}
+
 // Framebuffer
 void gpu_retain_framebuffer(Gpu_Framebuffer framebuffer) {
 	Gpu_Framebuffer_Data* data = gpu_framebuffer_pool_resolve(&gpu.framebuffer_pool, framebuffer);
@@ -949,7 +1100,7 @@ void gpu_release_framebuffer(Gpu_Framebuffer framebuffer) {
 	// TODO: Put on evictable LRU
 }
 Gpu_Framebuffer gpu_acquire_framebuffer(Gpu_Framebuffer_Key key) {
-	sl_assert(key.attachment_count > 0, "Framebuffer must have at least one attachment.");
+	sl_assert(key.layout.attachment_count > 0, "Framebuffer must have at least one attachment.");
 
 	// Find existing entry
 	{
@@ -968,59 +1119,23 @@ Gpu_Framebuffer gpu_acquire_framebuffer(Gpu_Framebuffer_Key key) {
 		data->rc = 1;
 		data->key = key;
 
-		// Create render pass
-		{
-			VkAttachmentDescription attachments[GPU_MAX_ATTACHMENTS];
-			VkAttachmentReference attachment_refs[GPU_MAX_ATTACHMENTS];
-			for (u8 attachment_idx = 0; attachment_idx < key.attachment_count; attachment_idx++) {
-				const Gpu_Framebuffer_Key_Attachment* key_att = &key.attachments[attachment_idx];
-				const Gpu_Texture_Data* texture_data = gpu_texture_get_root_data(key_att->texture);
-				const VkImageLayout image_layout = gpu_texture_layout_to_vk_image_layout(texture_data->imm.layout);
-				attachments[attachment_idx] = (VkAttachmentDescription) {
-					.format = gpu_get_texture_format(key_att->texture),
-					.samples = VK_SAMPLE_COUNT_1_BIT,
-					.loadOp = gpu_load_op_to_vk(key_att->load_op),
-					.storeOp = gpu_store_op_to_vk(key_att->store_op),
-					.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-					.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-					.initialLayout = image_layout,
-					.finalLayout = image_layout
-				};
-				attachment_refs[attachment_idx] = (VkAttachmentReference) {
-					.attachment = attachment_idx,
-					.layout = image_layout,
-				};
-			}
-
-			VkSubpassDescription subpass = {
-				.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-				.colorAttachmentCount = key.attachment_count,
-				.pColorAttachments = attachment_refs,
-			};
-
-			VkRenderPassCreateInfo render_pass_create_info = {
-				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-				.attachmentCount = key.attachment_count,
-				.pAttachments = attachments,
-				.subpassCount = 1,
-				.pSubpasses = &subpass,
-			};
-
-			VkResult create_render_pass_result = vkCreateRenderPass(gpu.device, &render_pass_create_info, NULL, &data->render_pass);
-			sl_assert(create_render_pass_result == VK_SUCCESS, "Failed to create render pass.");
-		}
+		const Gpu_Render_Pass_Object_Key render_pass_object_key = {
+			.layout = key.layout,
+		};
+		data->render_pass_object = gpu_acquire_render_pass_object(render_pass_object_key);
+		Gpu_Render_Pass_Object_Data* render_pass_object_data = gpu_render_pass_object_pool_resolve(&gpu.render_pass_object_pool, data->render_pass_object);
 
 		VkImageView attachments[GPU_MAX_ATTACHMENTS];
-		for (u8 attachment_idx = 0; attachment_idx < key.attachment_count; attachment_idx++) {
-			attachments[attachment_idx] = gpu_texture_get_image_view(key.attachments[attachment_idx].texture);
+		for (u8 attachment_idx = 0; attachment_idx < key.layout.attachment_count; attachment_idx++) {
+			attachments[attachment_idx] = gpu_texture_get_image_view(key.textures[attachment_idx]);
 		}
 
-		const vec3_u32 size = gpu_get_texture_size(key.attachments[0].texture);
+		const vec3_u32 size = gpu_get_texture_size(key.textures[0]);
 
 		VkFramebufferCreateInfo framebuffer_info = {
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-			.renderPass = data->render_pass,
-			.attachmentCount = key.attachment_count,
+			.renderPass = render_pass_object_data->render_pass,
+			.attachmentCount = key.layout.attachment_count,
 			.pAttachments = attachments,
 			.width = size.x,
 			.height = size.y,
@@ -1060,6 +1175,10 @@ void gpu_release_swapchain_instance(Gpu_Swapchain_Instance* instance) {
 
 	if (pre == 1) {
 		gpu_log("Destroying swapchain instance %p\n", instance);
+
+		// stop gap to prevent semaphore from being destroyed before present has waited on it.
+		vkQueueWaitIdle(gpu.queue[Gpu_Queue_Present]);
+
 		for (u32 texture_idx = 0; texture_idx < instance->texture_count; texture_idx++) {
 			gpu_destroy_texture(instance->textures[texture_idx]);
 			vkDestroySemaphore(gpu.device, instance->present_semaphores[texture_idx], NULL);
@@ -1220,6 +1339,7 @@ void gpu_init_resource_pools() {
 	gpu.heap_pool = gpu_heap_pool_new(gpu.allocator);
 	gpu.texture_pool = gpu_texture_pool_new(gpu.allocator);
 	gpu.command_pool_pool = gpu_command_buffer_pool_pool_new(gpu.allocator);
+	gpu.render_pipeline_pool = gpu_render_pipeline_pool_new(gpu.allocator);
 	gpu.compute_pipeline_pool = gpu_compute_pipeline_pool_new(gpu.allocator);
 	gpu.swapchain_pool = gpu_swapchain_pool_new(gpu.allocator);
 	gpu.semaphore_pool = gpu_semaphore_pool_new(gpu.allocator);
@@ -1230,12 +1350,20 @@ void gpu_init_resource_pools() {
 		.oldest = SL_HANDLE_NULL,
 		.newest = SL_HANDLE_NULL,
 	};
+
+	gpu.render_pass_object_pool = gpu_render_pass_object_pool_new(gpu.allocator);
+	gpu.render_pass_object_map = gpu_render_pass_object_map_new(gpu.allocator, 64);
+	gpu.render_pass_object_lru = (Gpu_Render_Pass_Object_LRU) {
+		.oldest = SL_HANDLE_NULL,
+		.newest = SL_HANDLE_NULL,
+	};
 }
 
 void gpu_init(const Gpu_Desc* desc) {
 	gpu = (Gpu) {};
 	gpu.allocator = desc->allocator;
 	gpu.swapchain_init_desc = desc->swapchain_desc;
+	gpu.enqueue_mutex = sl_mutex_new();
 	gpu_init_instance(desc);
 	gpu_init_device();
 	gpu_init_resource_pools();
@@ -1246,6 +1374,7 @@ void gpu_deinit() {
 	gpu_wait_cpu(gpu.global_semaphore, gpu.global_semaphore_value);
 	gpu_destroy_semaphore(gpu.global_semaphore);
 	vkDestroyInstance(gpu.instance, NULL);
+	sl_mutex_destroy(&gpu.enqueue_mutex);
 	gpu = (Gpu) {};
 }
 
@@ -1768,6 +1897,8 @@ void gpu_add_signal_to_command_buffer_emitter(Gpu_Command_Buffer_Emitter* emitte
 }
 
 void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
+	sl_mutex_lock(&gpu.enqueue_mutex);
+
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 	cb_data->state = Gpu_Command_Buffer_State_Enqueued;
@@ -1778,7 +1909,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 	// Wait on global semaphore
 	{
 		Gpu_Semaphore_Data* global_semaphore_data = gpu_semaphore_pool_resolve(&gpu.semaphore_pool, gpu.global_semaphore);
-		gpu_add_signal_to_command_buffer_emitter(&cb_emitter, global_semaphore_data->vk_semaphore, gpu.global_semaphore_value);
+		gpu_add_wait_to_command_buffer_emitter(&cb_emitter, global_semaphore_data->vk_semaphore, gpu.global_semaphore_value);
 	}
 
 	const u64 command_count = gpu_command_seq_get_count(&cb_data->commands);
@@ -1797,26 +1928,26 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 				VkCommandBuffer vk_cb = gpu_fetch_command_buffer_emitter(&cb_emitter);
 
 				Gpu_Command_Begin_Render* begin_render = command.data.begin_render;
-				sl_assert(begin_render->render_pass.attachment_count > 0, "Must have at least one attachment in render pass.");
+				sl_assert(begin_render->layout.attachment_count > 0, "Must have at least one attachment in render pass.");
+
+				// Validate and transition texture layouts
+				for (u8 attachment_idx = 0; attachment_idx < begin_render->values.attachment_count; attachment_idx++) {
+					const Gpu_Render_Pass_Layout_Attachment* att = &begin_render->layout.attachments[attachment_idx];
+					Gpu_Texture texture = begin_render->values.attachments[attachment_idx].texture;
+					Gpu_Texture_Data* texture_data = gpu_texture_get_root_data(texture);
+					sl_assert((att->initial_layout == Gpu_Texture_Layout_Undefined) || (texture_data->imm.layout == att->initial_layout), "Initial layout must either be undefined, or match the current layout of the texture.");
+					texture_data->imm.layout = att->final_layout;
+				}
 
 				// Acquire cached framebuffer
-				Gpu_Framebuffer_Key fb_key = {
-					.attachment_count = begin_render->render_pass.attachment_count,
-				};
-				for (u8 attachment_idx = 0; attachment_idx < begin_render->render_pass.attachment_count; attachment_idx++) {
-					fb_key.attachments[attachment_idx] = (Gpu_Framebuffer_Key_Attachment) {
-						.texture = gpu_texture_get_root(begin_render->render_pass.attachments[attachment_idx].texture),
-						.load_op = begin_render->render_pass.attachments[attachment_idx].load_op,
-						.store_op = begin_render->render_pass.attachments[attachment_idx].store_op,
-					};
-				}
+				Gpu_Framebuffer_Key fb_key = gpu_new_framebuffer_key(&begin_render->layout, &begin_render->values);
 				Gpu_Framebuffer fb = gpu_acquire_framebuffer(fb_key);
 				Gpu_Framebuffer_Data* fb_data = gpu_framebuffer_pool_resolve(&gpu.framebuffer_pool, fb);
 
 				// Render pass
 				VkClearValue clear_values[GPU_MAX_ATTACHMENTS];
-				for (u8 attachment_idx = 0; attachment_idx < begin_render->render_pass.attachment_count; attachment_idx++) {
-					const Gpu_Render_Attachment* att = &begin_render->render_pass.attachments[attachment_idx];
+				for (u8 attachment_idx = 0; attachment_idx < begin_render->values.attachment_count; attachment_idx++) {
+					const Gpu_Render_Pass_Values_Attachment* att = &begin_render->values.attachments[attachment_idx];
 					clear_values[attachment_idx].color = (VkClearColorValue) {
 						.float32 = {
 							att->clear_value.x,
@@ -1827,11 +1958,13 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 					};
 				}
 
-				const vec3_u32 render_size = gpu_get_texture_size(begin_render->render_pass.attachments[0].texture);
+				const vec3_u32 render_size = gpu_get_texture_size(begin_render->values.attachments[0].texture);
+
+				const Gpu_Render_Pass_Object_Data* render_pass_object_data = gpu_render_pass_object_pool_resolve(&gpu.render_pass_object_pool, fb_data->render_pass_object);
 
 				VkRenderPassBeginInfo render_pass_begin_info = {
 					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-					.renderPass = fb_data->render_pass,
+					.renderPass = render_pass_object_data->render_pass,
 					.framebuffer = fb_data->framebuffer,
 					.renderArea = {
 						.offset = { 0, 0 },
@@ -1841,12 +1974,38 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 					.pClearValues = clear_values,
 				};
 				vkCmdBeginRenderPass(vk_cb, &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+
+				const VkRect2D scissor = {
+					.offset = { 0, 0 },
+					.extent = { render_size.x, render_size.y },
+				};
+				vkCmdSetScissor(vk_cb, 0, 1, &scissor);
+
+				const VkViewport viewport = {
+					.x = 0.0f,
+					.y = 0.0f,
+					.width = (f32)render_size.x,
+					.height = (f32)render_size.y,
+					.minDepth = 0.0f,
+					.maxDepth = 1.0f,
+				};
+				vkCmdSetViewport(vk_cb, 0, 1, &viewport);
+
 			} break;
 
 			case Gpu_Command_Kind_End_Render: {
 				VkCommandBuffer vk_cb = gpu_fetch_command_buffer_emitter(&cb_emitter);
 
 				vkCmdEndRenderPass(vk_cb);
+			} break;
+
+			case Gpu_Command_Kind_Draw: {
+				VkCommandBuffer vk_cb = gpu_fetch_command_buffer_emitter(&cb_emitter);
+				Gpu_Command_Draw* draw = command.data.draw;
+				Gpu_Render_Pipeline_Data* pipeline_data = gpu_render_pipeline_pool_resolve(&gpu.render_pipeline_pool, draw->desc.pipeline);
+				gpu_write_bindings(cb_data->arena, vk_cb, pipeline_data->pipeline_layout, draw->desc.bindings, draw->desc.binding_count);
+				vkCmdBindPipeline(vk_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_data->pipeline);
+				vkCmdDraw(vk_cb, draw->desc.vertex_count, draw->desc.instance_count, 0, 0);
 			} break;
 
 			case Gpu_Command_Kind_Dispatch: {
@@ -1981,6 +2140,8 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 		sl_assert((present_result == VK_SUCCESS) || (present_result == VK_ERROR_OUT_OF_DATE_KHR) || (present_result == VK_SUBOPTIMAL_KHR), "Failed to present command buffer.");
 	}
 
+	sl_mutex_unlock(&gpu.enqueue_mutex);
+
 	// Clean up notification
 	gpu_notify(gpu.global_semaphore, cb_data->gpu_complete_semaphore_value, cb_data, gpu_on_complete_command_buffer_callback);
 
@@ -2078,14 +2239,15 @@ bool gpu_fetch_swapchain_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb,
 	return true;
 }
 
-void gpu_begin_render(Gpu_Command_Buffer cb, const Gpu_Render_Pass* render_pass) {
+void gpu_begin_render(Gpu_Command_Buffer cb, const Gpu_Render_Pass_Layout* layout, const Gpu_Render_Pass_Values* values) {
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 
 	Gpu_Command_Begin_Render* begin_render;
 	allocator_new(&cb_data->arena->allocator, begin_render, 1);
 	*begin_render = (Gpu_Command_Begin_Render) {
-		.render_pass = *render_pass,
+		.layout = *layout,
+		.values = *values,
 	};
 
 	gpu_command_seq_push(&cb_data->commands, (Gpu_Command) {
@@ -2147,6 +2309,165 @@ bool gpu_new_pipeline_layout(const Gpu_Layout_Binding* bindings, u32 binding_cou
 	return true;
 }
 
+VkPrimitiveTopology gpu_primitive_kind_to_vk_primitive_topology(Gpu_Primitive_Kind primitive_kind) {
+	switch (primitive_kind) {
+		case Gpu_Primitive_Kind_Triangle: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	}
+}
+
+VkCullModeFlags gpu_cull_mode_to_vk_cull_mode_flags(Gpu_Cull_Mode cull_mode) {
+	switch (cull_mode) {
+		case Gpu_Cull_Mode_None: return VK_CULL_MODE_NONE;
+		case Gpu_Cull_Mode_Front: return VK_CULL_MODE_FRONT_BIT;
+		case Gpu_Cull_Mode_Back: return VK_CULL_MODE_BACK_BIT;
+	}
+}
+
+Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc) {
+	VkShaderModule vertex_module;
+	{
+		const VkShaderModuleCreateInfo module_create_info = {
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.pCode = desc->vertex_code.code,
+			.codeSize = desc->vertex_code.size,
+		};
+		VkResult create_module_result = vkCreateShaderModule(gpu.device, &module_create_info, NULL, &vertex_module);
+		if (create_module_result != VK_SUCCESS) {
+			gpu_log("Failed to create render pipeline (VkShaderModule).");
+			return SL_HANDLE_NULL;
+		}
+	}
+
+	VkShaderModule fragment_module;
+	{
+		const VkShaderModuleCreateInfo module_create_info = {
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.pCode = desc->fragment_code.code,
+			.codeSize = desc->fragment_code.size,
+		};
+		VkResult create_module_result = vkCreateShaderModule(gpu.device, &module_create_info, NULL, &fragment_module);
+		if (create_module_result != VK_SUCCESS) {
+			gpu_log("Failed to create render pipeline (VkShaderModule).");
+			vkDestroyShaderModule(gpu.device, vertex_module, NULL);
+			return SL_HANDLE_NULL;
+		}
+	}
+
+	Gpu_Render_Pipeline pipeline = gpu_render_pipeline_pool_acquire(&gpu.render_pipeline_pool);
+	Gpu_Render_Pipeline_Data* pipeline_data = gpu_render_pipeline_pool_resolve(&gpu.render_pipeline_pool, pipeline);
+
+	bool create_layout_result = gpu_new_pipeline_layout(desc->bindings, desc->binding_count, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, &pipeline_data->pipeline_layout);
+	if (!create_layout_result) {
+		gpu_log("Failed to create compute pipeline (VkPipelineLayout).");
+		vkDestroyShaderModule(gpu.device, vertex_module, NULL);
+		vkDestroyShaderModule(gpu.device, fragment_module, NULL);
+		gpu_render_pipeline_pool_release(&gpu.render_pipeline_pool, pipeline);
+		return SL_HANDLE_NULL;
+	}
+
+	const VkPipelineShaderStageCreateInfo stages[2] = {
+		{
+		    .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+		    .stage = VK_SHADER_STAGE_VERTEX_BIT,
+		    .module = vertex_module,
+		    .pName = desc->vertex_entry_point,
+		},
+		{
+		    .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+		    .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+		    .module = fragment_module,
+		    .pName = desc->fragment_entry_point,
+		}
+	};
+
+	const VkPipelineVertexInputStateCreateInfo vertex_input = {
+    	.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO
+	};
+
+	const VkPipelineInputAssemblyStateCreateInfo input_assembly = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+		.topology = gpu_primitive_kind_to_vk_primitive_topology(desc->primitive_kind),
+	};
+
+	const VkPipelineViewportStateCreateInfo viewport_state = {
+    	.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+    	.viewportCount = 1,
+    	.scissorCount = 1
+	};
+
+	const VkPipelineRasterizationStateCreateInfo rasterization_state = {
+	    .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+	    .polygonMode = VK_POLYGON_MODE_FILL,
+	    .cullMode = gpu_cull_mode_to_vk_cull_mode_flags(desc->cull_mode),
+	    .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+	    .lineWidth = 1.0f,
+	};
+
+	const VkPipelineMultisampleStateCreateInfo msaa_state = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+		.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+	};
+
+	VkPipelineColorBlendAttachmentState blend_attachments[GPU_MAX_ATTACHMENTS];
+
+	// TODO
+	blend_attachments[0] = (VkPipelineColorBlendAttachmentState) {
+		.colorWriteMask = 0xF,
+	};
+
+	const VkPipelineColorBlendStateCreateInfo blend_state = {
+	    .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+	    .attachmentCount = 1, // TODO
+	    .pAttachments = blend_attachments
+	};
+
+	const VkDynamicState dynamic_states[] = {
+	    VK_DYNAMIC_STATE_VIEWPORT,
+	    VK_DYNAMIC_STATE_SCISSOR
+	};
+
+	const VkPipelineDynamicStateCreateInfo dynamic_state = {
+	    .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+	    .dynamicStateCount = 2,
+	    .pDynamicStates = dynamic_states
+	};
+
+	const Gpu_Render_Pass_Object_Key render_pass_object_key = {
+		.layout = desc->render_pass_layout,
+	};
+	pipeline_data->render_pass_object = gpu_acquire_render_pass_object(render_pass_object_key);
+	const Gpu_Render_Pass_Object_Data* render_pass_object_data = gpu_render_pass_object_pool_resolve(&gpu.render_pass_object_pool, pipeline_data->render_pass_object);
+
+	const VkGraphicsPipelineCreateInfo pipe = {
+	    .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+	    .stageCount = 2,
+	    .pStages = stages,
+	    .pVertexInputState = &vertex_input,
+	    .pInputAssemblyState = &input_assembly,
+	    .pViewportState = &viewport_state,
+	    .pRasterizationState = &rasterization_state,
+	    .pMultisampleState = &msaa_state,
+	    .pColorBlendState = &blend_state,
+	    .pDynamicState = &dynamic_state,
+	    .layout = pipeline_data->pipeline_layout,
+		.subpass = 0,
+		.basePipelineHandle = VK_NULL_HANDLE,
+		.renderPass = render_pass_object_data->render_pass,
+	};
+	VkResult create_pipeline_result = vkCreateGraphicsPipelines(gpu.device, VK_NULL_HANDLE, 1, &pipe, NULL, &pipeline_data->pipeline);
+	vkDestroyShaderModule(gpu.device, vertex_module, NULL);
+	vkDestroyShaderModule(gpu.device, fragment_module, NULL);
+
+	if (create_pipeline_result != VK_SUCCESS) {
+		vkDestroyPipelineLayout(gpu.device, pipeline_data->pipeline_layout, NULL);
+		gpu_release_render_pass_object(pipeline_data->render_pass_object);
+		gpu_render_pipeline_pool_release(&gpu.render_pipeline_pool, pipeline);
+		return SL_HANDLE_NULL;
+	}
+
+	return pipeline;
+}
+
 Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* desc) {
 	if (desc->code.size == 0) {
 		return SL_HANDLE_NULL;
@@ -2196,6 +2517,28 @@ Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* d
 
 	gpu_log("Created compute pipeline.");
 	return pipeline;
+}
+
+void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Draw_Desc* desc) {
+	gpu_validate(gpu_compute_pipeline_pool_resolve(&gpu.compute_pipeline_pool, desc->pipeline), "Invalid pipeline.");
+
+	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
+	gpu_validate(cb_data, "Invalid command buffer.");
+	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+
+	Gpu_Command_Draw* draw;
+	allocator_new(&cb_data->arena->allocator, draw, 1);
+	*draw = (Gpu_Command_Draw) {
+		.desc = *desc,
+	};
+
+	allocator_new(&cb_data->arena->allocator, draw->desc.bindings, desc->binding_count);
+	memcpy((void*)draw->desc.bindings, desc->bindings, sizeof(Gpu_Binding) * desc->binding_count);
+
+	gpu_command_seq_push(&cb_data->commands, (Gpu_Command) {
+		.kind = Gpu_Command_Kind_Draw,
+		.data.draw = draw,
+	});
 }
 
 void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, const Gpu_Binding* bindings, u32 binding_count, vec3_u32 group_count) {
