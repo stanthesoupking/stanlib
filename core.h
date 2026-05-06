@@ -2791,33 +2791,52 @@ sl_inline void* sl_thread_join(SL_Thread* thread) {
 #include <CoreFoundation/CoreFoundation.h>
 sl_inline bool sl_get_application_path(const char* subdirectory, const char* name, const char* ext, u32 out_path_length, char* out_path) {
     CFBundleRef main_bundle = CFBundleGetMainBundle();
-	
+
 	CFStringRef cf_subdirectory = CFStringCreateWithCString(NULL, subdirectory, kCFStringEncodingUTF8);
 	CFStringRef cf_name = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
 	CFStringRef cf_ext = CFStringCreateWithCString(NULL, ext, kCFStringEncodingUTF8);
-	
+
 	CFURLRef url = CFBundleCopyResourceURL(main_bundle, cf_name, cf_ext, cf_subdirectory);
 	CFRelease(cf_subdirectory);
 	CFRelease(cf_name);
 	CFRelease(cf_ext);
-	
+
 	if (url == NULL) {
 		return false;
 	}
-	
+
 	CFStringRef cf_path = CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle);
 	CFRelease(url);
-	
-	
+
 	if (CFStringGetCString(cf_path, out_path, out_path_length, kCFStringEncodingUTF8)) {
 		return true;
 	} else {
 		return false;
 	}
 }
+#elif defined(SL_PLATFORM_LINUX)
+#include <unistd.h>
+#include <libgen.h>
+sl_inline bool sl_get_application_path(const char* subdirectory, const char* name, const char* ext, u32 out_path_length, char* out_path) {
+	char application_path[256];
+	ssize_t len = readlink("/proc/self/exe", application_path, sl_array_count(application_path) - 1);
+    if (len == -1) {
+    	return false;
+    };
+    application_path[len] = '\0';
+
+    char* application_dir = dirname(application_path);
+
+    int written_length = snprintf(out_path, out_path_length, "%s/%s/%s.%s", application_dir, subdirectory, name, ext);
+    if (written_length > out_path_length - 1) {
+    	return false;
+    }
+
+    return true;
+}
 #else
-sl_inline const char* sl_get_application_path(const char* subdirectory, const char* name, const char* ext, u32 out_path_length, char* out_path) {
-    return NULL;
+sl_inline bool sl_get_application_path(const char* subdirectory, const char* name, const char* ext, u32 out_path_length, char* out_path) {
+	return false;
 }
 #endif
 
