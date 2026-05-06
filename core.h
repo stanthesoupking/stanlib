@@ -2787,6 +2787,40 @@ sl_inline void* sl_thread_join(SL_Thread* thread) {
 	return ret;
 }
 
+#if defined(SL_PLATFORM_APPLE)
+#include <CoreFoundation/CoreFoundation.h>
+sl_inline bool sl_get_application_path(const char* subdirectory, const char* name, const char* ext, u32 out_path_length, char* out_path) {
+    CFBundleRef main_bundle = CFBundleGetMainBundle();
+	
+	CFStringRef cf_subdirectory = CFStringCreateWithCString(NULL, subdirectory, kCFStringEncodingUTF8);
+	CFStringRef cf_name = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
+	CFStringRef cf_ext = CFStringCreateWithCString(NULL, ext, kCFStringEncodingUTF8);
+	
+	CFURLRef url = CFBundleCopyResourceURL(main_bundle, cf_name, cf_ext, cf_subdirectory);
+	CFRelease(cf_subdirectory);
+	CFRelease(cf_name);
+	CFRelease(cf_ext);
+	
+	if (url == NULL) {
+		return false;
+	}
+	
+	CFStringRef cf_path = CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle);
+	CFRelease(url);
+	
+	
+	if (CFStringGetCString(cf_path, out_path, out_path_length, kCFStringEncodingUTF8)) {
+		return true;
+	} else {
+		return false;
+	}
+}
+#else
+sl_inline const char* sl_get_application_path(const char* subdirectory, const char* name, const char* ext, u32 out_path_length, char* out_path) {
+    return NULL;
+}
+#endif
+
 #endif
 
 sl_shared_struct(Quad_f32) {
