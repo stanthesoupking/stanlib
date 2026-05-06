@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gpu3.h"
+#include "gpu.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_metal.h>
 

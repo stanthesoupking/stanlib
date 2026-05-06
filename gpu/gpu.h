@@ -13,6 +13,8 @@ typedef SL_Handle Gpu_Compute_Pipeline;
 typedef SL_Handle Gpu_Swapchain;
 typedef SL_Handle Gpu_Semaphore;
 
+typedef void (*Gpu_Callback_Fn)(void* ctx);
+
 typedef enum Gpu_Format {
 	Gpu_Format_RGBA8_Unorm,
 	Gpu_Format_RGBA8_sRGB,
@@ -212,7 +214,7 @@ typedef enum Gpu_Surface_Kind {
 	Gpu_Surface_Kind_Metal_Layer,
 	Gpu_Surface_Kind_X11,
 	Gpu_Surface_Kind_Wayland,
-	Gpu_Surface_Kind_Win32, // todo
+	Gpu_Surface_Kind_Win32,
 } Gpu_Surface_Kind;
 
 typedef struct Gpu_Surface_Metal_Layer {
@@ -259,13 +261,9 @@ typedef struct Gpu_Desc {
 void gpu_init(const Gpu_Desc* desc);
 void gpu_deinit();
 
-// Callback
-typedef void (*Gpu_Callback_Fn)(void* ctx);
-
 // Swapchain
 Gpu_Swapchain gpu_new_swapchain(Gpu_Surface surface);
 void gpu_destroy_swapchain(Gpu_Swapchain swapchain);
-
 bool gpu_fetch_swapchain_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb, Gpu_Swapchain_Desc swapchain_desc, u64 timeout, Gpu_Texture* out_texture);
 
 // Texture
@@ -392,11 +390,8 @@ void gpu_barrier(Gpu_Command_Buffer cb);
 // Semaphore
 Gpu_Semaphore gpu_new_semaphore(void);
 void gpu_destroy_semaphore(Gpu_Semaphore semaphore);
-
 void gpu_notify(Gpu_Semaphore semaphore, u64 value, void* ctx, Gpu_Callback_Fn fn);
-
 void gpu_wait_gpu(Gpu_Command_Buffer cb, Gpu_Semaphore semaphore, u64 value);
 void gpu_signal_gpu(Gpu_Command_Buffer cb, Gpu_Semaphore semaphore, u64 value);
-
 void gpu_wait_cpu(Gpu_Semaphore semaphore, u64 value);
 void gpu_signal_cpu(Gpu_Semaphore semaphore, u64 value);

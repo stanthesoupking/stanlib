@@ -1,5 +1,3 @@
-#pragma once
-
 #include "core.h"
 #include "vulkan/vulkan_core.h"
 #include <vulkan/vulkan.h>
@@ -24,7 +22,7 @@
 #define gpu_LOGGING 1
 #define gpu_VALIDATION 0
 
-#include "gpu3.h"
+#include "gpu.h"
 #include <string.h>
 
 #if gpu_LOGGING
