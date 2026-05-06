@@ -2,6 +2,25 @@
 
 #include "core.h"
 #include "vulkan/vulkan_core.h"
+#include <vulkan/vulkan.h>
+
+#if defined(SL_PLATFORM_WINDOWS)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <vulkan/vulkan_win32.h>
+#endif
+
+#if defined(SL_PLATFORM_APPLE)
+#include <vulkan/vulkan_metal.h>
+#endif
+
+#if defined(SL_PLATFORM_LINUX)
+#include <X11/Xlib.h>
+#include <vulkan/vulkan_xlib.h>
+#include <vulkan/vulkan_wayland.h>
+#endif
+
 #define gpu_LOGGING 1
 #define gpu_VALIDATION 0
 
@@ -411,8 +430,6 @@ typedef struct Gpu {
 	Gpu_Semaphore global_semaphore;
 	u64 global_semaphore_value;
 
-	Gpu_Swapchain_Init_Desc swapchain_init_desc;
-
 	Gpu_Memory_Type_Indices memory_type_indices;
 	Gpu_Queue_Family_Indices queue_family_indices;
 	VkQueue queue[Gpu_Queue_Count];
@@ -517,7 +534,124 @@ void gpu_init_instance(const Gpu_Desc* desc) {
 	allocator_free(allocator, combined_extensions, combined_extension_count);
 }
 
-Gpu_Queue_Family_Indices gpu_get_physical_device_queue_families(VkPhysicalDevice device, Allocator* scratch_allocator) {
+
+bool gpu_new_vk_surface_for_surface(Gpu_Surface surface, VkSurfaceKHR* out_vk_surface) {
+	switch (surface.kind) {
+		case Gpu_Surface_Kind_None: {
+			return false;
+		} break;
+
+		case Gpu_Surface_Kind_Metal_Layer: {
+			#if defined(SL_PLATFORM_APPLE)
+			PFN_vkCreateMetalSurfaceEXT vkCreateMetalSurfaceEXT = (PFN_vkCreateMetalSurfaceEXT)vkGetInstanceProcAddr(gpu.instance, "vkCreateMetalSurfaceEXT");
+			if (vkCreateMetalSurfaceEXT == NULL) {
+				return false;
+			}
+
+			const VkMetalSurfaceCreateInfoEXT create_info = {
+				.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT,
+				.pLayer = surface.metal_layer.metal_layer,
+				.flags = 0,
+				.pNext = NULL,
+			};
+		 	VkResult create_result = vkCreateMetalSurfaceEXT(gpu.instance, &create_info, NULL, out_vk_surface);
+			if (create_result != VK_SUCCESS) {
+				return false;
+			}
+			#else
+			return false;
+			#endif
+		} break;
+
+		case Gpu_Surface_Kind_X11: {
+			#if defined(SL_PLATFORM_LINUX)
+			PFN_vkCreateXlibSurfaceKHR vkCreateXlibSurfaceKHR = (PFN_vkCreateXlibSurfaceKHR)vkGetInstanceProcAddr(gpu.instance, "vkCreateXlibSurfaceKHR");
+			if (vkCreateXlibSurfaceKHR == NULL) {
+				return false;
+			}
+
+			const VkXlibSurfaceCreateInfoKHR create_info = {
+				.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR,
+				.dpy = surface.x11.display,
+				.window = surface.x11.window,
+				.flags = 0,
+				.pNext = NULL,
+			};
+		 	VkResult create_result = vkCreateXlibSurfaceKHR(gpu.instance, &create_info, NULL, out_vk_surface);
+			if (create_result != VK_SUCCESS) {
+				return false;
+			}
+			#else
+			return false;
+			#endif
+		} break;
+
+		case Gpu_Surface_Kind_Wayland: {
+			#if defined(SL_PLATFORM_LINUX)
+			PFN_vkCreateWaylandSurfaceKHR vkCreateWaylandSurfaceKHR = (PFN_vkCreateWaylandSurfaceKHR)vkGetInstanceProcAddr(gpu.instance, "vkCreateWaylandSurfaceKHR");
+			if (vkCreateWaylandSurfaceKHR == NULL) {
+				return false;
+			}
+
+			const VkWaylandSurfaceCreateInfoKHR create_info = {
+				.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR,
+				.surface = surface.wayland.surface,
+				.display = surface.wayland.display,
+				.flags = 0,
+				.pNext = NULL,
+			};
+		 	VkResult create_result = vkCreateWaylandSurfaceKHR(gpu.instance, &create_info, NULL, out_vk_surface);
+			if (create_result != VK_SUCCESS) {
+				return false;
+			}
+			#else
+			return false;
+			#endif
+		} break;
+
+		case Gpu_Surface_Kind_Win32: {
+			#if defined(SL_PLATFORM_WINDOWS)
+			PFN_vkCreateWin32SurfaceKHR vkCreateWin32SurfaceKHR = (PFN_vkCreateWin32SurfaceKHR)vkGetInstanceProcAddr(gpu.instance, "vkCreateWin32SurfaceKHR");
+			if (vkCreateWin32SurfaceKHR == NULL) {
+				return false;
+			}
+
+			const VkWin32SurfaceCreateInfoKHR create_info = {
+				.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT,
+				.hwnd = surface.win32.hwnd,
+				.hinstance = surface.win32.instance,
+				.flags = 0,
+				.pNext = NULL,
+			};
+		 	VkResult create_result = vkCreateWin32SurfaceKHR(gpu.instance, &create_info, NULL, out_vk_surface);
+			if (create_result != VK_SUCCESS) {
+				return false;
+			}
+			#else
+			return false;
+			#endif
+		} break;
+	}
+	return true;
+}
+
+bool gpu_queue_family_supports_present(VkPhysicalDevice physical_device, u32 queue_family_index, const Gpu_Surface* surfaces, u32 surface_count) {
+	for (u32 surface_idx = 0; surface_idx < surface_count; surface_idx++) {
+		VkSurfaceKHR vk_surface;
+		if (gpu_new_vk_surface_for_surface(surfaces[surface_idx], &vk_surface)) {
+			VkBool32 supported;
+			VkResult result = vkGetPhysicalDeviceSurfaceSupportKHR(physical_device, queue_family_index, vk_surface, &supported);
+			sl_assert(result == VK_SUCCESS, "Failed to check surface support.");
+			vkDestroySurfaceKHR(gpu.instance, vk_surface, NULL);
+			if (!supported) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+Gpu_Queue_Family_Indices gpu_get_physical_device_queue_families(const Gpu_Desc* desc, VkPhysicalDevice device, Allocator* scratch_allocator) {
 	u32 queue_family_count = 0;
 	vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, NULL);
 
@@ -532,12 +666,8 @@ Gpu_Queue_Family_Indices gpu_get_physical_device_queue_families(VkPhysicalDevice
 		},
 	};
 	for (u32 queue_idx = 0; queue_idx < queue_family_count; queue_idx++) {
-		VkQueueFamilyProperties queue_family = queue_families[queue_idx];
-
-		// TODO
-		// VkBool32 present_support = false;
-		// vkGetPhysicalDeviceSurfaceSupportKHR(device, queue_idx, gpu.surface, &present_support);
-		bool present_support = true;
+		const VkQueueFamilyProperties queue_family = queue_families[queue_idx];
+		const bool present_support = gpu_queue_family_supports_present(device, queue_idx, desc->surfaces, desc->surface_count);
 
 		const VkQueueFlagBits primary_queue_bits = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
 
@@ -615,7 +745,7 @@ Gpu_Memory_Type_Indices gpu_get_physical_device_memory_type_indices(VkPhysicalDe
 	return indices;
 }
 
-bool gpu_is_device_suitable(VkPhysicalDevice device, Allocator* scratch_allocator) {
+bool gpu_is_device_suitable(const Gpu_Desc* desc, VkPhysicalDevice device, Allocator* scratch_allocator) {
 	VkPhysicalDeviceProperties device_properties;
 	vkGetPhysicalDeviceProperties(device, &device_properties);
 
@@ -633,7 +763,7 @@ bool gpu_is_device_suitable(VkPhysicalDevice device, Allocator* scratch_allocato
 		return false;
 	}
 
-	Gpu_Queue_Family_Indices queue_indices = gpu_get_physical_device_queue_families(device, scratch_allocator);
+	Gpu_Queue_Family_Indices queue_indices = gpu_get_physical_device_queue_families(desc, device, scratch_allocator);
 	if (!gpu_queue_family_indices_is_complete(queue_indices)) {
 		return false;
 	}
@@ -673,7 +803,7 @@ bool gpu_is_device_discrete(VkPhysicalDevice device) {
 	return (device_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU);
 }
 
-VkPhysicalDevice gpu_find_physical_device(void) {
+VkPhysicalDevice gpu_find_physical_device(const Gpu_Desc* desc) {
 	gpu_log("Finding physical device.");
 
 	Allocator* allocator = gpu.allocator;
@@ -691,7 +821,7 @@ VkPhysicalDevice gpu_find_physical_device(void) {
 	VkPhysicalDevice* suitable_devices;
 	allocator_new(allocator, suitable_devices, device_count);
 	for (u32 device_idx = 0; device_idx < device_count; device_idx++) {
-		if (gpu_is_device_suitable(devices[device_idx], allocator)) {
+		if (gpu_is_device_suitable(desc, devices[device_idx], allocator)) {
 			suitable_devices[suitable_device_count++] = devices[device_idx];
 		}
 	}
@@ -710,10 +840,10 @@ VkPhysicalDevice gpu_find_physical_device(void) {
 	return suitable_devices[0];
 }
 
-void gpu_init_device(void) {
+void gpu_init_device(const Gpu_Desc* desc) {
 	Allocator* allocator = gpu.allocator;
 
-	VkPhysicalDevice physical_device = gpu_find_physical_device();
+	VkPhysicalDevice physical_device = gpu_find_physical_device(desc);
 	gpu.physical_device = physical_device;
 
 	VkPhysicalDeviceProperties physical_device_properties;
@@ -722,7 +852,7 @@ void gpu_init_device(void) {
 
 	gpu.device_limits = physical_device_properties.limits;
 
-	Gpu_Queue_Family_Indices queue_indices = gpu_get_physical_device_queue_families(physical_device, allocator);
+	Gpu_Queue_Family_Indices queue_indices = gpu_get_physical_device_queue_families(desc, physical_device, allocator);
 	gpu.queue_family_indices = queue_indices;
 
 	gpu.memory_type_indices = gpu_get_physical_device_memory_type_indices(physical_device);
@@ -1202,12 +1332,18 @@ Gpu_Framebuffer gpu_acquire_framebuffer(Gpu_Framebuffer_Key key) {
 }
 
 // Swapchain
-Gpu_Swapchain gpu_new_swapchain(const Gpu_Swapchain_Init_Desc* init_desc) {
-	Gpu_Swapchain swapchain = gpu_swapchain_pool_acquire(&gpu.swapchain_pool);
-	Gpu_Swapchain_Data* swapchain_data = gpu_swapchain_pool_resolve(&gpu.swapchain_pool, swapchain);
+Gpu_Swapchain gpu_new_swapchain(Gpu_Surface surface) {
 
 	// Create surface
-	swapchain_data->surface = init_desc->get_surface_fn(init_desc->ctx, gpu.instance);
+	VkSurfaceKHR vk_surface;
+	const bool got_vk_surface = gpu_new_vk_surface_for_surface(surface, &vk_surface);
+	if (!got_vk_surface) {
+		return SL_HANDLE_NULL;
+	}
+
+	Gpu_Swapchain swapchain = gpu_swapchain_pool_acquire(&gpu.swapchain_pool);
+	Gpu_Swapchain_Data* swapchain_data = gpu_swapchain_pool_resolve(&gpu.swapchain_pool, swapchain);
+	swapchain_data->surface = vk_surface;
 
 	return swapchain;
 }
@@ -1309,13 +1445,13 @@ Gpu_Swapchain_Instance* gpu_get_instance(Gpu_Swapchain swapchain, Gpu_Swapchain_
 		.presentMode = present_mode,
 	};
 
-	Gpu_Queue_Family_Indices queue_indices = gpu_get_physical_device_queue_families(gpu.physical_device, gpu.allocator);
-	if (queue_indices.index[Gpu_Queue_Primary] == queue_indices.index[Gpu_Queue_Present]) {
+
+	if (gpu.queue_family_indices.index[Gpu_Queue_Primary] == gpu.queue_family_indices.index[Gpu_Queue_Present]) {
 		create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	} else {
 		create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-		create_info.queueFamilyIndexCount = 3;
-		create_info.pQueueFamilyIndices = queue_indices.index;
+		create_info.queueFamilyIndexCount = sl_array_count(gpu.queue_family_indices.index);
+		create_info.pQueueFamilyIndices = gpu.queue_family_indices.index;
 	}
 
 	VkResult create_result = vkCreateSwapchainKHR(gpu.device, &create_info, NULL, &new_instance->swapchain);
@@ -1413,10 +1549,9 @@ void gpu_init_resource_pools() {
 void gpu_init(const Gpu_Desc* desc) {
 	gpu = (Gpu) {};
 	gpu.allocator = desc->allocator;
-	gpu.swapchain_init_desc = desc->swapchain_desc;
 	gpu.enqueue_mutex = sl_mutex_new();
 	gpu_init_instance(desc);
-	gpu_init_device();
+	gpu_init_device(desc);
 	gpu_init_resource_pools();
 	gpu.global_semaphore = gpu_new_semaphore();
 }

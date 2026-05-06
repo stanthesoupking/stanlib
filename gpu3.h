@@ -1,6 +1,5 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
 #include "core.h"
 
 #define GPU_MAX_ATTACHMENTS 8
@@ -208,12 +207,42 @@ typedef struct Gpu_Code {
 	u64 size;
 } Gpu_Code;
 
-typedef VkSurfaceKHR (*Gpu_Get_Surface_Fn)(void* ctx, VkInstance instance);
+typedef enum Gpu_Surface_Kind {
+	Gpu_Surface_Kind_None,
+	Gpu_Surface_Kind_Metal_Layer,
+	Gpu_Surface_Kind_X11,
+	Gpu_Surface_Kind_Wayland,
+	Gpu_Surface_Kind_Win32, // todo
+} Gpu_Surface_Kind;
 
-typedef struct Gpu_Swapchain_Init_Desc {
-	void* ctx;
-	Gpu_Get_Surface_Fn get_surface_fn;
-} Gpu_Swapchain_Init_Desc;
+typedef struct Gpu_Surface_Metal_Layer {
+	void* metal_layer;
+} Gpu_Surface_Metal_Layer;
+
+typedef struct Gpu_Surface_Wayland {
+	void* display;
+	void* surface;
+} Gpu_Surface_Wayland;
+
+typedef struct Gpu_Surface_X11 {
+	void* display;
+	u64 window;
+} Gpu_Surface_X11;
+
+typedef struct Gpu_Surface_Win32 {
+	void* hwnd;
+	void* instance;
+} Gpu_Surface_Win32;
+
+typedef struct Gpu_Surface {
+	Gpu_Surface_Kind kind;
+	union {
+		Gpu_Surface_Metal_Layer metal_layer;
+		Gpu_Surface_X11 x11;
+		Gpu_Surface_Wayland wayland;
+		Gpu_Surface_Win32 win32;
+	};
+} Gpu_Surface;
 
 typedef struct Gpu_Desc {
 	Allocator* allocator;
@@ -221,7 +250,10 @@ typedef struct Gpu_Desc {
 	u32 required_extension_count;
 	char const* const* required_extensions;
 
-	Gpu_Swapchain_Init_Desc swapchain_desc;
+	// Optional surfaces that may be used for swapchain creation.
+	// If a surface isn't provided, there is no guarantee that swapchain creation will succeed.
+	const Gpu_Surface* surfaces;
+	u32 surface_count;
 } Gpu_Desc;
 
 void gpu_init(const Gpu_Desc* desc);
@@ -231,7 +263,7 @@ void gpu_deinit();
 typedef void (*Gpu_Callback_Fn)(void* ctx);
 
 // Swapchain
-Gpu_Swapchain gpu_new_swapchain(const Gpu_Swapchain_Init_Desc* init_desc);
+Gpu_Swapchain gpu_new_swapchain(Gpu_Surface surface);
 void gpu_destroy_swapchain(Gpu_Swapchain swapchain);
 
 bool gpu_fetch_swapchain_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb, Gpu_Swapchain_Desc swapchain_desc, u64 timeout, Gpu_Texture* out_texture);

@@ -2,6 +2,14 @@
 
 #pragma once
 
+#if defined(_WIN32)
+#define SL_PLATFORM_WINDOWS 1
+#elif defined(__APPLE__)
+#define SL_PLATFORM_APPLE 1
+#elif defined(__linux__)
+#define SL_PLATFORM_LINUX 1
+#endif
+
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
