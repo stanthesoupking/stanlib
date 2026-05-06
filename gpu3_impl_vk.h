@@ -3,7 +3,7 @@
 #include "core.h"
 #include "vulkan/vulkan_core.h"
 #define gpu_LOGGING 1
-#define gpu_VALIDATION 1
+#define gpu_VALIDATION 0
 
 #include "gpu3.h"
 #include <string.h>
@@ -214,10 +214,16 @@ typedef struct Gpu_Render_Pipeline_Data {
 } Gpu_Render_Pipeline_Data;
 sl_threadsafe_pool(Gpu_Render_Pipeline_Data, Gpu_Render_Pipeline_Pool, gpu_render_pipeline_pool);
 
+typedef struct Gpu_Callback {
+	void* ctx;
+	Gpu_Callback_Fn fn;
+} Gpu_Callback;
+sl_seq(Gpu_Callback, Gpu_Callback_Seq, gpu_callback_seq);
+
 typedef struct Gpu_Semaphore_On_Notify_Callback {
 	u64 value;
 	void* ctx;
-	Gpu_On_Notify_Fn fn;
+	Gpu_Callback_Fn fn;
 } Gpu_Semaphore_On_Notify_Callback;
 sl_seq(Gpu_Semaphore_On_Notify_Callback, Gpu_Semaphore_On_Notify_Callback_Seq, gpu_semaphore_on_notify_callback_seq);
 
@@ -363,6 +369,8 @@ typedef struct Gpu_Command_Buffer_Data {
 	u32 next_free_command_buffer;
 
 	Gpu_Swapchain_Present_Seq swapchain_presents;
+
+	Gpu_Callback_Seq on_complete_callbacks;
 
 	SL_Arena_Allocator* arena;
 	Gpu_Command_Seq commands;
@@ -1576,6 +1584,7 @@ void gpu_init_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 		.semaphores = gpu_semaphore_seq_new(gpu.allocator, 1),
 		.command_buffers = gpu_command_buffer_seq_new(gpu.allocator, 1),
 		.swapchain_presents = gpu_swapchain_present_seq_new(gpu.allocator, 1),
+		.on_complete_callbacks = gpu_callback_seq_new(gpu.allocator, 1),
 	};
 
 	VkCommandPoolCreateInfo command_pool_create_info = {
@@ -1584,6 +1593,26 @@ void gpu_init_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 	};
 	VkResult command_pool_result = vkCreateCommandPool(gpu.device, &command_pool_create_info, NULL, &command_buffer->command_pool);
 	sl_assert(command_pool_result == VK_SUCCESS, "Failed to create command pool.");
+}
+void gpu_deinit_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
+	const u32 command_buffer_count = gpu_command_buffer_seq_get_count(&command_buffer->command_buffers);
+	for (u32 i = 0; i < command_buffer_count; i++) {
+		vkFreeCommandBuffers(gpu.device, command_buffer->command_pool, 1, gpu_command_buffer_seq_get_ptr(&command_buffer->command_buffers, i));
+	}
+
+	const u32 semaphore_count = gpu_semaphore_seq_get_count(&command_buffer->semaphores);
+	for (u32 i = 0; i < semaphore_count; i++) {
+		vkDestroySemaphore(gpu.device, gpu_semaphore_seq_get(&command_buffer->semaphores, i), NULL);
+	}
+
+	vkDestroyCommandPool(gpu.device, command_buffer->command_pool, NULL);
+	gpu_command_seq_destroy(&command_buffer->commands);
+	gpu_semaphore_seq_destroy(&command_buffer->semaphores);
+	gpu_command_buffer_seq_destroy(&command_buffer->command_buffers);
+	gpu_swapchain_present_seq_destroy(&command_buffer->swapchain_presents);
+	gpu_callback_seq_destroy(&command_buffer->on_complete_callbacks);
+	sl_arena_allocator_destroy(command_buffer->arena);
+	*command_buffer = (Gpu_Command_Buffer_Data) {0};
 }
 
 // Command Buffer Pool
@@ -1602,7 +1631,12 @@ Gpu_Command_Buffer_Pool gpu_new_command_buffer_pool(u32 size) {
 	return pool;
 }
 void gpu_destroy_command_buffer_pool(Gpu_Command_Buffer_Pool pool) {
-	// todo
+	Gpu_Command_Buffer_Pool_Data* pool_data = gpu_command_buffer_pool_pool_resolve(&gpu.command_pool_pool, pool);
+	for (u32 i = 0; i < pool_data->command_buffer_count; i++) {
+		gpu_deinit_command_buffer(&pool_data->command_buffers[i]);
+	}
+	allocator_free(gpu.allocator, pool_data->command_buffers, pool_data->command_buffer_count);
+	gpu_command_buffer_pool_pool_release(&gpu.command_pool_pool, pool);
 }
 Gpu_Command_Buffer_Data* gpu_resolve_command_buffer_data(Gpu_Command_Buffer cb) {
 	Gpu_Command_Buffer_Pool_Data* pool_data = gpu_command_buffer_pool_pool_resolve(&gpu.command_pool_pool, cb.pool);
@@ -1642,6 +1676,7 @@ bool gpu_new_command_buffer(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* ou
 	cb_data->next_free_command_buffer = 0;
 	gpu_command_seq_clear(&cb_data->commands);
 	gpu_swapchain_present_seq_clear(&cb_data->swapchain_presents);
+	gpu_callback_seq_clear(&cb_data->on_complete_callbacks);
 
 	pool_data->next_command_buffer = (pool_data->next_command_buffer + 1) % pool_data->command_buffer_count;
 
@@ -1656,6 +1691,12 @@ void gpu_on_complete_command_buffer_callback(void* ctx) {
 	for (u32 present_idx = 0; present_idx < present_count; present_idx++) {
 		const Gpu_Swapchain_Present present_info = gpu_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
 		gpu_release_swapchain_instance(present_info.swapchain_instance);
+	}
+
+	const u32 callback_count = gpu_callback_seq_get_count(&cb_data->on_complete_callbacks);
+	for (u32 callback_idx = 0; callback_idx < callback_count; callback_idx++) {
+		const Gpu_Callback callback = gpu_callback_seq_get(&cb_data->on_complete_callbacks, callback_idx);
+		callback.fn(callback.ctx);
 	}
 }
 
@@ -2263,6 +2304,17 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 	}
 }
 
+void gpu_add_on_complete_callback(Gpu_Command_Buffer cb, void* ctx, Gpu_Callback_Fn fn) {
+	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
+	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+
+	const Gpu_Callback callback = {
+		.ctx = ctx,
+		.fn = fn,
+	};
+	gpu_callback_seq_push(&cb_data->on_complete_callbacks, callback);
+}
+
 void gpu_transition_texture_layouts(Gpu_Command_Buffer cb, const Gpu_Texture* textures, const Gpu_Texture_Layout* layouts, u32 count) {
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
@@ -2801,19 +2853,21 @@ void gpu_destroy_semaphore(Gpu_Semaphore semaphore) {
 	sl_mutex_lock(&data->mutex);
 	sl_assert(gpu_semaphore_on_notify_callback_seq_get_count(&data->pending_callbacks) == 0, "Can't destroy a semaphore that has pending notifications (i.e. gpu_notify()).");
 	data->destroying = true;
+	const u64 current_value = data->current_value;
 	sl_mutex_unlock(&data->mutex);
 
 	// in order to clean up the thread, we must signal the semaphore.
-	gpu_signal_cpu(semaphore, u64_max);
+	gpu_signal_cpu(semaphore, current_value + 1);
 
 	sl_thread_join(&data->thread);
 	sl_mutex_destroy(&data->mutex);
+	vkDestroySemaphore(gpu.device, data->vk_semaphore, NULL);
 
 	gpu_semaphore_on_notify_callback_seq_destroy(&data->pending_callbacks);
 	gpu_semaphore_pool_release(&gpu.semaphore_pool, semaphore);
 }
 
-void gpu_notify(Gpu_Semaphore semaphore, u64 value, void* ctx, Gpu_On_Notify_Fn fn) {
+void gpu_notify(Gpu_Semaphore semaphore, u64 value, void* ctx, Gpu_Callback_Fn fn) {
 	Gpu_Semaphore_Data* data = gpu_semaphore_pool_resolve(&gpu.semaphore_pool, semaphore);
 	sl_mutex_lock(&data->mutex);
 	const bool pending_notify = (value > data->current_value);

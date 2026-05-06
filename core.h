@@ -2412,9 +2412,10 @@ sl_inline SL_Arena_Allocator* sl_arena_allocator_new(Allocator* allocator, u64 s
 	return result;
 }
 sl_inline void sl_arena_allocator_destroy(SL_Arena_Allocator* allocator) {
-	allocator_free(allocator->basis_allocator, allocator->buffer, allocator->size);
-	allocator_free(allocator->basis_allocator, allocator, 1);
+	Allocator* basis = allocator->basis_allocator;
+	allocator_free(basis, allocator->buffer, allocator->size);
 	*allocator = (SL_Arena_Allocator) {0};
+	allocator_free(basis, allocator, 1);
 }
 sl_inline void sl_arena_allocator_reset(SL_Arena_Allocator* allocator, u64 position) {
 	allocator->next_position = allocator->buffer + position;

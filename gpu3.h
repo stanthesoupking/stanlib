@@ -227,6 +227,9 @@ typedef struct Gpu_Desc {
 void gpu_init(const Gpu_Desc* desc);
 void gpu_deinit();
 
+// Callback
+typedef void (*Gpu_Callback_Fn)(void* ctx);
+
 // Swapchain
 Gpu_Swapchain gpu_new_swapchain(const Gpu_Swapchain_Init_Desc* init_desc);
 void gpu_destroy_swapchain(Gpu_Swapchain swapchain);
@@ -274,6 +277,8 @@ void gpu_destroy_command_buffer_pool(Gpu_Command_Buffer_Pool pool);
 // Command Buffer
 bool gpu_new_command_buffer(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* out_cb);
 void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed);
+
+void gpu_add_on_complete_callback(Gpu_Command_Buffer cb, void* ctx, Gpu_Callback_Fn fn);
 
 void gpu_transition_texture_layouts(Gpu_Command_Buffer cb, const Gpu_Texture* textures, const Gpu_Texture_Layout* layouts, u32 count);
 
@@ -354,8 +359,7 @@ void gpu_barrier(Gpu_Command_Buffer cb);
 Gpu_Semaphore gpu_new_semaphore(void);
 void gpu_destroy_semaphore(Gpu_Semaphore semaphore);
 
-typedef void (*Gpu_On_Notify_Fn)(void* ctx);
-void gpu_notify(Gpu_Semaphore semaphore, u64 value, void* ctx, Gpu_On_Notify_Fn fn);
+void gpu_notify(Gpu_Semaphore semaphore, u64 value, void* ctx, Gpu_Callback_Fn fn);
 
 void gpu_wait_gpu(Gpu_Command_Buffer cb, Gpu_Semaphore semaphore, u64 value);
 void gpu_signal_gpu(Gpu_Command_Buffer cb, Gpu_Semaphore semaphore, u64 value);
