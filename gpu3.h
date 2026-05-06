@@ -326,7 +326,7 @@ Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* d
 
 void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, const Gpu_Binding* bindings, u32 binding_count, vec3_u32 group_count);
 
-typedef struct Gpu_Blit_Desc {
+typedef struct Gpu_Copy_Texture_Desc {
 	Gpu_Texture src;
 	vec3_u32 src_start;
 	vec3_u32 src_end;
@@ -338,10 +338,12 @@ typedef struct Gpu_Blit_Desc {
 	vec3_u32 dst_end;
 	u32 dst_array_layer;
 	u32 dst_mip_level;
-} Gpu_Blit_Desc;
-void gpu_blit(Gpu_Command_Buffer cb, const Gpu_Blit_Desc* desc);
+} Gpu_Copy_Texture_Desc;
+void gpu_copy_texture(Gpu_Command_Buffer cb, const Gpu_Copy_Texture_Desc* desc);
 
-typedef struct Gpu_Blit_Slice_To_Texture_Desc {
+void gpu_copy_slice(Gpu_Command_Buffer cb, Gpu_Slice src, Gpu_Slice dst);
+
+typedef struct Gpu_Copy_Slice_To_Texture_Desc {
 	Gpu_Slice src;
 	u32 src_row_length; // in pixels
 
@@ -350,8 +352,8 @@ typedef struct Gpu_Blit_Slice_To_Texture_Desc {
 	vec3_u32 dst_end;
 	u32 dst_array_layer;
 	u32 dst_mip_level;
-} Gpu_Blit_Slice_To_Texture_Desc;
-void gpu_blit_slice_to_texture(Gpu_Command_Buffer cb, const Gpu_Blit_Slice_To_Texture_Desc* desc);
+} Gpu_Copy_Slice_To_Texture_Desc;
+void gpu_copy_slice_to_texture(Gpu_Command_Buffer cb, const Gpu_Copy_Slice_To_Texture_Desc* desc);
 
 void gpu_barrier(Gpu_Command_Buffer cb);
 

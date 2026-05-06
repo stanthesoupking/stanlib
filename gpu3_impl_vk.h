@@ -280,8 +280,9 @@ typedef enum Gpu_Command_Kind {
 	Gpu_Command_Kind_End_Render,
 	Gpu_Command_Kind_Draw,
 	Gpu_Command_Kind_Dispatch,
-	Gpu_Command_Kind_Blit,
-	Gpu_Command_Kind_Blit_Slice_To_Texture,
+	Gpu_Command_Kind_Copy_Texture,
+	Gpu_Command_Kind_Copy_Slice,
+	Gpu_Command_Kind_Copy_Slice_To_Texture,
 	Gpu_Command_Kind_Barrier,
 	Gpu_Command_Kind_Wait,
 	Gpu_Command_Kind_Signal,
@@ -309,13 +310,18 @@ typedef struct Gpu_Command_Transition_Texture_Layouts {
 	u32 count;
 } Gpu_Command_Transition_Texture_Layouts;
 
-typedef struct Gpu_Command_Blit {
-	Gpu_Blit_Desc desc;
-} Gpu_Command_Blit;
+typedef struct Gpu_Command_Copy_Texture {
+	Gpu_Copy_Texture_Desc desc;
+} Gpu_Command_Copy_Texture;
 
-typedef struct Gpu_Command_Blit_Slice_To_Texture {
-	Gpu_Blit_Slice_To_Texture_Desc desc;
-} Gpu_Command_Blit_Slice_To_Texture;
+typedef struct Gpu_Command_Copy_Slice {
+	Gpu_Slice src;
+	Gpu_Slice dst;
+} Gpu_Command_Copy_Slice;
+
+typedef struct Gpu_Command_Copy_Slice_To_Texture {
+	Gpu_Copy_Slice_To_Texture_Desc desc;
+} Gpu_Command_Copy_Slice_To_Texture;
 
 typedef struct Gpu_Command_Wait {
 	VkSemaphore semaphore;
@@ -335,8 +341,9 @@ typedef struct Gpu_Command {
 		Gpu_Command_Begin_Render* begin_render;
 		Gpu_Command_Draw* draw;
 		Gpu_Command_Dispatch* dispatch;
-		Gpu_Command_Blit* blit;
-		Gpu_Command_Blit_Slice_To_Texture* blit_slice_to_texture;
+		Gpu_Command_Copy_Texture* copy_texture;
+		Gpu_Command_Copy_Slice* copy_slice;
+		Gpu_Command_Copy_Slice_To_Texture* copy_slice_to_texture;
 		Gpu_Command_Wait* wait;
 		Gpu_Command_Signal* signal;
 	} data;
@@ -2146,56 +2153,72 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 				vkCmdDispatch(vk_cb, dispatch->group_count.x, dispatch->group_count.y, dispatch->group_count.z);
 			} break;
 
-			case Gpu_Command_Kind_Blit: {
+			case Gpu_Command_Kind_Copy_Texture: {
 				VkCommandBuffer vk_cb = gpu_fetch_command_buffer_emitter(&cb_emitter);
 
-				Gpu_Command_Blit* blit = command.data.blit;
-				const Gpu_Blit_Desc* blit_desc = &blit->desc;
-				Gpu_Texture_Data* src_data = gpu_texture_get_root_data(blit_desc->src);
-				Gpu_Texture_Data* dst_data = gpu_texture_get_root_data(blit_desc->dst);
+				const Gpu_Copy_Texture_Desc* copy = &command.data.copy_texture->desc;
+				Gpu_Texture_Data* src_data = gpu_texture_get_root_data(copy->src);
+				Gpu_Texture_Data* dst_data = gpu_texture_get_root_data(copy->dst);
 				VkImageBlit region = {
 					.srcSubresource = {
 						.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-						.mipLevel       = blit_desc->src_mip_level,
-						.baseArrayLayer = blit_desc->src_array_layer,
+						.mipLevel       = copy->src_mip_level,
+						.baseArrayLayer = copy->src_array_layer,
 						.layerCount     = 1,
 					},
 					.srcOffsets = {
-						{ blit_desc->src_start.x, blit_desc->src_start.y, blit_desc->src_start.z },
-						{ blit_desc->src_end.x, blit_desc->src_end.y, blit_desc->src_end.z },
+						{ copy->src_start.x, copy->src_start.y, copy->src_start.z },
+						{ copy->src_end.x, copy->src_end.y, copy->src_end.z },
 					},
 					.dstSubresource = {
 						.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-						.mipLevel       = blit_desc->dst_mip_level,
-						.baseArrayLayer = blit_desc->dst_array_layer,
+						.mipLevel       = copy->dst_mip_level,
+						.baseArrayLayer = copy->dst_array_layer,
 						.layerCount     = 1,
 					},
 					.dstOffsets = {
-					  { blit_desc->dst_start.x, blit_desc->dst_start.y, blit_desc->dst_start.z },
-					  { blit_desc->dst_end.x, blit_desc->dst_end.y, blit_desc->dst_end.z },
+					  { copy->dst_start.x, copy->dst_start.y, copy->dst_start.z },
+					  { copy->dst_end.x, copy->dst_end.y, copy->dst_end.z },
 					},
 				};
 				vkCmdBlitImage(vk_cb, src_data->imm.image, gpu_texture_layout_to_vk_image_layout(src_data->imm.layout), dst_data->imm.image, gpu_texture_layout_to_vk_image_layout(dst_data->imm.layout), 1, &region, VK_FILTER_NEAREST);
 			} break;
 
-			case Gpu_Command_Kind_Blit_Slice_To_Texture: {
+			case Gpu_Command_Kind_Copy_Slice: {
 				VkCommandBuffer vk_cb = gpu_fetch_command_buffer_emitter(&cb_emitter);
 
-				const Gpu_Blit_Slice_To_Texture_Desc* blit = &command.data.blit_slice_to_texture->desc;
-				Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, blit->src.heap);
+				const Gpu_Command_Copy_Slice* copy = command.data.copy_slice;
+				sl_assert(copy->src.size == copy->dst.size, "Source and destination slice size should match.");
 
-				Gpu_Texture_Data* texture_data = gpu_texture_pool_resolve(&gpu.texture_pool, blit->dst);
+				const Gpu_Heap_Data* src_heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, copy->src.heap);
+				const Gpu_Heap_Data* dst_heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, copy->dst.heap);
+
+				const VkBufferCopy region = {
+					.srcOffset = copy->src.offset,
+					.dstOffset = copy->dst.offset,
+    				.size = copy->src.size,
+				};
+				vkCmdCopyBuffer(vk_cb, src_heap_data->buffer, dst_heap_data->buffer, 1, &region);
+			} break;
+
+			case Gpu_Command_Kind_Copy_Slice_To_Texture: {
+				VkCommandBuffer vk_cb = gpu_fetch_command_buffer_emitter(&cb_emitter);
+
+				const Gpu_Copy_Slice_To_Texture_Desc* copy = &command.data.copy_slice_to_texture->desc;
+				Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, copy->src.heap);
+
+				Gpu_Texture_Data* texture_data = gpu_texture_pool_resolve(&gpu.texture_pool, copy->dst);
 				const vec3_u32 texture_size = texture_data->imm.size;
 
 				const VkBufferImageCopy region = {
-					.bufferOffset = blit->src.offset,
-					.bufferRowLength = blit->src_row_length,
-					.bufferImageHeight = blit->dst_end.y - blit->dst_start.y,
-					.imageOffset = { blit->dst_start.x, blit->dst_start.y, blit->dst_start.z },
-					.imageExtent = { blit->dst_end.x, blit->dst_end.y, blit->dst_end.z },
+					.bufferOffset = copy->src.offset,
+					.bufferRowLength = copy->src_row_length,
+					.bufferImageHeight = copy->dst_end.y - copy->dst_start.y,
+					.imageOffset = { copy->dst_start.x, copy->dst_start.y, copy->dst_start.z },
+					.imageExtent = { copy->dst_end.x, copy->dst_end.y, copy->dst_end.z },
 					.imageSubresource = {
-						.mipLevel = blit->dst_mip_level,
-						.baseArrayLayer = blit->dst_array_layer,
+						.mipLevel = copy->dst_mip_level,
+						.baseArrayLayer = copy->dst_array_layer,
 						.layerCount = 1,
 						.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 					},
@@ -2732,37 +2755,55 @@ void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, const Gp
 	});
 }
 
-void gpu_blit(Gpu_Command_Buffer cb, const Gpu_Blit_Desc* desc) {
+void gpu_copy_texture(Gpu_Command_Buffer cb, const Gpu_Copy_Texture_Desc* desc) {
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	gpu_validate(cb_data, "Invalid command buffer.");
 	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 
-	Gpu_Command_Blit* blit;
-	allocator_new(&cb_data->arena->allocator, blit, 1);
-	*blit = (Gpu_Command_Blit) {
+	Gpu_Command_Copy_Texture* copy;
+	allocator_new(&cb_data->arena->allocator, copy, 1);
+	*copy = (Gpu_Command_Copy_Texture) {
 		.desc = *desc,
 	};
 
 	gpu_command_seq_push(&cb_data->commands, (Gpu_Command) {
-		.kind = Gpu_Command_Kind_Blit,
-		.data.blit = blit,
+		.kind = Gpu_Command_Kind_Copy_Texture,
+		.data.copy_texture = copy,
 	});
 }
 
-void gpu_blit_slice_to_texture(Gpu_Command_Buffer cb, const Gpu_Blit_Slice_To_Texture_Desc* desc) {
+void gpu_copy_slice(Gpu_Command_Buffer cb, Gpu_Slice src, Gpu_Slice dst) {
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	gpu_validate(cb_data, "Invalid command buffer.");
 	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 
-	Gpu_Command_Blit_Slice_To_Texture* blit;
-	allocator_new(&cb_data->arena->allocator, blit, 1);
-	*blit = (Gpu_Command_Blit_Slice_To_Texture) {
+	Gpu_Command_Copy_Slice* copy;
+	allocator_new(&cb_data->arena->allocator, copy, 1);
+	*copy = (Gpu_Command_Copy_Slice) {
+		.src = src,
+		.dst = dst,
+	};
+
+	gpu_command_seq_push(&cb_data->commands, (Gpu_Command) {
+		.kind = Gpu_Command_Kind_Copy_Slice,
+		.data.copy_slice = copy,
+	});
+}
+
+void gpu_copy_slice_to_texture(Gpu_Command_Buffer cb, const Gpu_Copy_Slice_To_Texture_Desc* desc) {
+	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
+	gpu_validate(cb_data, "Invalid command buffer.");
+	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+
+	Gpu_Command_Copy_Slice_To_Texture* copy;
+	allocator_new(&cb_data->arena->allocator, copy, 1);
+	*copy = (Gpu_Command_Copy_Slice_To_Texture) {
 		.desc = *desc,
 	};
 
 	gpu_command_seq_push(&cb_data->commands, (Gpu_Command) {
-		.kind = Gpu_Command_Kind_Blit_Slice_To_Texture,
-		.data.blit_slice_to_texture = blit,
+		.kind = Gpu_Command_Kind_Copy_Slice_To_Texture,
+		.data.copy_slice_to_texture = copy,
 	});
 }
 
