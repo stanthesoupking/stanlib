@@ -19,24 +19,8 @@
 #include <vulkan/vulkan_wayland.h>
 #endif
 
-#define gpu_LOGGING 1
-#define gpu_VALIDATION 0
-
 #include "gpu.h"
 #include <string.h>
-
-#if gpu_LOGGING
-	#define gpu_log(fmt, ...) \
-		printf("[Gpu]: " fmt "\n", ##__VA_ARGS__)
-#else
-	#define gpu_log(fmt, ...) ((void)0)
-#endif
-
-#if gpu_VALIDATION
-	#define gpu_validate(condition, message) sl_assert(condition, message)
-#else
-	#define gpu_validate(condition, message) ((void)0)
-#endif
 
 const char* gpu_DEVICE_EXTENSIONS[] = {
 	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -231,19 +215,6 @@ typedef struct Gpu_Render_Pipeline_Data {
 } Gpu_Render_Pipeline_Data;
 sl_threadsafe_pool(Gpu_Render_Pipeline_Data, Gpu_Render_Pipeline_Pool, gpu_render_pipeline_pool);
 
-typedef struct Gpu_Callback {
-	void* ctx;
-	Gpu_Callback_Fn fn;
-} Gpu_Callback;
-sl_seq(Gpu_Callback, Gpu_Callback_Seq, gpu_callback_seq);
-
-typedef struct Gpu_Semaphore_On_Notify_Callback {
-	u64 value;
-	void* ctx;
-	Gpu_Callback_Fn fn;
-} Gpu_Semaphore_On_Notify_Callback;
-sl_seq(Gpu_Semaphore_On_Notify_Callback, Gpu_Semaphore_On_Notify_Callback_Seq, gpu_semaphore_on_notify_callback_seq);
-
 typedef struct Gpu_Semaphore_Data {
 	u32 generation;
 
@@ -284,12 +255,6 @@ typedef struct Gpu_Sampler_Data {
 	VkSampler sampler;
 } Gpu_Sampler_Data;
 sl_threadsafe_pool(Gpu_Sampler_Data, Gpu_Sampler_Pool, gpu_sampler_pool);
-
-typedef enum Gpu_Command_Buffer_State {
-	Gpu_Command_Buffer_State_Idle,
-	Gpu_Command_Buffer_State_Recording,
-	Gpu_Command_Buffer_State_Enqueued
-} Gpu_Command_Buffer_State;
 
 typedef enum Gpu_Command_Kind {
 	Gpu_Command_Kind_Transition_Texture_Layouts,
@@ -488,7 +453,7 @@ void gpu_init_instance(const Gpu_Desc* desc) {
 	create_info.enabledExtensionCount = combined_extension_count;
 	create_info.ppEnabledExtensionNames = combined_extensions;
 
-#if gpu_VALIDATION
+#if GPU_VALIDATION
 	{
 		const char* req_validation_layers[] = {
 			"VK_LAYER_KHRONOS_validation"

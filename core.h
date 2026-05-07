@@ -2234,6 +2234,12 @@ static Allocator allocator_libc = {
 	.free = allocator_libc_free,
 };
 
+sl_inline void sl_memset(void* dst, u8 value, u64 size) {
+	__builtin_memset(dst, value, size);
+}
+
+#define sl_zero(x) sl_memset(&x, 0, sizeof(x))
+
 #define sl_seq(element, type, function_prefix)\
 	typedef struct type {\
 		Allocator* allocator;\
@@ -2299,7 +2305,9 @@ static Allocator allocator_libc = {
 	sl_inline element* sl_concat(function_prefix, _push_reserve)(type* s) {\
 		sl_concat(function_prefix, _ensure_capacity)(s, s->element_count + 1);\
 		const u64 idx = s->element_count++;\
-		return sl_concat(function_prefix, _get_ptr)(s, idx);\
+		element* result = sl_concat(function_prefix, _get_ptr)(s, idx);\
+		sl_zero(*result);\
+		return result;\
 	}\
 	sl_inline void sl_concat(function_prefix, _reserve_count)(type* s, u32 count) {\
 		sl_concat(function_prefix, _ensure_capacity)(s, s->element_count + count);\
@@ -2580,9 +2588,8 @@ sl_inline bool sl_handle_is_null(SL_Handle handle) {
 		\
 		element* e = sl_concat(function_prefix, _backing_seq_get_ptr)(&p->backing, index);\
 		const u32 new_generation = ++e->generation;\
-		*e = (element) {\
-			.generation = new_generation,\
-		};\
+		sl_zero(e);\
+		e->generation = new_generation;\
 		return (SL_Handle) {\
 			.index = index,\
 			.generation = new_generation,\
@@ -2660,9 +2667,8 @@ sl_inline bool sl_handle_is_null(SL_Handle handle) {
 		sl_mutex_unlock(&p->mutex);\
 		element* e = &p->segments[index >> SL_THREADSAFE_POOL_SEGMENT_SIZE_EXP][index & (SL_THREADSAFE_POOL_SEGMENT_SIZE - 1)];\
 		const u32 new_generation = ++e->generation;\
-		*e = (element) {\
-			.generation = new_generation,\
-		};\
+		sl_zero(*e);\
+		e->generation = new_generation;\
 		return (SL_Handle) {\
 			.index = index,\
 			.generation = new_generation,\
@@ -2768,6 +2774,39 @@ sl_inline void sl_rec_mutex_unlock(SL_Rec_Mutex* mutex) {
 // Warning: it is illegal to call `return` within this block.
 #define sl_with_rec_mutex_lock(mutex_ptr) \
     for (s32 _once = (sl_rec_mutex_lock(mutex_ptr), 0); !_once; sl_rec_mutex_unlock(mutex_ptr), _once = 1)
+
+typedef struct SL_Fence {
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+	bool ready;
+} SL_Fence;
+
+sl_inline SL_Fence sl_fence_new(bool initial_state) {
+	SL_Fence result = {0};
+	pthread_mutex_init(&result.mutex, NULL);
+	pthread_cond_init(&result.cond, NULL);
+	result.ready = initial_state;
+	return result;
+}
+sl_inline void sl_fence_wait(SL_Fence* fence) {
+	pthread_mutex_lock(&fence->mutex);
+	while (!fence->ready) {
+		pthread_cond_wait(&fence->cond, &fence->mutex);
+	}
+	fence->ready = false;
+	pthread_mutex_unlock(&fence->mutex);
+}
+sl_inline void sl_fence_signal(SL_Fence* fence) {
+	pthread_mutex_lock(&fence->mutex);
+	fence->ready = true;
+	pthread_cond_signal(&fence->cond);
+	pthread_mutex_unlock(&fence->mutex);
+}
+sl_inline void sl_fence_destroy(SL_Fence* fence) {
+	pthread_cond_destroy(&fence->cond);
+	pthread_mutex_destroy(&fence->mutex);
+	*fence = (SL_Fence){0};
+}
 
 // Thread
 typedef struct SL_Thread {
