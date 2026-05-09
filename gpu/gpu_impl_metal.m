@@ -323,6 +323,10 @@ void gpu_init(const Gpu_Desc* desc) {
 	gpu_log("Initialised with device '%s', using Metal backend.", device_name);
 }
 
+void gpu_deinit() {
+	// todo
+}
+
 void gpu_init_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 	*command_buffer = (Gpu_Command_Buffer_Data) {
 		.state = Gpu_Command_Buffer_State_Idle,
@@ -991,6 +995,10 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 	Gpu_Shader_Blob_Data* vert_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->vertex_blob);
 	Gpu_Shader_Blob_Data* frag_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->fragment_blob);
 
+	if ((vert_blob_data == NULL) || (frag_blob_data == NULL)) {
+		return SL_HANDLE_NULL;
+	}
+
 	id<MTLFunction> vert_function = [vert_blob_data->library newFunctionWithName:[NSString stringWithCString:desc->vertex_entry_point encoding:NSUTF8StringEncoding]];
 	if (!vert_function) {
 		return SL_HANDLE_NULL;
@@ -1021,6 +1029,9 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 // Compute
 Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* desc) {
 	Gpu_Shader_Blob_Data* blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->blob);
+	if (blob_data == NULL) {
+		return SL_HANDLE_NULL;
+	}
 
 	id<MTLFunction> function = [blob_data->library newFunctionWithName:[NSString stringWithCString:desc->entry_point encoding:NSUTF8StringEncoding]];
 	if (!function) {
@@ -1217,8 +1228,12 @@ void gpu_signal_cpu(Gpu_Semaphore semaphore, u64 value) {
 }
 
 // Shader Blob
-Gpu_Shader_Blob gpu_new_shader_blob(Immutable_Buffer buffer) {
-	dispatch_data_t buffer_data = dispatch_data_create(buffer.data, buffer.size, nil, ^{});
+Gpu_Shader_Blob gpu_new_shader_blob(const Gpu_Shader_Blob_Desc* desc) {
+    if (desc->metallib.size == 0) {
+        return SL_HANDLE_NULL;
+    }
+
+	dispatch_data_t buffer_data = dispatch_data_create(desc->metallib.data, desc->metallib.size, nil, ^{});
 	id<MTLLibrary> library = [gpu.device newLibraryWithData:buffer_data error:nil];
 	if (library == nil) {
 		return SL_HANDLE_NULL;

@@ -2669,7 +2669,7 @@ sl_inline bool sl_handle_is_null(SL_Handle handle) {
 	}\
 	sl_inline element* sl_concat(function_prefix, _resolve)(type* p, SL_Handle handle) {\
 		const u32 segment_index = handle.index >> SL_THREADSAFE_POOL_SEGMENT_SIZE_EXP;\
-		if (segment_index > p->segment_count) {\
+		if (segment_index >= p->segment_count) {\
 			return NULL;\
 		}\
 		element* e = &p->segments[segment_index][handle.index & (SL_THREADSAFE_POOL_SEGMENT_SIZE - 1)];\

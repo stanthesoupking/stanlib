@@ -504,7 +504,7 @@ bool gpu_new_vk_surface_for_surface(Gpu_Surface surface, VkSurfaceKHR* out_vk_su
 
 			const VkMetalSurfaceCreateInfoEXT create_info = {
 				.sType = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT,
-				.pLayer = surface.metal_layer.metal_layer,
+				.pLayer = (__bridge CAMetalLayer*)surface.metal_layer.metal_layer,
 				.flags = 0,
 				.pNext = NULL,
 			};
@@ -2421,15 +2421,19 @@ void gpu_transition_texture_layouts(Gpu_Command_Buffer cb, const Gpu_Texture* te
 }
 
 // Shader Blob
-Gpu_Shader_Blob gpu_new_shader_blob(Immutable_Buffer buffer) {
-	gpu_validate((u64)buffer.data % sl_align_of(u32) == 0, "SPIR-V must be aligned to u32.");
-	gpu_validate((u64)buffer.size % sizeof(u32) == 0, "SPIR-V must be a multiple of u32.");
+Gpu_Shader_Blob gpu_new_shader_blob(const Gpu_Shader_Blob_Desc* desc) {
+    if (desc->spv.size == 0) {
+        return SL_HANDLE_NULL;
+    }
+
+	gpu_validate((u64)desc->spv.data % sl_align_of(u32) == 0, "SPIR-V must be aligned to u32.");
+	gpu_validate((u64)desc->spv.size % sizeof(u32) == 0, "SPIR-V must be a multiple of u32.");
 
 	VkShaderModule module;
 	const VkShaderModuleCreateInfo module_create_info = {
 		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-		.pCode = buffer.data,
-		.codeSize = buffer.size,
+		.pCode = desc->spv.data,
+		.codeSize = desc->spv.size,
 	};
 	VkResult create_module_result = vkCreateShaderModule(gpu.device, &module_create_info, NULL, &module);
 	if (create_module_result != VK_SUCCESS) {
@@ -2597,6 +2601,9 @@ VkCullModeFlags gpu_cull_mode_to_vk_cull_mode_flags(Gpu_Cull_Mode cull_mode) {
 Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc) {
 	Gpu_Shader_Blob_Data* vertex_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->vertex_blob);
 	Gpu_Shader_Blob_Data* fragment_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->fragment_blob);
+	if ((vertex_blob_data == NULL) || (fragment_blob_data == NULL)) {
+		return SL_HANDLE_NULL;
+	}
 
 	Gpu_Render_Pipeline pipeline = gpu_render_pipeline_pool_acquire(&gpu.render_pipeline_pool);
 	Gpu_Render_Pipeline_Data* pipeline_data = gpu_render_pipeline_pool_resolve(&gpu.render_pipeline_pool, pipeline);
@@ -2711,6 +2718,9 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 
 Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* desc) {
 	Gpu_Shader_Blob_Data* blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->blob);
+	if (blob_data == NULL) {
+		return SL_HANDLE_NULL;
+	}
 
 	Gpu_Compute_Pipeline pipeline = gpu_compute_pipeline_pool_acquire(&gpu.compute_pipeline_pool);
 	Gpu_Compute_Pipeline_Data* pipeline_data = gpu_compute_pipeline_pool_resolve(&gpu.compute_pipeline_pool, pipeline);

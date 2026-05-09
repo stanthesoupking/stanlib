@@ -320,7 +320,11 @@ void gpu_add_on_complete_callback(Gpu_Command_Buffer cb, void* ctx, Gpu_Callback
 void gpu_transition_texture_layouts(Gpu_Command_Buffer cb, const Gpu_Texture* textures, const Gpu_Texture_Layout* layouts, u32 count);
 
 // Shader Blob
-Gpu_Shader_Blob gpu_new_shader_blob(Immutable_Buffer buffer);
+typedef struct Gpu_Shader_Blob_Desc {
+    Immutable_Buffer spv;
+    Immutable_Buffer metallib;
+} Gpu_Shader_Blob_Desc;
+Gpu_Shader_Blob gpu_new_shader_blob(const Gpu_Shader_Blob_Desc* desc);
 void gpu_destroy_shader_blob(Gpu_Shader_Blob blob);
 
 // Render
