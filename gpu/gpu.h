@@ -206,11 +206,6 @@ typedef enum Gpu_Memory_Type {
 } Gpu_Memory_Type;
 #define Gpu_Memory_Type_Count 2
 
-typedef struct Gpu_Code {
-	const u32* code;
-	u64 size;
-} Gpu_Code;
-
 typedef enum Gpu_Surface_Kind {
 	Gpu_Surface_Kind_None,
 	Gpu_Surface_Kind_Metal_Layer,
@@ -358,7 +353,7 @@ typedef struct Gpu_Compute_Pipeline_Desc {
 
 	const Gpu_Layout_Binding* bindings;
 	u32 binding_count;
-	
+
 	vec3_u32 group_size;
 } Gpu_Compute_Pipeline_Desc;
 Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* desc);

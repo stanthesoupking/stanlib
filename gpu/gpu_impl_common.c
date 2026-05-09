@@ -1,3 +1,5 @@
+#include "gpu.h"
+
 #define GPU_LOGGING 1
 #define GPU_VALIDATION 1
 
@@ -40,10 +42,10 @@ sl_inline u8 gpu_bytes_per_pixel_for_format(Gpu_Format format) {
 		case Gpu_Format_BGRA8_Unorm:
 		case Gpu_Format_BGRA8_sRGB:
 			return 4;
-			
+
 		case Gpu_Format_RGBA16_Float:
 			return 8;
-			
+
 		case Gpu_Format_RGBA32_Float:
 			return 16;
 	}
