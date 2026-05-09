@@ -106,6 +106,9 @@ typedef vector<float, 4> vec4_f32;
 
 typedef float4x4 mat4x4_f32;
 #elif defined(__METAL_VERSION__)
+#include <metal_stdlib>
+using namespace metal;
+
 #define sl_shared_struct(name) typedef struct name name; struct name
 #define sl_shared_enum(name) typedef enum name name; enum name
 
@@ -2957,6 +2960,25 @@ sl_inline bool sl_get_application_path(const char* subdirectory, const char* nam
 sl_inline bool sl_get_application_path(const char* subdirectory, const char* name, const char* ext, u32 out_path_length, char* out_path) {
 	return false;
 }
+#endif
+
+typedef struct SL_Autorelease_Pool {
+	void* ptr;
+} SL_Autorelease_Pool;
+
+#if defined(SL_PLATFORM_APPLE)
+extern void *objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void *pool);
+sl_inline void sl_autorelease_pool_begin(SL_Autorelease_Pool* pool) {
+    pool->ptr = objc_autoreleasePoolPush();
+}
+sl_inline void sl_autorelease_pool_end(SL_Autorelease_Pool* pool) {
+    objc_autoreleasePoolPop(pool->ptr);
+    pool->ptr = NULL;
+}
+#else
+sl_inline void sl_autorelease_pool_begin(SL_Autorelease_Pool* pool) {}
+sl_inline void sl_autorelease_pool_end(SL_Autorelease_Pool* pool) {}
 #endif
 
 #endif

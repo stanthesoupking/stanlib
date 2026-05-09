@@ -2051,7 +2051,7 @@ void gpu_flush_command_buffer_emitter(Gpu_Command_Buffer_Emitter* emitter) {
 	sl_arena_allocator_reset(arena, arena_reset_position);
 }
 VkCommandBuffer gpu_fetch_command_buffer_emitter(Gpu_Command_Buffer_Emitter* emitter) {
-	const u32 signal_count = gpu_command_buffer_emitter_semaphore_seq_get_count(&emitter->signal);
+	const u64 signal_count = gpu_command_buffer_emitter_semaphore_seq_get_count(&emitter->signal);
 	if ((emitter->cb != VK_NULL_HANDLE) && (signal_count > 0)) {
 		gpu_flush_command_buffer_emitter(emitter);
 	}
@@ -2470,7 +2470,7 @@ bool gpu_fetch_swapchain_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb,
 			// Return unused semaphore.
 			cb_data->next_free_semaphore--;
 			return false;
-		} else if (acquire_image_result == VK_SUCCESS) {
+		} else if ((acquire_image_result == VK_SUCCESS) || (acquire_image_result == VK_SUBOPTIMAL_KHR)) {
 			break;
 		}
 	}

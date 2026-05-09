@@ -716,8 +716,8 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 
 	const u64 present_count = gpu_swapchain_present_seq_get_count(&cb_data->swapchain_presents);
 	for (u64 present_idx = 0; present_idx < present_count; present_idx++) {
-		const Gpu_Swapchain_Present present = gpu_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
-		id<CAMetalDrawable> drawable = (__bridge_transfer id<CAMetalDrawable>)present.drawable;
+		Gpu_Swapchain_Present* present = gpu_swapchain_present_seq_get_ptr(&cb_data->swapchain_presents, present_idx);
+		id<CAMetalDrawable> drawable = (__bridge_transfer id<CAMetalDrawable>)present->drawable;
 		[drawable present];
 	}
 	gpu_swapchain_present_seq_clear(&cb_data->swapchain_presents);
