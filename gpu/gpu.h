@@ -12,6 +12,7 @@ typedef SL_Handle Gpu_Render_Pipeline;
 typedef SL_Handle Gpu_Compute_Pipeline;
 typedef SL_Handle Gpu_Swapchain;
 typedef SL_Handle Gpu_Semaphore;
+typedef SL_Handle Gpu_Shader_Blob;
 
 typedef void (*Gpu_Callback_Fn)(void* ctx);
 
@@ -130,6 +131,7 @@ typedef struct Gpu_Render_Pass_Values {
 	u8 attachment_count;
 } Gpu_Render_Pass_Values;
 
+// Slice
 typedef struct Gpu_Slice {
 	Gpu_Heap heap;
 	u64 offset;
@@ -201,8 +203,8 @@ typedef struct Gpu_Layout_Binding {
 typedef enum Gpu_Memory_Type {
 	Gpu_Memory_Type_Host_Visible,
 	Gpu_Memory_Type_Device_Local,
-	Gpu_Memory_Type_Count
 } Gpu_Memory_Type;
+#define Gpu_Memory_Type_Count 2
 
 typedef struct Gpu_Code {
 	const u32* code;
@@ -278,7 +280,7 @@ typedef struct Gpu_Texture_Desc {
 Gpu_Size_And_Align gpu_size_and_align_for_texture(const Gpu_Texture_Desc* desc);
 Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice);
 void gpu_destroy_texture(Gpu_Texture texture);
-vec3_u32 gpu_get_texture_size(Gpu_Texture texture);
+const Gpu_Texture_Desc* gpu_get_texture_desc(Gpu_Texture texture);
 
 // Heap
 Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type);
@@ -313,6 +315,10 @@ void gpu_add_on_complete_callback(Gpu_Command_Buffer cb, void* ctx, Gpu_Callback
 
 void gpu_transition_texture_layouts(Gpu_Command_Buffer cb, const Gpu_Texture* textures, const Gpu_Texture_Layout* layouts, u32 count);
 
+// Shader Blob
+Gpu_Shader_Blob gpu_new_shader_blob(Immutable_Buffer buffer);
+void gpu_destroy_shader_blob(Gpu_Shader_Blob blob);
+
 // Render
 void gpu_begin_render(Gpu_Command_Buffer cb, const Gpu_Render_Pass_Layout* layout, const Gpu_Render_Pass_Values* values);
 void gpu_end_render(Gpu_Command_Buffer cb);
@@ -323,8 +329,8 @@ typedef struct Gpu_Render_Pipeline_Desc {
 
 	Gpu_Render_Pass_Layout render_pass_layout;
 
-	Gpu_Code vertex_code;
-	Gpu_Code fragment_code;
+	Gpu_Shader_Blob vertex_blob;
+	Gpu_Shader_Blob fragment_blob;
 
 	const char* vertex_entry_point;
 	const char* fragment_entry_point;
@@ -347,11 +353,13 @@ void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Draw_Desc* desc);
 
 // Compute
 typedef struct Gpu_Compute_Pipeline_Desc {
-	Gpu_Code code;
+	Gpu_Shader_Blob blob;
 	const char* entry_point;
 
 	const Gpu_Layout_Binding* bindings;
 	u32 binding_count;
+	
+	vec3_u32 group_size;
 } Gpu_Compute_Pipeline_Desc;
 Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* desc);
 

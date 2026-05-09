@@ -1517,6 +1517,8 @@ void gpu_init(const Gpu_Desc* desc) {
 	gpu_init_device(desc);
 	gpu_init_resource_pools();
 	gpu.global_semaphore = gpu_new_semaphore();
+	
+	gpu_log("Initialised using Vulkan backend.");
 }
 void gpu_deinit() {
 	gpu_log("Deinit");
@@ -2223,7 +2225,6 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 					.maxDepth = 1.0f,
 				};
 				vkCmdSetViewport(vk_cb, 0, 1, &viewport);
-
 			} break;
 
 			case Gpu_Command_Kind_End_Render: {
@@ -2806,7 +2807,7 @@ Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* d
 }
 
 void gpu_draw(Gpu_Command_Buffer cb, const Gpu_Draw_Desc* desc) {
-	gpu_validate(gpu_compute_pipeline_pool_resolve(&gpu.compute_pipeline_pool, desc->pipeline), "Invalid pipeline.");
+	gpu_validate(gpu_render_pipeline_pool_resolve(&gpu.render_pipeline_pool, desc->pipeline), "Invalid pipeline.");
 
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	gpu_validate(cb_data, "Invalid command buffer.");

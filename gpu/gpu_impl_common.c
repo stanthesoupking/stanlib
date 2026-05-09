@@ -1,5 +1,5 @@
 #define GPU_LOGGING 1
-#define GPU_VALIDATION 0
+#define GPU_VALIDATION 1
 
 #if GPU_LOGGING
 	#define gpu_log(fmt, ...) \
@@ -32,3 +32,19 @@ typedef enum Gpu_Command_Buffer_State {
 	Gpu_Command_Buffer_State_Recording,
 	Gpu_Command_Buffer_State_Enqueued
 } Gpu_Command_Buffer_State;
+
+sl_inline u8 gpu_bytes_per_pixel_for_format(Gpu_Format format) {
+	switch (format) {
+		case Gpu_Format_RGBA8_Unorm:
+		case Gpu_Format_RGBA8_sRGB:
+		case Gpu_Format_BGRA8_Unorm:
+		case Gpu_Format_BGRA8_sRGB:
+			return 4;
+			
+		case Gpu_Format_RGBA16_Float:
+			return 8;
+			
+		case Gpu_Format_RGBA32_Float:
+			return 16;
+	}
+}

@@ -2163,6 +2163,39 @@ sl_inline mat4x4_f64 rotate_z_mat4x4_f64(f64 angle) {
 	};
 }
 
+sl_inline vec4_f32 sl_hsba_to_rgba_f32(f32 h, f32 s, f32 v, f32 a) {
+	f32 r, g, b;
+	if (s <= 0.0f) {
+		r = g = b = v;
+		return (vec4_f32){ r, g, b, a };
+	}
+
+	h = fmodf(h, 360.0f);
+	if (h < 0.0f) {
+		h += 360.0f;
+	}
+
+	f32 hf = h / 60.0f;
+	s32 i = (s32)floorf(hf);
+	f32 f = hf - i;
+
+	f32 p = v * (1.0f - s);
+	f32 q = v * (1.0f - s * f);
+	f32 t = v * (1.0f - s * (1.0f - f));
+
+	switch (i) {
+		default:
+		case 0: r = v; g = t; b = p; break;
+		case 1: r = q; g = v; b = p; break;
+		case 2: r = p; g = v; b = t; break;
+		case 3: r = p; g = q; b = v; break;
+		case 4: r = t; g = p; b = v; break;
+		case 5: r = v; g = p; b = q; break;
+	}
+
+	return (vec4_f32) { r, g, b, a };
+}
+
 typedef struct Box_f32 {
 	vec3_f32 start;
 	vec3_f32 end;
@@ -2826,17 +2859,59 @@ sl_inline void* sl_thread_join(SL_Thread* thread) {
 	return ret;
 }
 
+sl_inline bool sl_read_file(Allocator* allocator, const char* path, Mutable_Buffer* out_buffer) {
+	FILE* file = fopen(path, "rb");
+	if (file == NULL) {
+		return false;
+	}
+	
+	if (fseek(file, 0, SEEK_END) != 0) {
+		fclose(file);
+		return false;
+	}
+	
+	const s64 len = ftell(file);
+	if (len < 0) {
+		fclose(file);
+		return false;
+	}
+	
+	rewind(file);
+	
+	u8* bytes;
+	allocator_new(allocator, bytes, len);
+	
+	const u64 read_count = fread(bytes, 1, (size_t)len, file);
+	if (read_count != len) {
+		allocator_free(allocator, bytes, len);
+		fclose(file);
+		return false;
+	}
+	
+	*out_buffer = (Mutable_Buffer) {
+		.data = bytes,
+		.size = read_count,
+	};
+	
+	fclose(file);
+	return true;
+}
+
 #if defined(SL_PLATFORM_APPLE)
 #include <CoreFoundation/CoreFoundation.h>
 sl_inline bool sl_get_application_path(const char* subdirectory, const char* name, const char* ext, u32 out_path_length, char* out_path) {
     CFBundleRef main_bundle = CFBundleGetMainBundle();
 
-	CFStringRef cf_subdirectory = CFStringCreateWithCString(NULL, subdirectory, kCFStringEncodingUTF8);
+	CFStringRef cf_subdirectory = subdirectory ? CFStringCreateWithCString(NULL, subdirectory, kCFStringEncodingUTF8) : NULL;
 	CFStringRef cf_name = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
 	CFStringRef cf_ext = CFStringCreateWithCString(NULL, ext, kCFStringEncodingUTF8);
 
 	CFURLRef url = CFBundleCopyResourceURL(main_bundle, cf_name, cf_ext, cf_subdirectory);
-	CFRelease(cf_subdirectory);
+	
+	if (cf_subdirectory != NULL) {
+		CFRelease(cf_subdirectory);
+	}
+	
 	CFRelease(cf_name);
 	CFRelease(cf_ext);
 
@@ -2866,7 +2941,12 @@ sl_inline bool sl_get_application_path(const char* subdirectory, const char* nam
 
     char* application_dir = dirname(application_path);
 
-    int written_length = snprintf(out_path, out_path_length, "%s/%s/%s.%s", application_dir, subdirectory, name, ext);
+	s32 written_length;
+	if (subdirectory) {
+		written_length = snprintf(out_path, out_path_length, "%s/%s/%s.%s", application_dir, subdirectory, name, ext);
+	} else {
+		written_length = snprintf(out_path, out_path_length, "%s/%s.%s", application_dir, name, ext);
+	}
     if (written_length > out_path_length - 1) {
     	return false;
     }
