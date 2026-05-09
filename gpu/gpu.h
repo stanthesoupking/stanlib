@@ -2,6 +2,15 @@
 
 #include "core.h"
 
+#define GPU_BACKEND_VULKAN 1
+#define GPU_BACKEND_METAL 2
+
+#if defined(SL_PLATFORM_APPLE)
+#define GPU_BACKEND_DEFAULT GPU_BACKEND_METAL
+#else
+#define GPU_BACKEND_DEFAULT GPU_BACKEND_VULKAN
+#endif
+
 #define GPU_MAX_ATTACHMENTS 8
 
 typedef SL_Handle Gpu_Heap;

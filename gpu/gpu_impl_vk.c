@@ -1,5 +1,3 @@
-#include "core.h"
-#include "gpu_impl_common.c"
 #include "vulkan/vulkan_core.h"
 #include <vulkan/vulkan.h>
 

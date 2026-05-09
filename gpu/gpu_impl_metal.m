@@ -1,8 +1,3 @@
-#include "core.h"
-#include "gpu.h"
-
-#include "gpu_impl_common.c"
-
 #include <Metal/Metal.h>
 #include <QuartzCore/CAMetalLayer.h>
 
@@ -145,9 +140,9 @@ typedef struct Gpu_Command_Buffer_Data {
 
 typedef struct Gpu_Command_Buffer_Pool_Data {
 	u32 generation;
-	
+
 	u32 next_command_buffer;
-	
+
 	Gpu_Command_Buffer_Data* command_buffers;
 	u32 command_buffer_count;
 } Gpu_Command_Buffer_Pool_Data;
@@ -210,7 +205,7 @@ sl_inline Gpu_Texture_Kind gpu_mtl_texture_type_to_texture_kind(MTLTextureType k
 		case MTLTextureType1D: return Gpu_Texture_Kind_1D;
 		case MTLTextureType2D: return Gpu_Texture_Kind_2D;
 		case MTLTextureType3D: return Gpu_Texture_Kind_3D;
-			
+
 		default:
 			sl_abort("Unhandled type.");
 			return 0;
@@ -291,7 +286,7 @@ typedef struct Gpu {
 	id<MTLDevice> device;
 	id<MTLCommandQueue> queue;
 	id<MTLFence> fence;
-	
+
 	Gpu_Sampler_Pool sampler_pool;
 	Gpu_Heap_Pool heap_pool;
 	Gpu_Shader_Blob_Pool shader_blob_pool;
@@ -301,7 +296,7 @@ typedef struct Gpu {
 	Gpu_Swapchain_Pool swapchain_pool;
 	Gpu_Texture_Pool texture_pool;
 	Gpu_Command_Buffer_Pool_Pool command_pool_pool;
-	
+
 	Gpu_Semaphore global_semaphore;
 } Gpu;
 
@@ -309,7 +304,7 @@ Gpu gpu = {0};
 
 void gpu_init(const Gpu_Desc* desc) {
 	gpu.allocator = desc->allocator;
-	
+
 	gpu.device = MTLCreateSystemDefaultDevice();
 	gpu.queue = [gpu.device newCommandQueue];
 	gpu.fence = [gpu.device newFence];
@@ -323,7 +318,7 @@ void gpu_init(const Gpu_Desc* desc) {
 	gpu.swapchain_pool = gpu_swapchain_pool_new(gpu.allocator);
 	gpu.command_pool_pool = gpu_command_buffer_pool_pool_new(gpu.allocator);
 	gpu.global_semaphore = gpu_new_semaphore();
-	
+
 	const char* device_name = [gpu.device.name cStringUsingEncoding:NSUTF8StringEncoding];
 	gpu_log("Initialised with device '%s', using Metal backend.", device_name);
 }
@@ -353,13 +348,13 @@ void gpu_deinit_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 Gpu_Command_Buffer_Pool gpu_new_command_buffer_pool(u32 size) {
 	Gpu_Command_Buffer_Pool pool = gpu_command_buffer_pool_pool_acquire(&gpu.command_pool_pool);
 	Gpu_Command_Buffer_Pool_Data* data = gpu_command_buffer_pool_pool_resolve(&gpu.command_pool_pool, pool);
-	
+
 	data->command_buffer_count = size;
 	allocator_new(gpu.allocator, data->command_buffers, size);
 	for (u32 i = 0; i < size; i++) {
 		gpu_init_command_buffer(&data->command_buffers[i]);
 	}
-	
+
 	return pool;
 }
 void gpu_destroy_command_buffer_pool(Gpu_Command_Buffer_Pool pool) {
@@ -408,21 +403,21 @@ bool gpu_new_command_buffer(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* ou
 }
 void gpu_cleanup_command_buffer(Gpu_Command_Buffer cb) {
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
-	
+
 	const u64 cleanup_count = gpu_texture_seq_get_count(&cb_data->cleanup_textures);
 	for (u64 i = 0; i < cleanup_count; i++) {
 		Gpu_Texture texture = gpu_texture_seq_get(&cb_data->cleanup_textures, i);
 		gpu_destroy_texture(texture);
 	}
 	gpu_texture_seq_clear(&cb_data->cleanup_textures);
-	
+
 	const u64 callback_count = gpu_callback_seq_get_count(&cb_data->on_complete_callbacks);
 	for (u64 i = 0; i < callback_count; i++) {
 		Gpu_Callback callback = gpu_callback_seq_get(&cb_data->on_complete_callbacks, i);
 		callback.fn(callback.ctx);
 	}
 	gpu_callback_seq_clear(&cb_data->on_complete_callbacks);
-	
+
 	sl_fence_signal(&cb_data->completion_fence);
 }
 
@@ -455,17 +450,17 @@ void gpu_end_current_encoder(Gpu_Encoder_State* state) {
 		case Gpu_Encoder_Kind_None: {
 			// Nothing to end.
 		} break;
-			
+
 		case Gpu_Encoder_Kind_Render: {
 			[state->render_encoder endEncoding];
 			state->render_encoder = nil;
 		} break;
-			
+
 		case Gpu_Encoder_Kind_Compute: {
 			[state->compute_encoder endEncoding];
 			state->compute_encoder = nil;
 		} break;
-			
+
 		case Gpu_Encoder_Kind_Blit: {
 			[state->blit_encoder endEncoding];
 			state->blit_encoder = nil;
@@ -476,25 +471,25 @@ void gpu_end_current_encoder(Gpu_Encoder_State* state) {
 void gpu_start_render_encoder(Gpu_Encoder_State* state, const Gpu_Render_Pass_Layout* layout, const Gpu_Render_Pass_Values* values) {
 	gpu_end_current_encoder(state);
 	state->current = Gpu_Encoder_Kind_Render;
-	
+
 	MTLRenderPassDescriptor* pass_desc = [MTLRenderPassDescriptor new];
 	for (u32 i = 0; i < values->attachment_count; i++) {
 		const Gpu_Render_Pass_Layout_Attachment* layout_att = &layout->attachments[i];
 		const Gpu_Render_Pass_Values_Attachment* values_att = &values->attachments[i];
-		
+
 		const Gpu_Texture_Data* texture_data = gpu_texture_pool_resolve(&gpu.texture_pool, values_att->texture);
 		pass_desc.colorAttachments[i].texture = texture_data->texture;
 		pass_desc.colorAttachments[i].loadAction = gpu_load_op_to_mtl_load_action(layout_att->load_op);
 		pass_desc.colorAttachments[i].storeAction = gpu_store_op_to_mtl_store_action(layout_att->store_op);
 		pass_desc.colorAttachments[i].clearColor = MTLClearColorMake(values_att->clear_value.x, values_att->clear_value.y, values_att->clear_value.z, values_att->clear_value.w);
 	}
-	
+
 	state->render_encoder = [state->command_buffer renderCommandEncoderWithDescriptor:pass_desc];
 	[state->render_encoder waitForFence:gpu.fence beforeStages:(MTLRenderStageVertex | MTLRenderStageFragment)];
 	[state->render_encoder updateFence:gpu.fence afterStages:(MTLRenderStageVertex | MTLRenderStageFragment)];
-	
+
 	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(values->attachments[0].texture);
-	
+
 	// flip viewport for consistency with Vulkan.
 	const MTLViewport vp = {
 		.originX = 0,
@@ -512,7 +507,7 @@ void gpu_start_compute_encoder(Gpu_Encoder_State* state) {
 	}
 	gpu_end_current_encoder(state);
 	state->current = Gpu_Encoder_Kind_Compute;
-	
+
 	state->compute_encoder = [state->command_buffer computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent];
 	[state->compute_encoder waitForFence:gpu.fence];
 	[state->compute_encoder updateFence:gpu.fence];
@@ -523,7 +518,7 @@ void gpu_start_blit_encoder(Gpu_Encoder_State* state) {
 	}
 	gpu_end_current_encoder(state);
 	state->current = Gpu_Encoder_Kind_Blit;
-	
+
 	state->blit_encoder = [state->command_buffer blitCommandEncoder];
 	[state->blit_encoder waitForFence:gpu.fence];
 	[state->blit_encoder updateFence:gpu.fence];
@@ -533,11 +528,11 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 	cb_data->state = Gpu_Command_Buffer_State_Enqueued;
-	
+
 	id<MTLCommandBuffer> mtl_cb = [gpu.queue commandBufferWithUnretainedReferences];
-	
+
 	Gpu_Encoder_State encoder_state = gpu_new_encoder_state(mtl_cb);
-	
+
 	const u64 command_count = gpu_command_seq_get_count(&cb_data->commands);
 	for (u64 command_idx = 0; command_idx < command_count; command_idx++) {
 		const Gpu_Command command = gpu_command_seq_get(&cb_data->commands, command_idx);
@@ -563,7 +558,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 
 				const Gpu_Draw_Desc* draw = &command.data.draw->desc;
 				Gpu_Render_Pipeline_Data* pipeline_data = gpu_render_pipeline_pool_resolve(&gpu.render_pipeline_pool, draw->pipeline);
-				
+
 				// apply bindings
 				for (u32 i = 0; i < draw->binding_count; i++) {
 					const Gpu_Binding binding = draw->bindings[i];
@@ -574,13 +569,13 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 							[encoder setVertexTexture:texture_data->texture atIndex:i];
 							[encoder setFragmentTexture:texture_data->texture atIndex:i];
 						} break;
-							
+
 						case Gpu_Binding_Kind_Sampler: {
 							Gpu_Sampler_Data* sampler_data = gpu_sampler_pool_resolve(&gpu.sampler_pool, binding.sampler);
 							[encoder setVertexSamplerState:sampler_data->sampler atIndex:i];
 							[encoder setFragmentSamplerState:sampler_data->sampler atIndex:i];
 						} break;
-							
+
 						case Gpu_Binding_Kind_Slice: {
 							Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, binding.slice.heap);
 							[encoder setVertexBuffer:heap_data->buffer offset:binding.slice.offset atIndex:i];
@@ -588,10 +583,10 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 						} break;
 					}
 				}
-				
+
 				[encoder setRenderPipelineState:pipeline_data->pipeline_state];
 				[encoder setCullMode:gpu_cull_mode_to_mtl_cull_mode(pipeline_data->cull_mode)];
-				
+
 				const MTLPrimitiveType primitive_type = gpu_primitive_kind_to_mtl_primitive_type(pipeline_data->primitive_kind);
 				[encoder drawPrimitives:primitive_type vertexStart:0 vertexCount:draw->vertex_count instanceCount:draw->instance_count];
 			} break;
@@ -602,10 +597,10 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 				sl_assert(encoder_state.current != Gpu_Encoder_Kind_Render, "Must end render before compute dispatch.");
 				gpu_start_compute_encoder(&encoder_state);
 				id<MTLComputeCommandEncoder> encoder = encoder_state.compute_encoder;
-				
+
 				Gpu_Compute_Pipeline_Data* pipeline_data = gpu_compute_pipeline_pool_resolve(&gpu.compute_pipeline_pool, dispatch->pipeline);
 				[encoder setComputePipelineState:pipeline_data->pipeline_state];
-				
+
 				// apply bindings
 				for (u32 i = 0; i < dispatch->binding_count; i++) {
 					const Gpu_Binding binding = dispatch->bindings[i];
@@ -615,19 +610,19 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 							Gpu_Texture_Data* texture_data = gpu_texture_pool_resolve(&gpu.texture_pool, binding.texture);
 							[encoder setTexture:texture_data->texture atIndex:i];
 						} break;
-							
+
 						case Gpu_Binding_Kind_Sampler: {
 							Gpu_Sampler_Data* sampler_data = gpu_sampler_pool_resolve(&gpu.sampler_pool, binding.sampler);
 							[encoder setSamplerState:sampler_data->sampler atIndex:i];
 						} break;
-							
+
 						case Gpu_Binding_Kind_Slice: {
 							Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, binding.slice.heap);
 							[encoder setBuffer:heap_data->buffer offset:binding.slice.offset atIndex:i];
 						} break;
 					}
 				}
-				
+
 				const MTLSize groups = MTLSizeMake(dispatch->group_count.x, dispatch->group_count.y, dispatch->group_count.z);
 				const MTLSize group_size = MTLSizeMake(pipeline_data->group_size.x, pipeline_data->group_size.y, pipeline_data->group_size.z);
 				[encoder dispatchThreadgroups:groups threadsPerThreadgroup:group_size];
@@ -636,7 +631,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 			case Gpu_Command_Kind_Copy_Texture: {
 				sl_assert(encoder_state.current != Gpu_Encoder_Kind_Render, "Must end render before copy.");
 				gpu_start_blit_encoder(&encoder_state);
-				
+
 				const Gpu_Copy_Texture_Desc* copy = &command.data.copy_texture->desc;
 				Gpu_Texture_Data* src_data = gpu_texture_pool_resolve(&gpu.texture_pool, copy->src);
 				Gpu_Texture_Data* dst_data = gpu_texture_pool_resolve(&gpu.texture_pool, copy->dst);
@@ -644,7 +639,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 				const MTLSize src_size = MTLSizeMake(copy->src_end.x - copy->src_start.x,
 														copy->src_end.y - copy->src_start.y,
 														copy->src_end.z - copy->src_start.z);
-				
+
 				[encoder_state.blit_encoder copyFromTexture:src_data->texture
 												sourceSlice:copy->src_array_layer
 												sourceLevel:copy->src_mip_level
@@ -677,7 +672,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 				const MTLSize dst_size = MTLSizeMake(copy->dst_end.x - copy->dst_start.x,
 												 copy->dst_end.y - copy->dst_start.y,
 												 copy->dst_end.z - copy->dst_start.z);
-				
+
 				const u64 src_bytes_per_row = copy->src_row_length * gpu_bytes_per_pixel_for_format(dst_data->desc.format);
 				const u64 src_bytes_per_image = src_bytes_per_row * dst_size.height;
 
@@ -711,10 +706,10 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 			} break;
 		}
 	}
-	
+
 	gpu_end_current_encoder(&encoder_state);
 	gpu_destroy_encoder_state(&encoder_state);
-	
+
 	const u64 present_count = gpu_swapchain_present_seq_get_count(&cb_data->swapchain_presents);
 	for (u64 present_idx = 0; present_idx < present_count; present_idx++) {
 		const Gpu_Swapchain_Present present = gpu_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
@@ -722,13 +717,13 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 		[drawable present];
 	}
 	gpu_swapchain_present_seq_clear(&cb_data->swapchain_presents);
-	
+
 	[mtl_cb addCompletedHandler:^(id<MTLCommandBuffer> mtl_cb1) {
 		gpu_cleanup_command_buffer(cb);
 	}];
 
 	[mtl_cb commit];
-	
+
 	if (wait_until_completed) {
 		[mtl_cb waitUntilCompleted];
 	}
@@ -737,7 +732,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 void gpu_add_on_complete_callback(Gpu_Command_Buffer cb, void* ctx, Gpu_Callback_Fn fn) {
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
-	
+
 	const Gpu_Callback callback = {
 		.ctx = ctx,
 		.fn = fn,
@@ -756,32 +751,32 @@ Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type) {
 		case Gpu_Memory_Type_Device_Local: {
 			resource_options = MTLResourceStorageModePrivate;
 		} break;
-			
+
 		case Gpu_Memory_Type_Host_Visible: {
 			resource_options = MTLResourceStorageModeShared;
 		} break;
 	}
-	
+
 	MTLHeapDescriptor* descriptor = [MTLHeapDescriptor new];
 	descriptor.size = bytes;
 	descriptor.hazardTrackingMode = MTLHazardTrackingModeUntracked;
 	descriptor.type = MTLHeapTypePlacement;
 	descriptor.resourceOptions = resource_options;
-	
+
 	id<MTLHeap> mtl_heap = [gpu.device newHeapWithDescriptor:descriptor];
 	id<MTLBuffer> mtl_buffer = [mtl_heap newBufferWithLength:bytes options:resource_options offset:0];
-	
+
 	void* host_ptr;
 	switch (memory_type) {
 		case Gpu_Memory_Type_Device_Local: {
 			host_ptr = NULL;
 		} break;
-			
+
 		case Gpu_Memory_Type_Host_Visible: {
 			host_ptr = mtl_buffer.contents;
 		} break;
 	}
-	
+
 	Gpu_Heap result = gpu_heap_pool_acquire(&gpu.heap_pool);
 	Gpu_Heap_Data* data = gpu_heap_pool_resolve(&gpu.heap_pool, result);
 	data->size = bytes;
@@ -813,7 +808,7 @@ void* gpu_get_slice_host_ptr(Gpu_Slice slice) {
 		case Gpu_Memory_Type_Host_Visible: {
 			return (u8*)data->host_ptr + slice.offset;
 		} break;
-			
+
 		case Gpu_Memory_Type_Device_Local: {
 			return NULL;
 		} break;
@@ -835,13 +830,13 @@ MTLSamplerDescriptor* gpu_sampler_desc_to_mtl_sampler_descriptor(const Gpu_Sampl
 	result.sAddressMode = gpu_sampler_address_mode_to_mtl_sampler_address_mode(desc->address_mode_x);
 	result.tAddressMode = gpu_sampler_address_mode_to_mtl_sampler_address_mode(desc->address_mode_y);
 	result.rAddressMode = gpu_sampler_address_mode_to_mtl_sampler_address_mode(desc->address_mode_z);
-	result.normalizedCoordinates = (desc->coordinate == Gpu_Sampler_Coordinate_Normalised);	
+	result.normalizedCoordinates = (desc->coordinate == Gpu_Sampler_Coordinate_Normalised);
 	return result;
 }
 Gpu_Sampler gpu_new_sampler(const Gpu_Sampler_Desc* desc) {
 	MTLSamplerDescriptor* mtl_desc = gpu_sampler_desc_to_mtl_sampler_descriptor(desc);
 	id<MTLSamplerState> sampler = [gpu.device newSamplerStateWithDescriptor:mtl_desc];
-	
+
 	Gpu_Sampler result = gpu_sampler_pool_acquire(&gpu.sampler_pool);
 	Gpu_Sampler_Data* data = gpu_sampler_pool_resolve(&gpu.sampler_pool, result);
 	data->sampler = sampler;
@@ -895,7 +890,7 @@ Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice) {
 	Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, slice.heap);
 	mtl_desc.storageMode = heap_data->heap.storageMode;
 	id<MTLTexture> mtl_texture = [heap_data->heap newTextureWithDescriptor:mtl_desc offset:slice.offset];
-	
+
 	Gpu_Texture result = gpu_texture_pool_acquire(&gpu.texture_pool);
 	Gpu_Texture_Data* data = gpu_texture_pool_resolve(&gpu.texture_pool, result);
 	data->texture = mtl_texture;
@@ -920,7 +915,7 @@ Gpu_Swapchain gpu_new_swapchain(Gpu_Surface surface) {
 	metal_layer.device = gpu.device;
 	swapchain_data->metal_layer = metal_layer;
 	swapchain_data->mutex = sl_mutex_new();
-	
+
 	return swapchain;
 }
 void gpu_destroy_swapchain(Gpu_Swapchain swapchain) {
@@ -932,35 +927,35 @@ void gpu_destroy_swapchain(Gpu_Swapchain swapchain) {
 bool gpu_fetch_swapchain_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb, Gpu_Swapchain_Desc swapchain_desc, u64 timeout, Gpu_Texture* out_texture) {
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
-	
+
 	Gpu_Swapchain_Data* swapchain_data = gpu_swapchain_pool_resolve(&gpu.swapchain_pool, swapchain);
-	
+
 	sl_mutex_lock(&swapchain_data->mutex);
 
 #warning temporary
 	swapchain_data->metal_layer.framebufferOnly = NO;
-	
+
 	swapchain_data->metal_layer.drawableSize = (CGSize) { swapchain_desc.size.x, swapchain_desc.size.y };
 	swapchain_data->metal_layer.pixelFormat = gpu_format_to_mtl_pixel_format(swapchain_desc.format);
 	id<CAMetalDrawable> drawable = [swapchain_data->metal_layer nextDrawable];
 	sl_mutex_unlock(&swapchain_data->mutex);
-	
+
 	if (drawable == nil) {
 		return false;
 	}
-	
+
 	Gpu_Texture texture = gpu_texture_pool_acquire(&gpu.texture_pool);
 	Gpu_Texture_Data* texture_data = gpu_texture_pool_resolve(&gpu.texture_pool, texture);
 	texture_data->texture = drawable.texture;
 	texture_data->desc = gpu_mtl_texture_get_texture_desc(drawable.texture);
 	*out_texture = texture;
 	gpu_texture_seq_push(&cb_data->cleanup_textures, texture);
-	
+
 	const Gpu_Swapchain_Present present = {
 		.drawable = (__bridge_retained void*)drawable,
 	};
 	gpu_swapchain_present_seq_push(&cb_data->swapchain_presents, present);
-	
+
 	return true;
 }
 
@@ -995,17 +990,17 @@ void gpu_end_render(Gpu_Command_Buffer cb) {
 Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc) {
 	Gpu_Shader_Blob_Data* vert_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->vertex_blob);
 	Gpu_Shader_Blob_Data* frag_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->fragment_blob);
-	
+
 	id<MTLFunction> vert_function = [vert_blob_data->library newFunctionWithName:[NSString stringWithCString:desc->vertex_entry_point encoding:NSUTF8StringEncoding]];
 	if (!vert_function) {
 		return SL_HANDLE_NULL;
 	}
-	
+
 	id<MTLFunction> frag_function = [frag_blob_data->library newFunctionWithName:[NSString stringWithCString:desc->fragment_entry_point encoding:NSUTF8StringEncoding]];
 	if (!frag_function) {
 		return SL_HANDLE_NULL;
 	}
-	
+
 	MTLRenderPipelineDescriptor* pipeline_desc = [MTLRenderPipelineDescriptor new];
 	pipeline_desc.vertexFunction = vert_function;
 	pipeline_desc.fragmentFunction = frag_function;
@@ -1013,7 +1008,7 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 	for (u8 i = 0; i < desc->render_pass_layout.attachment_count; i++) {
 		pipeline_desc.colorAttachments[i].pixelFormat = gpu_format_to_mtl_pixel_format(desc->render_pass_layout.attachments[i].format);
 	}
-	
+
 	id<MTLRenderPipelineState> pipeline_state = [gpu.device newRenderPipelineStateWithDescriptor:pipeline_desc error:nil];
 	Gpu_Render_Pipeline result = gpu_render_pipeline_pool_acquire(&gpu.render_pipeline_pool);
 	Gpu_Render_Pipeline_Data* data = gpu_render_pipeline_pool_resolve(&gpu.render_pipeline_pool, result);
@@ -1026,12 +1021,12 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 // Compute
 Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* desc) {
 	Gpu_Shader_Blob_Data* blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->blob);
-	
+
 	id<MTLFunction> function = [blob_data->library newFunctionWithName:[NSString stringWithCString:desc->entry_point encoding:NSUTF8StringEncoding]];
 	if (!function) {
 		return SL_HANDLE_NULL;
 	}
-	
+
 	id<MTLComputePipelineState> pipeline_state = [gpu.device newComputePipelineStateWithFunction:function error:nil];
 	if (!pipeline_state) {
 		return SL_HANDLE_NULL;
@@ -1111,7 +1106,7 @@ void gpu_copy_texture(Gpu_Command_Buffer cb, const Gpu_Copy_Texture_Desc* desc) 
 
 void gpu_copy_slice(Gpu_Command_Buffer cb, Gpu_Slice src, Gpu_Slice dst) {
 	gpu_validate(src.size == dst.size, "Sizes must match");
-	
+
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	gpu_validate(cb_data, "Invalid command buffer.");
 	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
@@ -1228,7 +1223,7 @@ Gpu_Shader_Blob gpu_new_shader_blob(Immutable_Buffer buffer) {
 	if (library == nil) {
 		return SL_HANDLE_NULL;
 	}
-	
+
 	Gpu_Shader_Blob blob = gpu_shader_blob_pool_acquire(&gpu.shader_blob_pool);
 	Gpu_Shader_Blob_Data* data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, blob);
 	data->library = library;
