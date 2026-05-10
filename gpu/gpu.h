@@ -26,6 +26,7 @@ typedef SL_Handle Gpu_Shader_Blob;
 typedef void (*Gpu_Callback_Fn)(void* ctx);
 
 typedef enum Gpu_Format {
+	Gpu_Format_R8_Unorm,
 	Gpu_Format_RGBA8_Unorm,
 	Gpu_Format_RGBA8_sRGB,
 	Gpu_Format_BGRA8_Unorm,

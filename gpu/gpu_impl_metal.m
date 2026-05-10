@@ -165,6 +165,7 @@ sl_threadsafe_pool(Gpu_Swapchain_Data, Gpu_Swapchain_Pool, gpu_swapchain_pool);
 // Metal Conversions
 sl_inline MTLPixelFormat gpu_format_to_mtl_pixel_format(Gpu_Format format) {
 	switch (format) {
+		case Gpu_Format_R8_Unorm: return MTLPixelFormatR8Unorm;
 		case Gpu_Format_RGBA8_Unorm: return MTLPixelFormatRGBA8Unorm;
 		case Gpu_Format_RGBA8_sRGB: return MTLPixelFormatRGBA8Unorm_sRGB;
 		case Gpu_Format_BGRA8_Unorm: return MTLPixelFormatBGRA8Unorm;
@@ -175,6 +176,7 @@ sl_inline MTLPixelFormat gpu_format_to_mtl_pixel_format(Gpu_Format format) {
 }
 sl_inline Gpu_Format gpu_mtl_pixel_format_to_format(MTLPixelFormat format) {
 	switch (format) {
+		case MTLPixelFormatR8Unorm: return Gpu_Format_R8_Unorm;
 		case MTLPixelFormatRGBA8Unorm: return Gpu_Format_RGBA8_Unorm;
 		case MTLPixelFormatRGBA8Unorm_sRGB: return Gpu_Format_RGBA8_sRGB;
 		case MTLPixelFormatBGRA8Unorm: return Gpu_Format_BGRA8_Unorm;

@@ -919,6 +919,7 @@ sl_inline VkImageUsageFlags gpu_texture_usage_to_vk_image_usage_flags(Gpu_Textur
 
 sl_inline VkFormat gpu_format_to_vk_format(Gpu_Format format) {
 	switch (format) {
+		case Gpu_Format_R8_Unorm: return VK_FORMAT_R8_UNORM;
 		case Gpu_Format_RGBA8_Unorm: return VK_FORMAT_R8G8B8A8_UNORM;
 		case Gpu_Format_RGBA8_sRGB: return VK_FORMAT_R8G8B8A8_SRGB;
 		case Gpu_Format_BGRA8_Unorm: return VK_FORMAT_B8G8R8A8_UNORM;

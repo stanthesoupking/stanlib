@@ -37,6 +37,9 @@ typedef enum Gpu_Command_Buffer_State {
 
 sl_inline u8 gpu_bytes_per_pixel_for_format(Gpu_Format format) {
 	switch (format) {
+		case Gpu_Format_R8_Unorm:
+			return 1;
+
 		case Gpu_Format_RGBA8_Unorm:
 		case Gpu_Format_RGBA8_sRGB:
 		case Gpu_Format_BGRA8_Unorm:
