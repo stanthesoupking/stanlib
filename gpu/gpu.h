@@ -39,10 +39,11 @@ typedef struct Gpu_Size_And_Align {
 	u64 size;
 	u64 align;
 } Gpu_Size_And_Align;
-#define gpu_size_and_align_of_type(x) ((Gpu_Size_And_Align) { .size = sizeof(x), .align = sl_align_of(x) })
+#define gpu_size_and_align_of_type(x, count) ((Gpu_Size_And_Align) { .size = sizeof(x) * count, .align = sl_align_of(x) })
 
 typedef enum Gpu_Primitive_Kind {
 	Gpu_Primitive_Kind_Triangle,
+	Gpu_Primitive_Kind_Triangle_Strip,
 } Gpu_Primitive_Kind;
 
 typedef enum Gpu_Cull_Mode {
@@ -346,6 +347,9 @@ typedef struct Gpu_Render_Pipeline_Desc {
 
 	const Gpu_Layout_Binding* bindings;
 	u32 binding_count;
+
+	// Enable alpha blending, may want more options in the future.
+	bool alpha_blending;
 } Gpu_Render_Pipeline_Desc;
 Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc);
 

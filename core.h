@@ -2005,7 +2005,7 @@ sl_inline mat4x4_f64 invert_mat4x4_f64(mat4x4_f64 mat) {
 
 sl_inline mat4x4_f32 ortho_mat4x4_f32(f32 left, f32 right, f32 bottom, f32 top, f32 near, f32 far) {
 	f32 rl = right - left;
-	f32 tb = top - bottom;
+	f32 tb = bottom - top;
 	f32 fn = far - near;
 	return (mat4x4_f32) {
 		.x = {
@@ -2027,7 +2027,7 @@ sl_inline mat4x4_f32 ortho_mat4x4_f32(f32 left, f32 right, f32 bottom, f32 top, 
 }
 sl_inline mat4x4_f64 ortho_mat4x4_f64(f64 left, f64 right, f64 bottom, f64 top, f64 near, f64 far) {
 	f64 rl = right - left;
-	f64 tb = top - bottom;
+	f64 tb = bottom - top;
 	f64 fn = far - near;
 	return (mat4x4_f64) {
 		.x = {
@@ -2867,35 +2867,35 @@ sl_inline bool sl_read_file(Allocator* allocator, const char* path, Mutable_Buff
 	if (file == NULL) {
 		return false;
 	}
-	
+
 	if (fseek(file, 0, SEEK_END) != 0) {
 		fclose(file);
 		return false;
 	}
-	
+
 	const s64 len = ftell(file);
 	if (len < 0) {
 		fclose(file);
 		return false;
 	}
-	
+
 	rewind(file);
-	
+
 	u8* bytes;
 	allocator_new(allocator, bytes, len);
-	
+
 	const u64 read_count = fread(bytes, 1, (size_t)len, file);
 	if (read_count != len) {
 		allocator_free(allocator, bytes, len);
 		fclose(file);
 		return false;
 	}
-	
+
 	*out_buffer = (Mutable_Buffer) {
 		.data = bytes,
 		.size = read_count,
 	};
-	
+
 	fclose(file);
 	return true;
 }
@@ -2910,11 +2910,11 @@ sl_inline bool sl_get_application_path(const char* subdirectory, const char* nam
 	CFStringRef cf_ext = CFStringCreateWithCString(NULL, ext, kCFStringEncodingUTF8);
 
 	CFURLRef url = CFBundleCopyResourceURL(main_bundle, cf_name, cf_ext, cf_subdirectory);
-	
+
 	if (cf_subdirectory != NULL) {
 		CFRelease(cf_subdirectory);
 	}
-	
+
 	CFRelease(cf_name);
 	CFRelease(cf_ext);
 
@@ -2985,6 +2985,12 @@ sl_inline void sl_autorelease_pool_end(SL_Autorelease_Pool* pool) {}
 
 sl_shared_struct(Quad_f32) {
 	vec2_f32 v[4];
+};
+
+sl_shared_struct(Textured_Quad_f32) {
+	vec4_f32 position[4];
+	vec2_f32 uv[4];
+	vec4_f32 tint[4];
 };
 
 #define u8_max 255u

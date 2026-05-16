@@ -268,6 +268,7 @@ sl_inline MTLSamplerAddressMode gpu_sampler_address_mode_to_mtl_sampler_address_
 sl_inline MTLPrimitiveType gpu_primitive_kind_to_mtl_primitive_type(Gpu_Primitive_Kind kind) {
 	switch (kind) {
 		case Gpu_Primitive_Kind_Triangle: return MTLPrimitiveTypeTriangle;
+		case Gpu_Primitive_Kind_Triangle_Strip: return MTLPrimitiveTypeTriangleStrip;
 	}
 }
 sl_inline MTLPrimitiveTopologyClass gpu_primitive_kind_to_mtl_primitive_topology_class(Gpu_Primitive_Kind kind) {

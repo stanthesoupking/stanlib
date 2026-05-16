@@ -2588,6 +2588,7 @@ bool gpu_new_pipeline_layout(const Gpu_Layout_Binding* bindings, u32 binding_cou
 VkPrimitiveTopology gpu_primitive_kind_to_vk_primitive_topology(Gpu_Primitive_Kind primitive_kind) {
 	switch (primitive_kind) {
 		case Gpu_Primitive_Kind_Triangle: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		case Gpu_Primitive_Kind_Triangle_Strip: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
 	}
 }
 
@@ -2662,9 +2663,25 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 	VkPipelineColorBlendAttachmentState blend_attachments[GPU_MAX_ATTACHMENTS];
 
 	// TODO
-	blend_attachments[0] = (VkPipelineColorBlendAttachmentState) {
-		.colorWriteMask = 0xF,
-	};
+	if (desc->alpha_blending) {
+		blend_attachments[0] = (VkPipelineColorBlendAttachmentState) {
+			.blendEnable = VK_TRUE,
+
+			.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+			.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+			.colorBlendOp = VK_BLEND_OP_ADD,
+
+			.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+			.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+			.alphaBlendOp = VK_BLEND_OP_ADD,
+
+			.colorWriteMask = 0xF,
+		};
+	} else {
+		blend_attachments[0] = (VkPipelineColorBlendAttachmentState) {
+			.colorWriteMask = 0xF,
+		};
+	}
 
 	const VkPipelineColorBlendStateCreateInfo blend_state = {
 	    .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,

@@ -7,7 +7,8 @@
 #include "../vendor/stb_truetype.h"
 
 #define SL_FONT_ATLAS_FIRST_CHAR 32
-#define SL_FONT_ATLAS_CHAR_COUNT 96
+#define SL_FONT_ATLAS_LAST_CHAR 127
+#define SL_FONT_ATLAS_CHAR_COUNT (SL_FONT_ATLAS_LAST_CHAR - SL_FONT_ATLAS_FIRST_CHAR) + 1
 
 typedef struct SL_Font_Atlas {
 	Allocator* allocator;
@@ -88,4 +89,55 @@ void sl_destroy_font_atlas(SL_Font_Atlas* atlas) {
 
 Gpu_Texture sl_get_font_atlas_texture(SL_Font_Atlas* atlas) {
 	return atlas->texture;
+}
+
+void sl_get_font_geometry_for_string(SL_Font_Atlas* atlas, const char* string, vec2_f32 position, vec4_f32 color, mat4x4_f32 to_ndc_from_text, Textured_Quad_f32* out_quads, u32* out_quad_count) {
+	u32 quad_count = 0;
+
+	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(atlas->texture);
+	const vec2_f32 texture_size = { texture_desc->size.x, texture_desc->size.y };
+
+	f32 cx = position.x;
+	f32 cy = position.y;
+	for (u32 i = 0; string[i] != '\0'; i++) {
+		char c = string[i];
+		if (c >= SL_FONT_ATLAS_FIRST_CHAR && c <= SL_FONT_ATLAS_LAST_CHAR) {
+			stbtt_bakedchar baked_char = atlas->chars[c - SL_FONT_ATLAS_FIRST_CHAR];
+
+			const u32 char_w = baked_char.x1 - baked_char.x0;
+			const u32 char_h = baked_char.y1 - baked_char.y0;
+
+			if (out_quads != NULL) {
+				vec2_f32 p_start = { round(cx + baked_char.xoff), round(cy + baked_char.yoff) };
+				vec2_f32 p_end = add_vec2_f32(p_start, (vec2_f32) { char_w, char_h });
+				out_quads[quad_count] = (Textured_Quad_f32) {
+					.position = {
+						mul_mat4x4_vec4_f32(to_ndc_from_text, (vec4_f32) { p_start.x, p_start.y, 0.0f, 1.0f }),
+						mul_mat4x4_vec4_f32(to_ndc_from_text, (vec4_f32) { p_end.x, p_start.y, 0.0f, 1.0f }),
+						mul_mat4x4_vec4_f32(to_ndc_from_text, (vec4_f32) { p_start.x, p_end.y, 0.0f, 1.0f }),
+						mul_mat4x4_vec4_f32(to_ndc_from_text, (vec4_f32) { p_end.x, p_end.y, 0.0f, 1.0f }),
+					},
+					.tint = {
+						color,
+						color,
+						color,
+						color
+					},
+					.uv = {
+						{ baked_char.x0 / texture_size.x, baked_char.y0 / texture_size.y },
+						{ baked_char.x1 / texture_size.x, baked_char.y0 / texture_size.y },
+						{ baked_char.x0 / texture_size.x, baked_char.y1 / texture_size.y },
+						{ baked_char.x1 / texture_size.x, baked_char.y1 / texture_size.y },
+					},
+				};
+			}
+			quad_count++;
+
+			cx += baked_char.xadvance;
+		}
+	}
+
+	if (out_quad_count != NULL) {
+		*out_quad_count = quad_count;
+	}
 }
