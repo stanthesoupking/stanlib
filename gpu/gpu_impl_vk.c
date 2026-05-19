@@ -1,3 +1,4 @@
+#include "core.h"
 #include "vulkan/vulkan_core.h"
 #include <vulkan/vulkan.h>
 
@@ -2600,6 +2601,70 @@ VkCullModeFlags gpu_cull_mode_to_vk_cull_mode_flags(Gpu_Cull_Mode cull_mode) {
 	}
 }
 
+u32 gpu_function_constant_get_size(Gpu_Function_Constant constant) {
+	switch (constant.kind) {
+		case Gpu_Function_Constant_Kind_Bool:
+		case Gpu_Function_Constant_Kind_U32: {
+			return 4;
+		} break;
+	}
+}
+
+typedef struct Gpu_Vk_Specialization {
+	Allocator* allocator;
+	VkSpecializationInfo info;
+} Gpu_Vk_Specialization;
+
+Gpu_Vk_Specialization gpu_vk_specialization_new(Allocator* allocator, const Gpu_Function_Constant* constants, u32 count) {
+	u32 buffer_size = 0;
+	for (u32 i = 0; i < count; i++) {
+		buffer_size += gpu_function_constant_get_size(constants[i]);
+	}
+
+	u8* buffer;
+	VkSpecializationMapEntry* entries;
+	allocator_new(allocator, buffer, buffer_size);
+	allocator_new(allocator, entries, count);
+
+	u32 buffer_offset = 0;
+	for (u32 i = 0; i < count; i++) {
+		const Gpu_Function_Constant constant = constants[i];
+		entries[i] = (VkSpecializationMapEntry) {
+			.offset = buffer_offset,
+			.constantID = constant.index,
+			.size = gpu_function_constant_get_size(constants[i]),
+		};
+
+		switch (constant.kind) {
+			case Gpu_Function_Constant_Kind_Bool: {
+				*(VkBool32*)(buffer + buffer_offset) = constant.v_bool ? VK_TRUE : VK_FALSE;
+			} break;
+
+			case Gpu_Function_Constant_Kind_U32: {
+				*(u32*)(buffer + buffer_offset) = constant.v_u32;
+			} break;
+		}
+		buffer_offset += entries[i].size;
+	}
+
+	VkSpecializationInfo info = {
+		.pData = buffer,
+		.dataSize = buffer_size,
+		.mapEntryCount = count,
+		.pMapEntries = entries,
+	};
+
+	return (Gpu_Vk_Specialization) {
+		.allocator = allocator,
+		.info = info,
+	};
+}
+void gpu_vk_specialization_destroy(Gpu_Vk_Specialization* specialization) {
+	allocator_free(specialization->allocator, (u8*)specialization->info.pData, specialization->info.dataSize);
+	allocator_free(specialization->allocator, (VkSpecializationMapEntry*)specialization->info.pMapEntries, specialization->info.mapEntryCount);
+	*specialization = (Gpu_Vk_Specialization) { 0 };
+}
+
 Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc) {
 	Gpu_Shader_Blob_Data* vertex_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->vertex_blob);
 	Gpu_Shader_Blob_Data* fragment_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->fragment_blob);
@@ -2617,18 +2682,22 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 		return SL_HANDLE_NULL;
 	}
 
+	Gpu_Vk_Specialization specialization = gpu_vk_specialization_new(gpu.allocator, desc->constants, desc->constant_count);
+
 	const VkPipelineShaderStageCreateInfo stages[2] = {
 		{
 		    .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
 		    .stage = VK_SHADER_STAGE_VERTEX_BIT,
 		    .module = vertex_blob_data->shader_module,
 		    .pName = desc->vertex_entry_point,
+			.pSpecializationInfo = &specialization.info,
 		},
 		{
 		    .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
 		    .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
 		    .module = fragment_blob_data->shader_module,
 		    .pName = desc->fragment_entry_point,
+			.pSpecializationInfo = &specialization.info,
 		}
 	};
 
@@ -2723,6 +2792,7 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 		.renderPass = render_pass_object_data->render_pass,
 	};
 	VkResult create_pipeline_result = vkCreateGraphicsPipelines(gpu.device, VK_NULL_HANDLE, 1, &pipe, NULL, &pipeline_data->pipeline);
+	gpu_vk_specialization_destroy(&specialization);
 
 	if (create_pipeline_result != VK_SUCCESS) {
 		vkDestroyPipelineLayout(gpu.device, pipeline_data->pipeline_layout, NULL);
@@ -2750,6 +2820,8 @@ Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* d
 		return SL_HANDLE_NULL;
 	}
 
+	Gpu_Vk_Specialization specialization = gpu_vk_specialization_new(gpu.allocator, desc->constants, desc->constant_count);
+
 	VkComputePipelineCreateInfo pipeline_create_info = {
 		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 		.stage = {
@@ -2757,10 +2829,13 @@ Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* d
 			.stage = VK_SHADER_STAGE_COMPUTE_BIT,
 			.module = blob_data->shader_module,
 			.pName = desc->entry_point,
+			.pSpecializationInfo = &specialization.info,
 		},
 		.layout = pipeline_data->pipeline_layout,
 	};
 	VkResult create_pipeline_result = vkCreateComputePipelines(gpu.device, VK_NULL_HANDLE, 1, &pipeline_create_info, NULL, &pipeline_data->pipeline);
+	gpu_vk_specialization_destroy(&specialization);
+
 	if (create_pipeline_result != VK_SUCCESS) {
 		gpu_log("Failed to create compute pipeline (VkPipeline).");
 		vkDestroyPipelineLayout(gpu.device, pipeline_data->pipeline_layout, NULL);

@@ -211,6 +211,20 @@ typedef struct Gpu_Layout_Binding {
 	u32 index;
 } Gpu_Layout_Binding;
 
+typedef enum Gpu_Function_Constant_Kind {
+	Gpu_Function_Constant_Kind_Bool,
+	Gpu_Function_Constant_Kind_U32,
+} Gpu_Function_Constant_Kind;
+
+typedef struct Gpu_Function_Constant {
+	Gpu_Function_Constant_Kind kind;
+	union {
+		bool v_bool;
+		u32 v_u32;
+	};
+	u32 index;
+} Gpu_Function_Constant;
+
 typedef enum Gpu_Memory_Type {
 	Gpu_Memory_Type_Host_Visible,
 	Gpu_Memory_Type_Device_Local,
@@ -348,6 +362,9 @@ typedef struct Gpu_Render_Pipeline_Desc {
 	const Gpu_Layout_Binding* bindings;
 	u32 binding_count;
 
+	const Gpu_Function_Constant* constants;
+	u32 constant_count;
+
 	// Enable alpha blending, may want more options in the future.
 	bool alpha_blending;
 } Gpu_Render_Pipeline_Desc;
@@ -371,6 +388,9 @@ typedef struct Gpu_Compute_Pipeline_Desc {
 
 	const Gpu_Layout_Binding* bindings;
 	u32 binding_count;
+
+	const Gpu_Function_Constant* constants;
+	u32 constant_count;
 
 	vec3_u32 group_size;
 } Gpu_Compute_Pipeline_Desc;

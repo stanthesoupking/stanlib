@@ -91,7 +91,7 @@ Gpu_Texture sl_get_font_atlas_texture(SL_Font_Atlas* atlas) {
 	return atlas->texture;
 }
 
-void sl_get_font_geometry_for_string(SL_Font_Atlas* atlas, const char* string, vec2_f32 position, vec4_f32 color, mat4x4_f32 to_ndc_from_text, Textured_Quad_f32* out_quads, u32* out_quad_count) {
+void sl_get_font_geometry_for_string(SL_Font_Atlas* atlas, const char* string, vec2_f32 position, vec4_f32 color, Textured_Quad_f32* out_quads, u32* out_quad_count) {
 	u32 quad_count = 0;
 
 	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(atlas->texture);
@@ -112,10 +112,10 @@ void sl_get_font_geometry_for_string(SL_Font_Atlas* atlas, const char* string, v
 				vec2_f32 p_end = add_vec2_f32(p_start, (vec2_f32) { char_w, char_h });
 				out_quads[quad_count] = (Textured_Quad_f32) {
 					.position = {
-						mul_mat4x4_vec4_f32(to_ndc_from_text, (vec4_f32) { p_start.x, p_start.y, 0.0f, 1.0f }),
-						mul_mat4x4_vec4_f32(to_ndc_from_text, (vec4_f32) { p_end.x, p_start.y, 0.0f, 1.0f }),
-						mul_mat4x4_vec4_f32(to_ndc_from_text, (vec4_f32) { p_start.x, p_end.y, 0.0f, 1.0f }),
-						mul_mat4x4_vec4_f32(to_ndc_from_text, (vec4_f32) { p_end.x, p_end.y, 0.0f, 1.0f }),
+						{ p_start.x, p_start.y, 0.0f, 1.0f },
+						{ p_end.x, p_start.y, 0.0f, 1.0f },
+						{ p_start.x, p_end.y, 0.0f, 1.0f },
+						{ p_end.x, p_end.y, 0.0f, 1.0f },
 					},
 					.tint = {
 						color,

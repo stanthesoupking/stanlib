@@ -1,3 +1,5 @@
+#pragma once
+
 #include "../core.h"
 #include "../gpu/gpu.h"
 
@@ -17,4 +19,4 @@ void sl_destroy_font_atlas(SL_Font_Atlas* atlas);
 
 Gpu_Texture sl_get_font_atlas_texture(SL_Font_Atlas* atlas);
 
-void sl_get_font_geometry_for_string(SL_Font_Atlas* atlas, const char* string, vec2_f32 position, vec4_f32 color, mat4x4_f32 to_ndc_from_text, Textured_Quad_f32* out_quads, u32* out_quad_count);
+void sl_get_font_geometry_for_string(SL_Font_Atlas* atlas, const char* string, vec2_f32 position, vec4_f32 color, Textured_Quad_f32* out_quads, u32* out_quad_count);

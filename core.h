@@ -2579,6 +2579,9 @@ sl_seq(SL_Handle, SL_Handle_Seq, sl_handle_seq);
 sl_inline bool sl_handle_is_null(SL_Handle handle) {
 	return (handle.index == 0) && (handle.generation == 0);
 }
+sl_inline bool sl_handle_equals(SL_Handle a, SL_Handle b) {
+	return (a.index == b.index) && (a.generation == b.generation);
+}
 
 // to make pool thread safe:
 //   - fixed size
@@ -2991,6 +2994,11 @@ sl_shared_struct(Textured_Quad_f32) {
 	vec4_f32 position[4];
 	vec2_f32 uv[4];
 	vec4_f32 tint[4];
+};
+
+sl_shared_struct(Range_u32) {
+	u32 start;
+	u32 end;
 };
 
 #define u8_max 255u
