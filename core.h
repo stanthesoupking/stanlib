@@ -1848,6 +1848,65 @@ sl_inline vec4_f64 neg_vec4_f64(vec4_f64 a) {
 	};
 }
 
+sl_inline vec3_f32 pow_vec3_f32(vec3_f32 a, vec3_f32 b) {
+	return (vec3_f32) {
+		.x = powf(a.x, b.x),
+		.y = powf(a.y, b.y),
+		.z = powf(a.z, b.z),
+	};
+}
+sl_inline vec3_f64 pow_vec3_f64(vec3_f64 a, vec3_f64 b) {
+	return (vec3_f64) {
+		.x = pow(a.x, b.x),
+		.y = pow(a.y, b.y),
+		.z = pow(a.z, b.z),
+	};
+}
+
+sl_inline f32 saturate_f32(f32 a) {
+	return sl_clamp(a, 0.0f, 1.0f);
+}
+sl_inline f64 saturate_f64(f64 a) {
+	return sl_clamp(a, 0.0, 1.0);
+}
+
+sl_inline vec3_f32 saturate_vec3_f32(vec3_f32 a) {
+	return (vec3_f32) {
+		.x = saturate_f32(a.x),
+		.y = saturate_f32(a.y),
+		.z = saturate_f32(a.z),
+	};
+}
+sl_inline vec3_f64 saturate_vec3_f64(vec3_f64 a) {
+	return (vec3_f64) {
+		.x = saturate_f64(a.x),
+		.y = saturate_f64(a.y),
+		.z = saturate_f64(a.z),
+	};
+}
+
+sl_inline vec3_f32 linear_to_srgb_vec3_f32(vec3_f32 c) {
+	const f32 p = 1.0f / 2.2f;
+	const vec3_f32 p_v = { p, p, p };
+    return pow_vec3_f32(saturate_vec3_f32(c), p_v);
+}
+sl_inline vec3_f32 srgb_to_linear_vec3_f32(vec3_f32 c) {
+	const f32 p = 2.2f;
+	const vec3_f32 p_v = { p, p, p };
+    return pow_vec3_f32(saturate_vec3_f32(c), p_v);
+}
+
+sl_inline vec4_f32 linear_to_srgb_vec4_f32(vec4_f32 c) {
+	vec3_f32 c_v3 = { c.x, c.y, c.z };
+	c_v3 = linear_to_srgb_vec3_f32(c_v3);
+	return (vec4_f32) { c_v3.x, c_v3.y, c_v3.z, c.w };
+}
+sl_inline vec4_f32 srgb_to_linear_vec4_f32(vec4_f32 c) {
+	vec3_f32 c_v3 = { c.x, c.y, c.z };
+	c_v3 = srgb_to_linear_vec3_f32(c_v3);
+	return (vec4_f32) { c_v3.x, c_v3.y, c_v3.z, c.w };
+}
+
 sl_inline bool eq_vec4_u8(vec4_u8 a, vec4_u8 b) {
 	return (a.x == b.x) && (a.y == b.y) && (a.z == b.z) && (a.w == b.w);
 }
@@ -2526,7 +2585,7 @@ sl_inline u64 sl_arena_allocator_get_position(SL_Arena_Allocator* allocator) {
         m->keys = new_keys; m->values = new_values; m->hashes = new_hashes; m->capacity = new_capacity; \
     } \
     \
-    sl_inline void sl_concat(function_prefix, _insert)(type* m, key_type key, value_type value) { \
+    sl_inline value_type* sl_concat(function_prefix, _insert)(type* m, key_type key, value_type value) { \
         if (m->count * 2 >= m->capacity) sl_concat(function_prefix, _resize)(m, m->capacity * 2); \
         u64 h = hash_func(key); \
         u64 idx = h & (m->capacity - 1); \
@@ -2535,19 +2594,30 @@ sl_inline u64 sl_arena_allocator_get_position(SL_Arena_Allocator* allocator) {
         m->keys[idx] = key; \
         m->values[idx] = value; \
         m->hashes[idx] = h; \
+        return &m->values[idx];\
     } \
     \
-    sl_inline bool sl_concat(function_prefix, _get)(type* m, key_type key, value_type* out_value) { \
+    sl_inline bool sl_concat(function_prefix, _get_ptr)(type* m, key_type key, value_type** out_value) { \
         if (m->count == 0) return false; \
         u64 h = hash_func(key); \
         u64 idx = h & (m->capacity - 1); \
         u64 start = idx; \
         while (m->hashes[idx] != 0) { \
-            if (equals_func(m->keys[idx], key)) { *out_value = m->values[idx]; return true; } \
+            if (equals_func(m->keys[idx], key)) { *out_value = &m->values[idx]; return true; } \
             idx = (idx + 1) & (m->capacity - 1); \
             if (idx == start) break; \
         } \
         return false; \
+    } \
+    \
+    sl_inline bool sl_concat(function_prefix, _get)(type* m, key_type key, value_type* out_value) { \
+    	value_type* value_ptr; \
+    	if (sl_concat(function_prefix, _get_ptr)(m, key, &value_ptr)) {\
+     		*out_value = *value_ptr; \
+       		return true; \
+     	} else { \
+      		return false; \
+      	} \
     } \
     \
     sl_inline bool sl_concat(function_prefix, _remove)(type* m, key_type key) { \
@@ -3001,7 +3071,75 @@ sl_shared_struct(Range_u32) {
 	u32 end;
 };
 
+sl_shared_struct(Range_s32) {
+	s32 start;
+	s32 end;
+};
+
+sl_shared_struct(Rect_u32) {
+	vec2_u32 start;
+	vec2_u32 end;
+};
+
+sl_shared_struct(Rect_f32) {
+	vec2_f32 start;
+	vec2_f32 end;
+};
+
+sl_shared_struct(Rect_s32) {
+	vec2_s32 start;
+	vec2_s32 end;
+};
+
 #define u8_max 255u
 #define u16_max 65535u
 #define u32_max 4294967295u
 #define u64_max 18446744073709551615ull
+
+#define s32_min -2147483647
+#define s32_max 2147483647
+
+#if !defined(__SLANG__) && !defined(__METAL_VERSION__)
+
+sl_inline Rect_f32 div_rect_vec_f32(Rect_f32 a, vec2_f32 b) {
+	return (Rect_f32) {
+		.start = div_vec2_f32(a.start, b),
+		.end = div_vec2_f32(a.end, b),
+	};
+}
+
+sl_inline vec2_f32 size_rect_f32(Rect_f32 a) {
+	return sub_vec2_f32(a.end, a.start);
+}
+sl_inline vec2_s32 size_rect_s32(Rect_s32 a) {
+	return sub_vec2_s32(a.end, a.start);
+}
+
+sl_inline bool contains_rect_f32(Rect_f32 a, vec2_f32 b) {
+	return (b.x >= a.start.x) && (b.y >= a.start.y) && (b.x < a.end.x) && (b.y < a.end.y);
+}
+
+sl_inline Textured_Quad_f32 textured_quad_for_sub_region_f32(Rect_f32 position_rect, Rect_f32 uv_rect, vec4_f32 tint) {
+	return (Textured_Quad_f32) {
+		.position = {
+			{ position_rect.start.x, position_rect.start.y, 0.0f, 1.0f },
+			{ position_rect.end.x, position_rect.start.y, 0.0f, 1.0f },
+			{ position_rect.start.x, position_rect.end.y, 0.0f, 1.0f },
+			{ position_rect.end.x, position_rect.end.y, 0.0f, 1.0f },
+		},
+		.uv = {
+			{ uv_rect.start.x, uv_rect.start.y },
+			{ uv_rect.end.x, uv_rect.start.y },
+			{ uv_rect.start.x, uv_rect.end.y },
+			{ uv_rect.end.x, uv_rect.end.y },
+		},
+		.tint = {
+			tint,
+			tint,
+			tint,
+			tint
+		},
+	};
+}
+
+#endif

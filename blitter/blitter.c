@@ -218,6 +218,22 @@ void sl_blitter_draw_textured_quads(SL_Blitter* blitter, Gpu_Texture texture, co
 	sl_blitter_draw_textured_quads_raw(blitter, texture, quads, quad_count, SL_Blitter_Draw_Kind_Normal);
 }
 
+void sl_blitter_execute_command(SL_Blitter* blitter, SL_Blitter_Command command) {
+	switch (command.kind) {
+		case SL_Blitter_Command_Kind_Draw_Text: {
+			sl_blitter_draw_text(blitter, command.draw_text.font, command.draw_text.string, command.draw_text.position, command.draw_text.color);
+		} break;
+
+		case SL_Blitter_Command_Kind_Draw_Texture: {
+			sl_blitter_draw_texture(blitter, command.draw_texture.texture, command.draw_texture.position, command.draw_texture.color);
+		} break;
+
+		case SL_Blitter_Command_Kind_Draw_Textured_Quads: {
+			sl_blitter_draw_textured_quads(blitter, command.draw_textured_quads.texture, command.draw_textured_quads.quads, command.draw_textured_quads.quad_count);
+		} break;
+	}
+}
+
 void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
 	SL_Blitter* blitter = *blitter_ptr;
 

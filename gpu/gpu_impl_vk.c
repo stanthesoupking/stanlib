@@ -2736,7 +2736,7 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 		blend_attachments[0] = (VkPipelineColorBlendAttachmentState) {
 			.blendEnable = VK_TRUE,
 
-			.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+			.srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
 			.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
 			.colorBlendOp = VK_BLEND_OP_ADD,
 

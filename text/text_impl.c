@@ -14,6 +14,7 @@ typedef struct SL_Font_Atlas {
 	Allocator* allocator;
 	Gpu_Texture texture;
 	stbtt_bakedchar chars[SL_FONT_ATLAS_CHAR_COUNT];
+	Range_s32 y_range;
 } SL_Font_Atlas;
 
 SL_Font_Atlas* sl_new_font_atlas(const SL_Font_Atlas_Desc* desc) {
@@ -79,6 +80,16 @@ SL_Font_Atlas* sl_new_font_atlas(const SL_Font_Atlas_Desc* desc) {
 	Gpu_Texture_Layout texture_layout_1 = Gpu_Texture_Layout_Shader_Read;
 	gpu_transition_texture_layouts(desc->command_buffer, &result->texture, &texture_layout_1, 1);
 
+	Range_s32 y_range = {
+		.start = s32_max,
+		.end = s32_min,
+	};
+	for (u32 i = 0; i < SL_FONT_ATLAS_CHAR_COUNT; i++) {
+		y_range.start = sl_min(y_range.start, result->chars[i].y0 + result->chars[i].yoff);
+		y_range.end = sl_max(y_range.end, result->chars[i].y1 + result->chars[i].yoff);
+	}
+	result->y_range = y_range;
+
 	return result;
 }
 void sl_destroy_font_atlas(SL_Font_Atlas* atlas) {
@@ -89,6 +100,10 @@ void sl_destroy_font_atlas(SL_Font_Atlas* atlas) {
 
 Gpu_Texture sl_get_font_atlas_texture(SL_Font_Atlas* atlas) {
 	return atlas->texture;
+}
+
+Range_s32 sl_get_font_y_range(SL_Font_Atlas* atlas) {
+	return atlas->y_range;
 }
 
 void sl_get_font_geometry_for_string(SL_Font_Atlas* atlas, const char* string, vec2_f32 position, vec4_f32 color, Textured_Quad_f32* out_quads, u32* out_quad_count) {
@@ -140,4 +155,37 @@ void sl_get_font_geometry_for_string(SL_Font_Atlas* atlas, const char* string, v
 	if (out_quad_count != NULL) {
 		*out_quad_count = quad_count;
 	}
+}
+
+Rect_s32 sl_font_atlas_measure_string(SL_Font_Atlas* atlas, const char* string) {
+	if (string[0] == '\0') {
+		return (Rect_s32) {};
+	}
+
+	f32 cx = 0.0f;
+
+	Rect_s32 rect = {
+		.start = { s32_max, s32_max },
+		.end = { s32_min, s32_min }
+	};
+	for (u32 i = 0; string[i] != '\0'; i++) {
+		char c = string[i];
+
+		if (c >= SL_FONT_ATLAS_FIRST_CHAR && c <= SL_FONT_ATLAS_LAST_CHAR) {
+			stbtt_bakedchar baked_char = atlas->chars[c - SL_FONT_ATLAS_FIRST_CHAR];
+
+			const u32 char_w = baked_char.x1 - baked_char.x0;
+			const u32 char_h = baked_char.y1 - baked_char.y0;
+
+			vec2_s32 p_start = { round(cx + baked_char.xoff), round(baked_char.yoff) };
+			vec2_s32 p_end = add_vec2_s32(p_start, (vec2_s32) { char_w, char_h });
+
+			rect.start = min_vec2_s32(rect.start, p_start);
+			rect.end = max_vec2_s32(rect.end, p_end);
+
+			cx += baked_char.xadvance;
+		}
+	}
+
+	return rect;
 }
