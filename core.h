@@ -1870,6 +1870,26 @@ sl_inline f64 saturate_f64(f64 a) {
 	return sl_clamp(a, 0.0, 1.0);
 }
 
+sl_inline f32 lerp_f32(f32 a, f32 b, f32 t) {
+	return (a * (1.0f - t)) + (b * t);
+}
+sl_inline f64 lerp_f64(f64 a, f64 b, f64 t) {
+	return (a * (1.0f - t)) + (b * t);
+}
+
+sl_inline vec2_f32 lerp_vec2_f32(vec2_f32 a, vec2_f32 b, f32 t) {
+	return (vec2_f32) {
+		.x = lerp_f32(a.x, b.x, t),
+		.y = lerp_f32(a.y, b.y, t),
+	};
+}
+sl_inline vec2_f64 lerp_vec2_f64(vec2_f64 a, vec2_f64 b, f64 t) {
+	return (vec2_f64) {
+		.x = lerp_f64(a.x, b.x, t),
+		.y = lerp_f64(a.y, b.y, t),
+	};
+}
+
 sl_inline vec3_f32 saturate_vec3_f32(vec3_f32 a) {
 	return (vec3_f32) {
 		.x = saturate_f32(a.x),
@@ -3076,6 +3096,11 @@ sl_shared_struct(Range_s32) {
 	s32 end;
 };
 
+sl_shared_struct(Range_f32) {
+	f32 start;
+	f32 end;
+};
+
 sl_shared_struct(Rect_u32) {
 	vec2_u32 start;
 	vec2_u32 end;
@@ -3100,6 +3125,13 @@ sl_shared_struct(Rect_s32) {
 #define s32_max 2147483647
 
 #if !defined(__SLANG__) && !defined(__METAL_VERSION__)
+
+sl_inline Rect_f32 offset_rect_f32(Rect_f32 a, vec2_f32 b) {
+	return (Rect_f32) {
+		.start = add_vec2_f32(a.start, b),
+		.end = add_vec2_f32(a.end, b),
+	};
+}
 
 sl_inline Rect_f32 div_rect_vec_f32(Rect_f32 a, vec2_f32 b) {
 	return (Rect_f32) {

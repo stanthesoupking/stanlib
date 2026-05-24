@@ -39,6 +39,9 @@ u64 ui_id_get_hash(UI_ID id) {
 bool ui_id_equals(UI_ID a, UI_ID b) {
 	return a.hash == b.hash;
 }
+bool ui_id_is_null(UI_ID a) {
+	return a.hash == 0;
+}
 
 typedef struct UI {
 	Allocator* allocator;
@@ -99,6 +102,7 @@ void ui_begin(UI* ui, UI_Event_Seq* event_sink) {
 	{
 		ui->mouse_obscured = false;
 		ui->mouse_button_pressed = false;
+		ui->hot_item = UI_ID_NULL;
 
 		const u32 event_count = ui_event_seq_get_count(event_sink);
 		for (u32 i = 0; i < event_count; i++) {
@@ -133,23 +137,27 @@ void ui_begin_panel(UI* ui, Rect_f32 rect, vec4_f32 color) {
 	};
 }
 
+void ui_draw_image(UI* ui, Rect_f32 rect, Rect_f32 atlas_rect, vec4_f32 color) {
+	Textured_Quad_f32* quad;
+	allocator_new(&ui->arena->allocator, quad, 1);
+	*quad = textured_quad_for_sub_region_f32(rect, div_rect_vec_f32(atlas_rect, ui->texture_size), color);
+	sl_blitter_command_seq_push(&ui->blitter_commands, (SL_Blitter_Command) {
+		.kind = SL_Blitter_Command_Kind_Draw_Textured_Quads,
+		.draw_textured_quads = {
+			.texture = ui->texture,
+			.quads = quad,
+			.quad_count = 1,
+		},
+	});
+}
+
 void ui_end_panel(UI* ui) {
 	sl_assert(ui->stack_length > 0, "Nothing to pop.");
 	const UI_Stack_Item top = ui->stack[--ui->stack_length];
 	sl_assert(top.kind == UI_Stack_Item_Kind_Panel, "Top of the stack must be a panel.");
 
 	if (top.panel.color.w > 0.0f) {
-		Textured_Quad_f32* quad;
-		allocator_new(&ui->arena->allocator, quad, 1);
-		*quad = textured_quad_for_sub_region_f32(top.panel.rect, (Rect_f32) {}, top.panel.color);
-		sl_blitter_command_seq_push(&ui->blitter_commands, (SL_Blitter_Command) {
-			.kind = SL_Blitter_Command_Kind_Draw_Textured_Quads,
-			.draw_textured_quads = {
-				.texture = ui->texture,
-				.quads = quad,
-				.quad_count = 1,
-			},
-		});
+		ui_draw_image(ui, top.panel.rect, (Rect_f32) {}, top.panel.color);
 	}
 
 	if (contains_rect_f32(top.panel.rect, ui->mouse_position)) {
@@ -290,15 +298,15 @@ void ui_draw_nine_patch(UI* ui, Rect_f32 rect, UI_Nine_Patch nine_patch, vec4_f3
 	});
 }
 
-bool ui_button(UI* ui, UI_ID id, const char* label, UI_Button_Style style, Rect_f32 rect) {
+bool ui_button(UI* ui, UI_ID id, const UI_Button_Style* style, const char* label, Rect_f32 rect) {
 	const u32 label_len = strlen(label);
 
 	char* label_copy;
 	allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
 	strcpy(label_copy, label);
 
-	const Range_s32 font_y_range = sl_get_font_y_range(style.font);
-	const Rect_s32 label_rect = sl_font_atlas_measure_string(style.font, label);
+	const Range_s32 font_y_range = sl_get_font_y_range(style->font);
+	const Rect_s32 label_rect = sl_font_atlas_measure_string(style->font, label);
 	const vec2_s32 label_size = size_rect_s32(label_rect);
 	const vec2_f32 rect_size = size_rect_f32(rect);
 	const vec2_f32 text_offset = {
@@ -306,30 +314,114 @@ bool ui_button(UI* ui, UI_ID id, const char* label, UI_Button_Style style, Rect_
 		.y = rect.start.y + (rect_size.y * 0.5f) - (font_y_range.start * 0.5f),
 	};
 
+	const bool mouse_over = !ui->mouse_obscured && contains_rect_f32(rect, ui->mouse_position);
+	if (mouse_over) {
+		ui->hot_item = id;
+		ui->mouse_obscured = true;
+	}
+
+	if (ui_id_is_null(ui->active_item) && (ui->mouse_button_down || ui->mouse_button_pressed) && mouse_over) {
+		ui->active_item = id;
+	}
+
 	UI_Button_State button_state;
-	if (!ui->mouse_obscured && contains_rect_f32(rect, ui->mouse_position)) {
-		button_state = (ui->mouse_button_down || ui->mouse_button_pressed) ? UI_Button_State_Active : UI_Button_State_Hot;
+	if (ui_id_equals(ui->active_item, id)) {
+		button_state = UI_Button_State_Active;
+	} else if (ui_id_equals(ui->hot_item, id)) {
+		button_state = UI_Button_State_Hot;
 	} else {
 		button_state = UI_Button_State_Normal;
 	}
+	const UI_Button_State_Style* state_style = &style->state[button_state];
 
 	sl_blitter_command_seq_push(&ui->blitter_commands, (SL_Blitter_Command) {
 		.kind = SL_Blitter_Command_Kind_Draw_Text,
 		.draw_text = {
-			.font = style.font,
+			.font = style->font,
 			.string = label_copy,
-			.position = add_vec2_f32(text_offset, style.state[button_state].label_offset),
-			.color = style.state[button_state].label_color,
+			.position = add_vec2_f32(text_offset, state_style->label_offset),
+			.color = state_style->label_color,
 		},
 	});
 
-	ui_draw_nine_patch(ui, rect, style.state[button_state].nine_patch, (vec4_f32) { 1.0f, 1.0f, 1.0f, 1.0f });
+	ui_draw_nine_patch(ui, rect, state_style->backing, state_style->backing_color);
 
-	// not correct
-	return (button_state == UI_Button_State_Active) && ui->mouse_button_pressed;
+	if (ui_id_equals(ui->active_item, id) && ui->mouse_button_pressed) {
+		ui->mouse_button_pressed = false;
+		ui->active_item = UI_ID_NULL;
+		return mouse_over;
+	} else {
+		return false;
+	}
 }
-void ui_end(UI* ui) {
 
+bool ui_slider_f32(UI* ui, UI_ID id, const UI_Slider_Style* style, f32* value, Range_f32 range, Rect_f32 rect) {
+	const vec2_f32 rect_size = size_rect_f32(rect);
+	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
+	const vec2_f32 needle_image_size = size_rect_f32(style->needle_image);
+
+	// track layout
+	const f32 track_lr_padding = ceil(needle_image_size.x * 0.5);
+	const vec2_f32 track_rect_start = {
+		rect.start.x + track_lr_padding,
+		round(center_y - (style->track_height * 0.5f)),
+	};
+	const Rect_f32 track_rect = {
+		.start = track_rect_start,
+		.end = {
+			rect.end.x - track_lr_padding,
+			.y = track_rect_start.y + style->track_height,
+		},
+	};
+
+	const bool mouse_over = !ui->mouse_obscured && contains_rect_f32(rect, ui->mouse_position);
+	if (mouse_over) {
+		ui->hot_item = id;
+		ui->mouse_obscured = true;
+	}
+
+	if (ui_id_is_null(ui->active_item) && (ui->mouse_button_down || ui->mouse_button_pressed) && mouse_over) {
+		ui->active_item = id;
+	}
+
+	const bool change_value = ui_id_equals(ui->active_item, id) && ui->mouse_button_down || ui->mouse_button_pressed;
+	if (change_value) {
+		ui->mouse_button_pressed = false;
+
+		const f32 mouse_progress = saturate_f32((ui->mouse_position.x - track_rect.start.x) / (track_rect.end.x - track_rect.start.x));
+		*value = lerp_f32(range.start, range.end, mouse_progress);
+	}
+
+	// needle
+	const f32 progress = saturate_f32((*value - range.start) / (range.end - range.start));
+	const vec2_f32 needle_offset = {
+		.x = round(lerp_f32(track_rect.start.x, track_rect.end.x, progress) - (needle_image_size.x * 0.5f)),
+		.y = round(center_y - (needle_image_size.y * 0.5f)),
+	};
+	const Rect_f32 needle_rect = {
+		.start = needle_offset,
+		.end = add_vec2_f32(needle_image_size, needle_offset),
+	};
+	ui_draw_image(ui, needle_rect, style->needle_image, style->needle_color);
+
+	// track
+	ui_draw_image(ui, track_rect, (Rect_f32) { .start = {} }, style->track_color);
+
+	if (ui_id_equals(ui->active_item, id) && !ui->mouse_button_down) {
+		ui->active_item = UI_ID_NULL;
+	}
+
+	// debug
+	// ui_draw_image(ui, rect, (Rect_f32) {}, (vec4_f32) { 0.5, 0, 0, 0.5 });
+
+	return change_value;
+}
+
+void ui_end(UI* ui) {
+	if (ui->mouse_button_pressed) {
+		// unconsumed mouse press, reset the active item (it must be stale).
+		ui->active_item = UI_ID_NULL;
+	}
 }
 
 void ui_render(UI* ui, SL_Blitter* blitter) {

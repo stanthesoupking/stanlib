@@ -25,13 +25,21 @@ typedef enum UI_Button_State {
 typedef struct UI_Button_State_Style {
 	vec2_f32 label_offset;
 	vec4_f32 label_color;
-	UI_Nine_Patch nine_patch;
+	UI_Nine_Patch backing;
+	vec4_f32 backing_color;
 } UI_Button_State_Style;
 
 typedef struct UI_Button_Style {
 	SL_Font_Atlas* font;
 	UI_Button_State_Style state[UI_BUTTON_STATE_COUNT];
 } UI_Button_Style;
+
+typedef struct UI_Slider_Style {
+	Rect_f32 needle_image;
+	vec4_f32 needle_color;
+	vec4_f32 track_color;
+	f32 track_height;
+} UI_Slider_Style;
 
 typedef struct UI UI;
 
@@ -69,6 +77,8 @@ void ui_end(UI* ui);
 void ui_begin_panel(UI* ui, Rect_f32 rect, vec4_f32 color);
 void ui_end_panel(UI* ui);
 
-bool ui_button(UI* ui, UI_ID id, const char* label, UI_Button_Style style, Rect_f32 rect);
+bool ui_button(UI* ui, UI_ID id, const UI_Button_Style* style, const char* label, Rect_f32 rect);
+
+bool ui_slider_f32(UI* ui, UI_ID id, const UI_Slider_Style* style, f32* value, Range_f32 range, Rect_f32 rect);
 
 void ui_render(UI* ui, SL_Blitter* blitter);
