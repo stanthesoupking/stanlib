@@ -411,10 +411,32 @@ bool ui_slider_f32(UI* ui, UI_ID id, const UI_Slider_Style* style, f32* value, R
 		ui->active_item = UI_ID_NULL;
 	}
 
-	// debug
-	// ui_draw_image(ui, rect, (Rect_f32) {}, (vec4_f32) { 0.5, 0, 0, 0.5 });
-
 	return change_value;
+}
+
+void ui_label(UI* ui, UI_ID id, const UI_Label_Style* style, const char* label, Rect_f32 rect) {
+	const u32 label_len = strlen(label);
+
+	char* label_copy;
+	allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
+	strcpy(label_copy, label);
+
+	const Range_s32 font_y_range = sl_get_font_y_range(style->font);
+	const vec2_f32 rect_size = size_rect_f32(rect);
+	const vec2_f32 text_offset = {
+		.x = rect.start.x,
+		.y = rect.start.y + (rect_size.y * 0.5f) - (font_y_range.start * 0.5f),
+	};
+
+	sl_blitter_command_seq_push(&ui->blitter_commands, (SL_Blitter_Command) {
+		.kind = SL_Blitter_Command_Kind_Draw_Text,
+		.draw_text = {
+			.font = style->font,
+			.string = label_copy,
+			.position = text_offset,
+			.color = style->color,
+		},
+	});
 }
 
 void ui_end(UI* ui) {

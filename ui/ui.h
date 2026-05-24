@@ -41,6 +41,11 @@ typedef struct UI_Slider_Style {
 	f32 track_height;
 } UI_Slider_Style;
 
+typedef struct UI_Label_Style {
+	SL_Font_Atlas* font;
+	vec4_f32 color;
+} UI_Label_Style;
+
 typedef struct UI UI;
 
 typedef struct UI_ID {
@@ -80,5 +85,7 @@ void ui_end_panel(UI* ui);
 bool ui_button(UI* ui, UI_ID id, const UI_Button_Style* style, const char* label, Rect_f32 rect);
 
 bool ui_slider_f32(UI* ui, UI_ID id, const UI_Slider_Style* style, f32* value, Range_f32 range, Rect_f32 rect);
+
+void ui_label(UI* ui, UI_ID id, const UI_Label_Style* style, const char* label, Rect_f32 rect);
 
 void ui_render(UI* ui, SL_Blitter* blitter);
