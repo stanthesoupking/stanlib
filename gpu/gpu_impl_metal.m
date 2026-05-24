@@ -273,7 +273,9 @@ sl_inline MTLPrimitiveType gpu_primitive_kind_to_mtl_primitive_type(Gpu_Primitiv
 }
 sl_inline MTLPrimitiveTopologyClass gpu_primitive_kind_to_mtl_primitive_topology_class(Gpu_Primitive_Kind kind) {
 	switch (kind) {
-		case Gpu_Primitive_Kind_Triangle: return MTLPrimitiveTopologyClassTriangle;
+		case Gpu_Primitive_Kind_Triangle:
+		case Gpu_Primitive_Kind_Triangle_Strip:
+			return MTLPrimitiveTopologyClassTriangle;
 	}
 }
 sl_inline MTLCullMode gpu_cull_mode_to_mtl_cull_mode(Gpu_Cull_Mode mode) {
@@ -994,6 +996,26 @@ void gpu_end_render(Gpu_Command_Buffer cb) {
 }
 
 // Render
+
+MTLFunctionConstantValues* gpu_function_constants_to_mtl_function_constant_values(const Gpu_Function_Constant* constants, u32 count) {
+	MTLFunctionConstantValues* result = [MTLFunctionConstantValues new];
+	
+	for (u32 i = 0; i < count; i++) {
+		const Gpu_Function_Constant constant = constants[i];
+		switch (constant.kind) {
+			case Gpu_Function_Constant_Kind_U32: {
+				[result setConstantValue:&constant.v_u32 type:MTLDataTypeUInt atIndex:constant.index];
+			} break;
+				
+			case Gpu_Function_Constant_Kind_Bool: {
+				[result setConstantValue:&constant.v_bool type:MTLDataTypeBool atIndex:constant.index];
+			} break;
+		}
+	}
+	
+	return result;
+}
+
 Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc) {
 	Gpu_Shader_Blob_Data* vert_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->vertex_blob);
 	Gpu_Shader_Blob_Data* frag_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->fragment_blob);
@@ -1001,13 +1023,15 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 	if ((vert_blob_data == NULL) || (frag_blob_data == NULL)) {
 		return SL_HANDLE_NULL;
 	}
+	
+	MTLFunctionConstantValues* constants = gpu_function_constants_to_mtl_function_constant_values(desc->constants, desc->constant_count);
 
-	id<MTLFunction> vert_function = [vert_blob_data->library newFunctionWithName:[NSString stringWithCString:desc->vertex_entry_point encoding:NSUTF8StringEncoding]];
+	id<MTLFunction> vert_function = [vert_blob_data->library newFunctionWithName:[NSString stringWithCString:desc->vertex_entry_point encoding:NSUTF8StringEncoding] constantValues:constants error:nil];
 	if (!vert_function) {
 		return SL_HANDLE_NULL;
 	}
 
-	id<MTLFunction> frag_function = [frag_blob_data->library newFunctionWithName:[NSString stringWithCString:desc->fragment_entry_point encoding:NSUTF8StringEncoding]];
+	id<MTLFunction> frag_function = [frag_blob_data->library newFunctionWithName:[NSString stringWithCString:desc->fragment_entry_point encoding:NSUTF8StringEncoding] constantValues:constants error:nil];
 	if (!frag_function) {
 		return SL_HANDLE_NULL;
 	}
@@ -1017,7 +1041,20 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 	pipeline_desc.fragmentFunction = frag_function;
 	pipeline_desc.inputPrimitiveTopology = gpu_primitive_kind_to_mtl_primitive_topology_class(desc->primitive_kind);
 	for (u8 i = 0; i < desc->render_pass_layout.attachment_count; i++) {
-		pipeline_desc.colorAttachments[i].pixelFormat = gpu_format_to_mtl_pixel_format(desc->render_pass_layout.attachments[i].format);
+		MTLRenderPipelineColorAttachmentDescriptor* mtl_attachment = pipeline_desc.colorAttachments[i];
+		mtl_attachment.pixelFormat = gpu_format_to_mtl_pixel_format(desc->render_pass_layout.attachments[i].format);
+		
+		if (desc->alpha_blending) {
+			mtl_attachment.blendingEnabled = YES;
+			mtl_attachment.rgbBlendOperation = MTLBlendOperationAdd;
+			mtl_attachment.alphaBlendOperation = MTLBlendOperationAdd;
+			mtl_attachment.sourceRGBBlendFactor = MTLBlendFactorOne;
+			mtl_attachment.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+			mtl_attachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
+			mtl_attachment.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+		} else {
+			mtl_attachment.blendingEnabled = NO;
+		}
 	}
 
 	id<MTLRenderPipelineState> pipeline_state = [gpu.device newRenderPipelineStateWithDescriptor:pipeline_desc error:nil];

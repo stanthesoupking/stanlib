@@ -147,8 +147,8 @@ void sl_blitter_begin(SL_Blitter** blitter_ptr, const SL_Blitter_Desc* desc) {
 }
 void sl_blitter_draw_textured_quads_raw(SL_Blitter* blitter, Gpu_Texture texture, const Textured_Quad_f32* quads, u32 quad_count, SL_Blitter_Draw_Kind kind) {
 	const Range_u32 quad_range = {
-		.start = textured_quad_f32_seq_get_count(&blitter->quads),
-		.end = textured_quad_f32_seq_get_count(&blitter->quads) + quad_count,
+		.start = (u32)textured_quad_f32_seq_get_count(&blitter->quads),
+		.end = (u32)textured_quad_f32_seq_get_count(&blitter->quads) + quad_count,
 	};
 	for (u32 i = 0; i < quad_count; i++) {
 		Textured_Quad_f32 quad = quads[i];
@@ -162,7 +162,7 @@ void sl_blitter_draw_textured_quads_raw(SL_Blitter* blitter, Gpu_Texture texture
 	}
 
 	// adjust or push draw
-	const u32 draw_count = sl_blitter_draw_seq_get_count(&blitter->draws);
+	const u32 draw_count = (u32)sl_blitter_draw_seq_get_count(&blitter->draws);
 	SL_Blitter_Draw* last_draw = (draw_count > 0) ? sl_blitter_draw_seq_get_ptr(&blitter->draws, draw_count - 1) : NULL;
 	if (last_draw && sl_handle_equals(last_draw->texture, texture) && (last_draw->kind == kind)) {
 		last_draw->range.end = quad_range.end;
@@ -183,6 +183,8 @@ void sl_blitter_draw_text(SL_Blitter* blitter, SL_Font_Atlas* font, const char* 
 	sl_get_font_geometry_for_string(font, string, position, color, quads, NULL);
 
 	sl_blitter_draw_textured_quads_raw(blitter, sl_get_font_atlas_texture(font), quads, quad_count, SL_Blitter_Draw_Kind_Swizzle_RRRR);
+	
+	allocator_free(blitter->allocator, quads, quad_count);
 }
 void sl_blitter_draw_texture(SL_Blitter* blitter, Gpu_Texture texture, vec2_f32 position, vec4_f32 color) {
 	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
