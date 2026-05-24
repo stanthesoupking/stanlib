@@ -10,5 +10,9 @@ static const Gpu_Shader_Blob_Desc blit_fs_blob = {
 		.data = blit_fs_spv,
 		.size = 1128,
 	},
+	.metallib = {
+		.data = blit_fs_metal,
+		.size = 5796,
+	},
 };
 
