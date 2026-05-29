@@ -100,8 +100,10 @@ typedef struct UI_Extent {
 	f32 max_height;
 } UI_Extent;
 
+#define UI_FILL -1.0f
+
 #define UI_EXTENT_NONE ((UI_Extent) {})
-#define UI_EXTENT_FILL ((UI_Extent) { .max_width = INFINITY, .max_height = INFINITY })
+#define UI_EXTENT_FILL ((UI_Extent) { .max_width = UI_FILL, .max_height = UI_FILL })
 
 typedef struct UI_Padding {
 	f32 top, bottom, left, right;
