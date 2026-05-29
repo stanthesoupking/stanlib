@@ -73,19 +73,74 @@ typedef struct UI_Event {
 } UI_Event;
 sl_seq(UI_Event, UI_Event_Seq, ui_event_seq);
 
+typedef enum UI_Direction {
+	UI_Direction_Horizontal,
+	UI_Direction_Vertical,
+} UI_Direction;
+
+typedef enum UI_Horizontal_Alignment {
+	UI_Horizontal_Alignment_Center,
+	UI_Horizontal_Alignment_Left,
+	UI_Horizontal_Alignment_Right
+} UI_Horizontal_Alignment;
+
+typedef enum UI_Vertical_Alignment {
+	UI_Vertical_Alignment_Center,
+	UI_Vertical_Alignment_Top,
+	UI_Vertical_Alignment_Bottom
+} UI_Vertical_Alignment;
+
+#define UI_EXTENT_NONE ((UI_Extent) {})
+
+typedef struct UI_Extent {
+	f32 min_width;
+	f32 max_width;
+
+	f32 min_height;
+	f32 max_height;
+} UI_Extent;
+
+#define UI_EXTENT_NONE ((UI_Extent) {})
+#define UI_EXTENT_FILL ((UI_Extent) { .max_width = INFINITY, .max_height = INFINITY })
+
+typedef struct UI_Padding {
+	f32 top, bottom, left, right;
+} UI_Padding;
+
+sl_inline UI_Padding ui_padding_uniform(f32 amount) {
+	return (UI_Padding) { amount, amount, amount, amount };
+}
+
+typedef struct UI_Callback {
+	void* ctx;
+	void (*func)(void* ctx);
+} UI_Callback;
+#define UI_CALLBACK_NULL ((UI_Callback) {})
+
 UI* ui_new(Allocator* allocator, Gpu_Texture texture);
 void ui_destroy(UI* ui);
 
 void ui_begin(UI* ui, UI_Event_Seq* event_sink);
 void ui_end(UI* ui);
 
-void ui_begin_panel(UI* ui, Rect_f32 rect, vec4_f32 color);
-void ui_end_panel(UI* ui);
+void ui_begin_frame(UI* ui, Rect_f32 rect);
+void ui_end_frame(UI* ui);
 
-bool ui_button(UI* ui, UI_ID id, const UI_Button_Style* style, const char* label, Rect_f32 rect);
+// fill available space in a hstack/vstack
+void ui_spacer(UI* ui);
 
-bool ui_slider_f32(UI* ui, UI_ID id, const UI_Slider_Style* style, f32* value, Range_f32 range, Rect_f32 rect);
+void ui_push_hstack(UI* ui, UI_Padding padding, UI_Horizontal_Alignment alignment, f32 spacing);
+void ui_push_vstack(UI* ui, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing);
+void ui_push_zstack(UI* ui, UI_Padding padding);
 
-void ui_label(UI* ui, UI_ID id, const UI_Label_Style* style, const char* label, Rect_f32 rect);
+void ui_pop(UI* ui);
+
+// pad the current container
+void ui_padding(UI* ui, UI_Padding padding);
+
+void ui_color(UI* ui, UI_Extent extent, vec4_f32 color);
+void ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press);
+void ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change);
+void ui_label(UI* ui, UI_ID id, UI_Extent extent, const UI_Label_Style* style, const char* label);
 
 void ui_render(UI* ui, SL_Blitter* blitter);

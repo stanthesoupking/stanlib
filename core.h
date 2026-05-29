@@ -204,6 +204,13 @@ sl_inline void sl_assert(bool condition, const char* message) {
 	}
 }
 
+sl_inline void sl_debug_assert(bool condition, const char* message) {
+	if (!condition) {
+		printf("sl_debug_assert: %s\n", message);
+		abort();
+	}
+}
+
 sl_inline void sl_abort(const char* message) {
 	printf("sl_abort: %s\n", message);
 	abort();
@@ -3125,6 +3132,10 @@ sl_shared_struct(Rect_s32) {
 #define s32_max 2147483647
 
 #if !defined(__SLANG__) && !defined(__METAL_VERSION__)
+
+sl_inline vec2_f32 centre_rect_f32(Rect_f32 a) {
+	return mul_vec2_f32(add_vec2_f32(a.start, a.end), (vec2_f32) { 0.5f, 0.5f });
+}
 
 sl_inline Rect_f32 offset_rect_f32(Rect_f32 a, vec2_f32 b) {
 	return (Rect_f32) {
