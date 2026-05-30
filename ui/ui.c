@@ -432,9 +432,121 @@ Rect_f32 ui_padded_rect(Rect_f32 rect, UI_Padding padding) {
 	};
 }
 
+// typedef struct UI_Padding_Element {
+// 	UI_Padding padding;
+// 	UI_Element* child;
+// } UI_Padding_Element;
+
+// void ui_add_padding(UI* ui, UI_Padding padding) {
+// 	sl_debug_assert(ui->stack_length > 0, "Must be a container to pad.");
+
+// 	UI_Padding_Element* padding_el;
+// 	allocator_new(&ui->arena->allocator, padding_el, 1);
+// 	*padding_el = (UI_Padding_Element) {
+// 		.padding = padding,
+// 		.child = ui->stack[ui->stack_length - 1],
+// 	};
+// 	UI_Element* element = ui_add_leaf(ui);
+// 	*element = (UI_Element) {
+// 		.data = hstack,
+// 		.vtable = &ui_hstack_vtable,
+// 	};
+// }
+
+// MARK: Distribute
+
+typedef struct UI_Distribute_Item {
+	f32 value;
+	f32 min;
+	f32 max;
+} UI_Distribute_Item;
+
+void ui_distribute(f32 size, f32 spacing, UI_Distribute_Item* items, u32 item_count) {
+	f32 remaining = size;
+
+	if (item_count > 0) {
+		remaining -= spacing * (f32)(item_count - 1);
+	}
+
+	// 1: Assign min width to everything
+	f32 non_fill_remaining = 0.0f;
+	u32 fill_count = 0;
+	for (u32 i = 0; i < item_count; i++) {
+		// All elements start out at minimum size
+		UI_Distribute_Item* item = &items[i];
+		item->value = item->min;
+		remaining -= item->min;
+
+		if (item->max == UI_FILL) {
+			fill_count++;
+		} else {
+			non_fill_remaining += item->max - item->min;
+		}
+	}
+
+	// 2: Distribute remaining evenly to elements with max != UI_FILL
+	if (non_fill_remaining > 0.0f) {
+		const f32 amount_per_child = saturate_f32(remaining / non_fill_remaining);
+		for (u32 i = 0; i < item_count; i++) {
+			UI_Distribute_Item* item = &items[i];
+			if (item->max != UI_FILL) {
+				const f32 additional_width = (item->max - item->min) * amount_per_child;
+				item->value += additional_width;
+			}
+		}
+		remaining -= non_fill_remaining;
+	}
+
+	// 3: Give remaining width to elements with max == UI_FILL
+	if (fill_count > 0) {
+		const f32 amount_per_child = sl_max(remaining / (f32)fill_count, 0.0f);
+		for (u32 i = 0; i < item_count; i++) {
+			UI_Distribute_Item* item = &items[i];
+			if (item->max == UI_FILL) {
+				item->value += amount_per_child;
+			}
+		}
+	}
+}
+
+UI_Extent ui_extent_combine(UI_Extent parent, UI_Extent child) {
+	UI_Extent result = {
+		.min_width = sl_max(parent.min_width, child.min_width),
+		.min_height = sl_max(parent.min_height, child.min_height),
+	};
+
+	if (parent.max_width == UI_FILL) {
+		result.max_width = UI_FILL;
+	} else if (child.max_width == UI_FILL) {
+		result.max_width = result.min_width;
+	} else {
+		result.max_width = sl_max(parent.max_width, child.max_width);
+	}
+
+	if (parent.max_height == UI_FILL) {
+		result.max_height = UI_FILL;
+	} else if (child.max_height == UI_FILL) {
+		result.max_height = result.min_height;
+	} else {
+		result.max_height = sl_max(parent.max_height, child.max_height);
+	}
+
+	return result;
+}
+
+UI_Extent ui_extent_add_padding(UI_Extent extent, UI_Padding padding) {
+	return (UI_Extent) {
+		.min_width = extent.min_width + padding.left + padding.right,
+		.min_height = extent.min_height + padding.top + padding.bottom,
+		.max_width = extent.max_width + padding.left + padding.right,
+		.max_height = extent.max_width + padding.top + padding.bottom,
+	};
+}
+
 typedef struct UI_HStack {
+	UI_Extent extent;
 	UI_Padding padding;
-	UI_Horizontal_Alignment alignment;
+	UI_Vertical_Alignment alignment;
 	f32 spacing;
 	UI_Element_Seq children;
 } UI_HStack;
@@ -446,89 +558,98 @@ UI_Element* ui_hstack_add_child(UI* ui, UI_Element* self) {
 UI_Extent ui_hstack_get_extent(UI* ui, UI_Element* self) {
 	UI_HStack* hstack = self->data;
 
-	UI_Extent result = {0};
-
 	const u32 child_count = ui_element_seq_get_count(&hstack->children);
 
+	UI_Extent children_extent = {0};
 	if (child_count > 0) {
-		result.max_width = result.min_width = hstack->padding.left + hstack->padding.right + hstack->spacing * (f32)(child_count - 1);
-
 		for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
-			const UI_Element child = ui_element_seq_get(&hstack->children, child_idx);
-			const UI_Extent child_extent = child.vtable->get_extent(ui, child.data);
-			result.min_width += child_extent.min_width;
-			result.max_width += child_extent.max_width;
-			result.min_height = sl_max(result.min_height, hstack->padding.bottom + hstack->padding.top + child_extent.min_height);
-			result.max_height = sl_max(result.max_height, hstack->padding.bottom + hstack->padding.top + child_extent.max_height);
+			UI_Element* child = ui_element_seq_get_ptr(&hstack->children, child_idx);
+			const UI_Extent child_extent = child->vtable->get_extent(ui, child);
+
+			children_extent.min_width += child_extent.min_width;
+			if (child_extent.max_width != UI_FILL) {
+				children_extent.max_width += child_extent.max_width;
+			}
+
+			children_extent.min_height = sl_max(children_extent.min_height, child_extent.min_height);
+			if (child_extent.max_height != UI_FILL) {
+				children_extent.max_height = sl_max(children_extent.max_height, child_extent.max_height);
+			}
 		}
+		children_extent.max_width += hstack->spacing * (f32)(child_count - 1);
 	}
 
-	return result;
+	children_extent = ui_extent_add_padding(children_extent, hstack->padding);
+
+	return ui_extent_combine(hstack->extent, children_extent);
 }
 void ui_hstack_layout(UI* ui, UI_Element* self) {
 	UI_HStack* hstack = self->data;
 	const u32 child_count = ui_element_seq_get_count(&hstack->children);
 
-	f32 fill_count = 0.0f;
+	const u64 initial_arena_position = sl_arena_allocator_get_position(ui->arena);
 
-	f32 contents_minimum_width = hstack->padding.left + hstack->padding.right;
-	f32 contents_maximum_width = hstack->padding.left + hstack->padding.right;
+	UI_Distribute_Item* distribute_items;
+	allocator_new(&ui->arena->allocator, distribute_items, child_count);
+
 	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
 		UI_Element* child = ui_element_seq_get_ptr(&hstack->children, child_idx);
-
-		if (child_idx > 0) {
-			contents_minimum_width += hstack->spacing;
-			contents_maximum_width += hstack->spacing;
-		}
-
 		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
-		contents_minimum_width += child_extent.min_width;
-
-		if (child_extent.max_width == UI_FILL) {
-			fill_count += 1.0f;
-		} else {
-			contents_maximum_width += child_extent.max_width;
-		}
+		distribute_items[child_idx] = (UI_Distribute_Item) {
+			.value = 0.0f,
+			.min = child_extent.min_width,
+			.max = child_extent.max_width,
+		};
 	}
 
-	const f32 current_width = size_rect_f32(self->rect).x;
-	const f32 t = saturate_f32((current_width - contents_minimum_width) / (contents_maximum_width - contents_minimum_width));
-	const f32 total_non_fill_width = lerp_f32(contents_minimum_width, contents_maximum_width, t);
-	const f32 width_per_fill = sl_max((current_width - total_non_fill_width) / fill_count, 0.0f);
-
 	const Rect_f32 padded_rect = ui_padded_rect(self->rect, hstack->padding);
-
-	const f32 self_height = size_rect_f32(padded_rect).y;
+	const vec2_f32 padded_rect_size = size_rect_f32(padded_rect);
+	ui_distribute(padded_rect_size.x, hstack->spacing, distribute_items, child_count);
 
 	f32 current_x = padded_rect.start.x;
-
 	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
 		UI_Element* child = ui_element_seq_get_ptr(&hstack->children, child_idx);
+		const UI_Distribute_Item* distribute_item = &distribute_items[child_idx];
 		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
 
-		f32 child_width;
-		if (child_extent.max_width == UI_FILL) {
-			child_width = width_per_fill;
-		} else {
-			child_width = lerp_f32(child_extent.min_width, child_extent.max_width, t);
+		const f32 child_height = sl_clamp(padded_rect_size.y, child_extent.min_height, (child_extent.max_height == UI_FILL) ? padded_rect_size.y : child_extent.max_height);
+
+		f32 offset_y;
+		switch (hstack->alignment) {
+			case UI_Vertical_Alignment_Top: {
+				offset_y = padded_rect.start.y;
+			} break;
+
+			case UI_Vertical_Alignment_Center: {
+				offset_y = padded_rect.start.y + (padded_rect_size.y * 0.5f) - (child_height * 0.5f);
+			} break;
+
+			case UI_Vertical_Alignment_Bottom: {
+				offset_y = padded_rect.start.y + padded_rect_size.y - child_height;
+			} break;
 		}
 
-		const f32 child_height = sl_clamp(self_height, child_extent.min_height, child_extent.max_height);
-		const f32 offset_y = padded_rect.start.y + (self_height * 0.5f) - (child_height * 0.5f); // align centre
+		const f32 child_width = distribute_item->value;
 
-		const Rect_f32 child_rect = {
+		child->rect = (Rect_f32) {
 			.start = { current_x, offset_y },
 			.end = { current_x + child_width, offset_y + child_height },
 		};
 
-		child->rect = child_rect;
+		current_x += child_width + hstack->spacing;
+	}
+
+	sl_arena_allocator_reset(ui->arena, initial_arena_position);
+
+	// Now layout sub-children
+	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
+		UI_Element* child = ui_element_seq_get_ptr(&hstack->children, child_idx);
 		if (child->vtable->layout) {
 			child->vtable->layout(ui, child);
 		}
-
-		current_x += child_width + hstack->spacing;
 	}
 }
+
 void ui_hstack_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	UI_HStack* hstack = self->data;
 	const u32 child_count = ui_element_seq_get_count(&hstack->children);
@@ -552,10 +673,11 @@ UI_Element* ui_add_leaf(UI* ui) {
 	return parent->vtable->add_child(ui, parent);
 }
 
-void ui_push_hstack(UI* ui, UI_Padding padding, UI_Horizontal_Alignment alignment, f32 spacing) {
+void ui_push_hstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing) {
 	UI_HStack* hstack;
 	allocator_new(&ui->arena->allocator, hstack, 1);
 	*hstack = (UI_HStack) {
+		.extent = extent,
 		.padding = padding,
 		.alignment = alignment,
 		.spacing = spacing,
@@ -565,6 +687,148 @@ void ui_push_hstack(UI* ui, UI_Padding padding, UI_Horizontal_Alignment alignmen
 	*element = (UI_Element) {
 		.data = hstack,
 		.vtable = &ui_hstack_vtable,
+	};
+	ui->stack[ui->stack_length++] = element;
+}
+
+typedef struct UI_VStack {
+	UI_Extent extent;
+	UI_Padding padding;
+	UI_Horizontal_Alignment alignment;
+	f32 spacing;
+	UI_Element_Seq children;
+} UI_VStack;
+
+UI_Element* ui_vstack_add_child(UI* ui, UI_Element* self) {
+	UI_VStack* vstack = self->data;
+	return ui_element_seq_push_reserve(&vstack->children);
+}
+UI_Extent ui_vstack_get_extent(UI* ui, UI_Element* self) {
+	UI_VStack* vstack = self->data;
+
+	const u32 child_count = ui_element_seq_get_count(&vstack->children);
+
+	UI_Extent children_extent = {0};
+	if (child_count > 0) {
+		for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
+			UI_Element* child = ui_element_seq_get_ptr(&vstack->children, child_idx);
+			const UI_Extent child_extent = child->vtable->get_extent(ui, child);
+
+			children_extent.min_height += child_extent.min_height;
+			if (child_extent.max_height != UI_FILL) {
+				children_extent.max_height += child_extent.max_height;
+			}
+
+			children_extent.min_width = sl_max(children_extent.min_width, child_extent.min_width);
+			if (child_extent.max_width != UI_FILL) {
+				children_extent.max_width = sl_max(children_extent.max_width, child_extent.max_width);
+			}
+		}
+		children_extent.max_height += vstack->spacing * (f32)(child_count - 1);
+	}
+
+	children_extent = ui_extent_add_padding(children_extent, vstack->padding);
+
+	return ui_extent_combine(vstack->extent, children_extent);
+}
+void ui_vstack_layout(UI* ui, UI_Element* self) {
+	UI_VStack* vstack = self->data;
+	const u32 child_count = ui_element_seq_get_count(&vstack->children);
+
+	const u64 initial_arena_position = sl_arena_allocator_get_position(ui->arena);
+
+	UI_Distribute_Item* distribute_items;
+	allocator_new(&ui->arena->allocator, distribute_items, child_count);
+
+	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
+		UI_Element* child = ui_element_seq_get_ptr(&vstack->children, child_idx);
+		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
+		distribute_items[child_idx] = (UI_Distribute_Item) {
+			.value = 0.0f,
+			.min = child_extent.min_height,
+			.max = child_extent.max_height,
+		};
+	}
+
+	const Rect_f32 padded_rect = ui_padded_rect(self->rect, vstack->padding);
+	const vec2_f32 padded_rect_size = size_rect_f32(padded_rect);
+	ui_distribute(padded_rect_size.y, vstack->spacing, distribute_items, child_count);
+
+	f32 current_y = padded_rect.start.y;
+	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
+		UI_Element* child = ui_element_seq_get_ptr(&vstack->children, child_idx);
+		const UI_Distribute_Item* distribute_item = &distribute_items[child_idx];
+		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
+
+		const f32 child_width = sl_clamp(padded_rect_size.x, child_extent.min_width, (child_extent.max_width == UI_FILL) ? padded_rect_size.x : child_extent.max_width);
+
+		f32 offset_x;
+		switch (vstack->alignment) {
+			case UI_Vertical_Alignment_Top: {
+				offset_x = padded_rect.start.x;
+			} break;
+
+			case UI_Vertical_Alignment_Center: {
+				offset_x = padded_rect.start.x + (padded_rect_size.x * 0.5f) - (child_width * 0.5f);
+			} break;
+
+			case UI_Vertical_Alignment_Bottom: {
+				offset_x = padded_rect.start.x + padded_rect_size.x - child_width;
+			} break;
+		}
+
+		const f32 child_height = distribute_item->value;
+
+		child->rect = (Rect_f32) {
+			.start = { offset_x, current_y },
+			.end = { offset_x + child_width, current_y + child_height },
+		};
+
+		current_y += child_height + vstack->spacing;
+	}
+
+	sl_arena_allocator_reset(ui->arena, initial_arena_position);
+
+	// Now layout sub-children
+	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
+		UI_Element* child = ui_element_seq_get_ptr(&vstack->children, child_idx);
+		if (child->vtable->layout) {
+			child->vtable->layout(ui, child);
+		}
+	}
+}
+
+void ui_vstack_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
+	UI_VStack* vstack = self->data;
+	const u32 child_count = ui_element_seq_get_count(&vstack->children);
+	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
+		UI_Element* child = ui_element_seq_get_ptr(&vstack->children, child_idx);
+		if (child->vtable->render) {
+			child->vtable->render(ui, child, blitter);
+		}
+	}
+}
+const static UI_Element_VTable ui_vstack_vtable = {
+	.add_child = ui_vstack_add_child,
+	.get_extent = ui_vstack_get_extent,
+	.layout = ui_vstack_layout,
+	.render = ui_vstack_render
+};
+
+void ui_push_vstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Horizontal_Alignment alignment, f32 spacing) {
+	UI_VStack* vstack;
+	allocator_new(&ui->arena->allocator, vstack, 1);
+	*vstack = (UI_VStack) {
+		.extent = extent,
+		.padding = padding,
+		.alignment = alignment,
+		.spacing = spacing,
+		.children = ui_element_seq_new(&ui->arena->allocator, 0),
+	};
+	UI_Element* element = ui_add_leaf(ui);
+	*element = (UI_Element) {
+		.data = vstack,
+		.vtable = &ui_vstack_vtable,
 	};
 	ui->stack[ui->stack_length++] = element;
 }
@@ -589,6 +853,7 @@ void ui_spacer(UI* ui) {
 }
 
 typedef struct UI_ZStack {
+	UI_Extent extent;
 	UI_Padding padding;
 	UI_Element_Seq children;
 } UI_ZStack;
@@ -600,36 +865,51 @@ UI_Element* ui_zstack_add_child(UI* ui, UI_Element* self) {
 UI_Extent ui_zstack_get_extent(UI* ui, UI_Element* self) {
 	UI_ZStack* zstack = self->data;
 
-	UI_Extent result = {
-		.min_width = zstack->padding.left + zstack->padding.right,
-		.max_width = zstack->padding.left + zstack->padding.right,
-		.min_height = zstack->padding.bottom + zstack->padding.top,
-		.max_height = zstack->padding.bottom + zstack->padding.top,
-	};
-	const u32 child_count = ui_element_seq_get_count(&zstack->children);
-	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
-		const UI_Element child = ui_element_seq_get(&zstack->children, child_idx);
-		const UI_Extent child_extent = child.vtable->get_extent(ui, child.data);
-		result.min_width = sl_max(result.min_width, zstack->padding.left + zstack->padding.right + child_extent.min_width);
-		result.min_height = sl_max(result.min_height, zstack->padding.bottom + zstack->padding.top + child_extent.min_height);
-
-		if (child_extent.max_width != UI_FILL) {
-			result.max_width = sl_max(result.max_width, zstack->padding.left + zstack->padding.right + child_extent.max_width);
-		}
-		if (child_extent.max_height != UI_FILL) {
-			result.max_height = sl_max(result.max_height, zstack->padding.bottom + zstack->padding.top + child_extent.max_height);
-		}
-	}
-
-	return result;
-}
-void ui_zstack_layout(UI* ui, UI_Element* self) {
-	UI_ZStack* zstack = self->data;
-	const Rect_f32 padded_rect = ui_padded_rect(self->rect, zstack->padding);
+	UI_Extent children_extent = {0};
 	const u32 child_count = ui_element_seq_get_count(&zstack->children);
 	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
 		UI_Element* child = ui_element_seq_get_ptr(&zstack->children, child_idx);
-		child->rect = padded_rect;
+		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
+		children_extent.min_width = sl_max(children_extent.min_width, child_extent.min_width);
+		children_extent.min_height = sl_max(children_extent.min_height, child_extent.min_height);
+
+		if (child_extent.max_width != UI_FILL) {
+			children_extent.max_width = sl_max(children_extent.max_width, child_extent.max_width);
+		}
+		if (child_extent.max_height != UI_FILL) {
+			children_extent.max_height = sl_max(children_extent.max_height, child_extent.max_height);
+		}
+	}
+
+	children_extent = ui_extent_add_padding(children_extent, zstack->padding);
+
+	return ui_extent_combine(zstack->extent, children_extent);
+}
+void ui_zstack_layout(UI* ui, UI_Element* self) {
+	UI_ZStack* zstack = self->data;
+
+	const Rect_f32 padded_rect = ui_padded_rect(self->rect, zstack->padding);
+	const vec2_f32 padded_rect_size = size_rect_f32(padded_rect);
+	const vec2_f32 padded_rect_center = centre_rect_f32(padded_rect);
+
+	const u32 child_count = ui_element_seq_get_count(&zstack->children);
+	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
+		UI_Element* child = ui_element_seq_get_ptr(&zstack->children, child_idx);
+		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
+
+		const vec2_f32 child_size = {
+			sl_clamp(padded_rect_size.x, child_extent.min_width, (child_extent.max_width == UI_FILL) ? padded_rect_size.x : child_extent.max_width),
+			sl_clamp(padded_rect_size.y, child_extent.min_height, (child_extent.max_height == UI_FILL) ? padded_rect_size.y : child_extent.max_height),
+		};
+
+		const vec2_f32 child_offset = sub_vec2_f32(padded_rect_center, mul_vec2_f32(child_size, (vec2_f32) { 0.5f, 0.5f }));
+
+		const Rect_f32 child_rect = {
+			.start = child_offset,
+			.end = add_vec2_f32(child_offset, child_size),
+		};
+
+		child->rect = child_rect;
 		if (child->vtable->layout) {
 			child->vtable->layout(ui, child);
 		}
@@ -652,10 +932,11 @@ const static UI_Element_VTable ui_zstack_vtable = {
 	.render = ui_zstack_render,
 };
 
-UI_Element ui_zstack_new(UI* ui, UI_Padding padding) {
+UI_Element ui_zstack_new(UI* ui, UI_Extent extent, UI_Padding padding) {
 	UI_ZStack* zstack;
 	allocator_new(&ui->arena->allocator, zstack, 1);
 	*zstack = (UI_ZStack) {
+		.extent = extent,
 		.padding = padding,
 		.children = ui_element_seq_new(&ui->arena->allocator, 0),
 	};
@@ -666,13 +947,9 @@ UI_Element ui_zstack_new(UI* ui, UI_Padding padding) {
 	return element;
 }
 
-void ui_push_vstack(UI* ui, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing) {
-
-}
-
-void ui_push_zstack(UI* ui, UI_Padding padding) {
+void ui_push_zstack(UI* ui, UI_Extent extent, UI_Padding padding) {
 	UI_Element* element = ui_add_leaf(ui);
-	*element = ui_zstack_new(ui, padding);
+	*element = ui_zstack_new(ui, extent, padding);
 	ui->stack[ui->stack_length++] = element;
 }
 
@@ -681,7 +958,7 @@ void ui_begin_frame(UI* ui, Rect_f32 rect) {
 	UI_Frame* frame = ui_frame_seq_push_reserve(&ui->frames);
 	*frame = (UI_Frame) {
 		.rect = rect,
-		.zstack = ui_zstack_new(ui, (UI_Padding) {}),
+		.zstack = ui_zstack_new(ui, UI_EXTENT_FILL, UI_PADDING_NONE),
 	};
 
 	ui->stack_length = 0;

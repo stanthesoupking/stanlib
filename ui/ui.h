@@ -109,6 +109,8 @@ typedef struct UI_Padding {
 	f32 top, bottom, left, right;
 } UI_Padding;
 
+#define UI_PADDING_NONE ((UI_Padding) {})
+
 sl_inline UI_Padding ui_padding_uniform(f32 amount) {
 	return (UI_Padding) { amount, amount, amount, amount };
 }
@@ -131,14 +133,14 @@ void ui_end_frame(UI* ui);
 // fill available space in a hstack/vstack
 void ui_spacer(UI* ui);
 
-void ui_push_hstack(UI* ui, UI_Padding padding, UI_Horizontal_Alignment alignment, f32 spacing);
-void ui_push_vstack(UI* ui, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing);
-void ui_push_zstack(UI* ui, UI_Padding padding);
+void ui_push_hstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing);
+void ui_push_vstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Horizontal_Alignment alignment, f32 spacing);
+void ui_push_zstack(UI* ui, UI_Extent extent, UI_Padding padding);
 
 void ui_pop(UI* ui);
 
-// pad the current container
-void ui_padding(UI* ui, UI_Padding padding);
+// add padding to the current container
+void ui_add_padding(UI* ui, UI_Padding padding);
 
 void ui_color(UI* ui, UI_Extent extent, vec4_f32 color);
 void ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press);
