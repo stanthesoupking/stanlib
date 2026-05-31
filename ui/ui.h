@@ -123,6 +123,13 @@ typedef struct UI_Callback {
 } UI_Callback;
 #define UI_CALLBACK_NULL ((UI_Callback) {})
 
+typedef struct UI_Render_Callback {
+	void* ctx;
+	void (*render)(void* ctx, Rect_f32 rect, SL_Blitter* blitter);
+} UI_Render_Callback;
+
+typedef struct UI_Element UI_Element;
+
 UI* ui_new(Allocator* allocator, Gpu_Texture texture);
 void ui_destroy(UI* ui);
 
@@ -132,21 +139,27 @@ void ui_end(UI* ui);
 void ui_begin_frame(UI* ui, Rect_f32 rect);
 void ui_end_frame(UI* ui);
 
-// fill available space in a hstack/vstack
-void ui_spacer(UI* ui);
+// ill available space in a hstack/vstack
+UI_Element* ui_spacer(UI* ui);
 
-void ui_push_hstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing);
-void ui_push_vstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Horizontal_Alignment alignment, f32 spacing);
-void ui_push_zstack(UI* ui, UI_Extent extent, UI_Padding padding);
+UI_Element* ui_push_hstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing);
+UI_Element* ui_push_vstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Horizontal_Alignment alignment, f32 spacing);
+UI_Element* ui_push_zstack(UI* ui, UI_Extent extent, UI_Padding padding);
 
 void ui_pop(UI* ui);
 
-// add padding to the current container
-void ui_add_padding(UI* ui, UI_Padding padding);
+UI_Element* ui_color(UI* ui, UI_Extent extent, vec4_f32 color);
+UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press);
+UI_Element* ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change);
+UI_Element* ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label);
 
-void ui_color(UI* ui, UI_Extent extent, vec4_f32 color);
-void ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press);
-void ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change);
-void ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label);
+// Custom element rendered using a callback.
+UI_Element* ui_custom(UI* ui, UI_Extent extent, UI_Render_Callback on_render);
+
+// Get the rect after layout for the given element.
+//
+// Note #1: An element will only have a rect once layout has run (after calling ui_end()).
+// Note #2: When the element is culled, this function returns `false`.
+bool ui_element_get_layout_rect(UI* ui, UI_Element* element, Rect_f32* out_rect);
 
 void ui_render(UI* ui, SL_Blitter* blitter);

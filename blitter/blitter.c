@@ -183,6 +183,7 @@ void sl_blitter_draw_text(SL_Blitter* blitter, SL_Font_Atlas* font, const char* 
 	sl_get_font_geometry_for_string(font, string, position, color, quads, NULL);
 
 	sl_blitter_draw_textured_quads_raw(blitter, sl_get_font_atlas_texture(font), quads, quad_count, SL_Blitter_Draw_Kind_Swizzle_RRRR);
+	allocator_free(blitter->allocator, quads, quad_count);
 }
 void sl_blitter_draw_texture(SL_Blitter* blitter, Gpu_Texture texture, vec2_f32 position, vec4_f32 color) {
 	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);

@@ -23,12 +23,16 @@ typedef struct UI_Element_VTable {
 	UI_Extent (*get_extent)(UI* ui, UI_Element* self);
 	void (*layout)(UI* ui, UI_Element* self);
 	void (*render)(UI* ui, UI_Element* self, SL_Blitter* blitter);
+	void (*handle_events)(UI* ui, UI_Element* self);
 } UI_Element_VTable;
 
 typedef struct UI_Element {
 	void* data;
 	const UI_Element_VTable* vtable;
 
+	bool culled;
+
+	// Derived during layout
 	Rect_f32 rect;
 } UI_Element;
 
@@ -52,6 +56,11 @@ typedef struct UI_Frame {
 } UI_Frame;
 sl_seq(UI_Frame, UI_Frame_Seq, ui_frame_seq);
 
+typedef enum UI_Lifecycle_State {
+	UI_Lifecycle_State_Began,
+	UI_Lifecycle_State_Ended,
+} UI_Lifecycle_State;
+
 #define UI_MAX_DEPTH 64
 
 typedef struct UI {
@@ -67,6 +76,8 @@ typedef struct UI {
 	vec2_f32 mouse_position;
 	bool mouse_button_down;
 	bool mouse_button_pressed;
+
+	UI_Lifecycle_State lifecycle_state;
 
 	// is the mouse obscured (i.e. by a panel)
 	bool mouse_obscured;
@@ -92,6 +103,7 @@ UI* ui_new(Allocator* allocator, Gpu_Texture texture) {
 		.frame_index = 0ull,
 		.hot_item = UI_ID_NULL,
 		.active_item = UI_ID_NULL,
+		.lifecycle_state = UI_Lifecycle_State_Ended,
 		.arena = sl_arena_allocator_new(allocator, 64ull * 1024ull),
 		.frames = ui_frame_seq_new(allocator, 0),
 	};
@@ -101,42 +113,6 @@ void ui_destroy(UI* ui) {
 	Allocator* allocator = ui->allocator;
 	*ui = (UI) {0};
 	allocator_free(allocator, ui, 1);
-}
-
-void ui_begin(UI* ui, UI_Event_Seq* event_sink) {
-	++ui->frame_index;
-
-	sl_arena_allocator_reset(ui->arena, 0);
-	ui_frame_seq_clear(&ui->frames);
-
-	ui->stack_length = 0;
-
-	// Handle events
-	{
-		ui->mouse_obscured = false;
-		ui->mouse_button_pressed = false;
-		ui->hot_item = UI_ID_NULL;
-
-		const u32 event_count = ui_event_seq_get_count(event_sink);
-		for (u32 i = 0; i < event_count; i++) {
-			UI_Event event = ui_event_seq_get(event_sink, i);
-			switch (event.kind) {
-				case UI_Event_Kind_Mouse_Move: {
-					ui->mouse_position = event.mouse_move.position;
-				} break;
-
-				case UI_Event_Kind_Mouse_Mouse_Down: {
-					ui->mouse_button_down = true;
-				} break;
-
-				case UI_Event_Kind_Mouse_Mouse_Up: {
-					ui->mouse_button_pressed |= ui->mouse_button_down;
-					ui->mouse_button_down = false;
-				} break;
-			}
-		}
-		ui_event_seq_clear(event_sink);
-	}
 }
 
 void ui_draw_image(UI* ui, SL_Blitter* blitter, Rect_f32 rect, Rect_f32 atlas_rect, vec4_f32 color) {
@@ -279,6 +255,8 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patc
 	sl_blitter_draw_textured_quads(blitter, ui->texture, quads, next_quad);
 }
 
+// MARK: Rect
+
 Rect_f32 ui_padded_rect(Rect_f32 rect, UI_Padding padding) {
 	return (Rect_f32) {
 		.start = {
@@ -289,6 +267,13 @@ Rect_f32 ui_padded_rect(Rect_f32 rect, UI_Padding padding) {
 			rect.end.x - padding.right,
 			rect.end.y - padding.bottom,
 		},
+	};
+}
+
+Rect_f32 ui_rect_snap_to_pixels(Rect_f32 rect) {
+	return (Rect_f32) {
+		.start = { roundf(rect.start.x), roundf(rect.start.y) },
+		.end = { roundf(rect.end.x), roundf(rect.end.y) },
 	};
 }
 
@@ -384,12 +369,52 @@ UI_Extent ui_extent_add_padding(UI_Extent extent, UI_Padding padding) {
 	};
 }
 
-// MARK: Rect
+// MARK: Element Common
 
-Rect_f32 ui_rect_snap_to_pixels(Rect_f32 rect) {
-	return (Rect_f32) {
-		.start = { roundf(rect.start.x), roundf(rect.start.y) },
-		.end = { roundf(rect.end.x), roundf(rect.end.y) },
+bool ui_element_get_layout_rect(UI* ui, UI_Element* element, Rect_f32* out_rect) {
+	if ((ui->lifecycle_state == UI_Lifecycle_State_Ended) && !element->culled) {
+		*out_rect = element->rect;
+		return true;
+	} else {
+		return false;
+	}
+}
+
+UI_Element* ui_add_leaf(UI* ui) {
+	sl_debug_assert(ui->stack_length > 0, "Stack can't be empty.");
+	UI_Element* parent = ui->stack[ui->stack_length - 1];
+	return parent->vtable->add_child(ui, parent);
+}
+
+void ui_trigger_callback(UI_Callback callback) {
+	if (callback.func) {
+		callback.func(callback.ctx);
+	}
+}
+
+// MARK: Text Measurements
+
+typedef struct UI_Text_Measurements {
+	Range_s32 y_range;
+	vec2_s32 size;
+} UI_Text_Measurements;
+
+UI_Text_Measurements ui_text_measurements(SL_Font_Atlas* font, const char* string) {
+	const Range_s32 font_y_range = sl_get_font_y_range(font);
+	const Rect_s32 label_rect = sl_font_atlas_measure_string(font, string);
+	const vec2_s32 label_size = size_rect_s32(label_rect);
+	return (UI_Text_Measurements) {
+		.size = label_size,
+		.y_range = font_y_range,
+	};
+}
+
+UI_Extent ui_text_measurements_get_extent(const UI_Text_Measurements* measurements) {
+	return (UI_Extent) {
+		.min_width = measurements->size.x,
+		.max_width = measurements->size.x,
+		.min_height = measurements->y_range.end - measurements->y_range.start,
+		.max_height = measurements->y_range.end - measurements->y_range.start,
 	};
 }
 
@@ -502,7 +527,6 @@ void ui_hstack_layout(UI* ui, UI_Element* self) {
 		}
 	}
 }
-
 void ui_hstack_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	UI_HStack* hstack = self->data;
 	const u32 child_count = ui_element_seq_get_count(&hstack->children);
@@ -513,20 +537,25 @@ void ui_hstack_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 		}
 	}
 }
+void ui_hstack_handle_events(UI* ui, UI_Element* self) {
+	UI_HStack* hstack = self->data;
+	const u32 child_count = ui_element_seq_get_count(&hstack->children);
+	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
+		UI_Element* child = ui_element_seq_get_ptr(&hstack->children, child_idx);
+		if (child->vtable->handle_events) {
+			child->vtable->handle_events(ui, child);
+		}
+	}
+}
 const static UI_Element_VTable ui_hstack_vtable = {
 	.add_child = ui_hstack_add_child,
 	.get_extent = ui_hstack_get_extent,
 	.layout = ui_hstack_layout,
-	.render = ui_hstack_render
+	.render = ui_hstack_render,
+	.handle_events = ui_hstack_handle_events,
 };
 
-UI_Element* ui_add_leaf(UI* ui) {
-	sl_debug_assert(ui->stack_length > 0, "Stack can't be empty.");
-	UI_Element* parent = ui->stack[ui->stack_length - 1];
-	return parent->vtable->add_child(ui, parent);
-}
-
-void ui_push_hstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing) {
+UI_Element* ui_push_hstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing) {
 	UI_HStack* hstack;
 	allocator_new(&ui->arena->allocator, hstack, 1);
 	*hstack = (UI_HStack) {
@@ -542,6 +571,7 @@ void ui_push_hstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Vertical_Al
 		.vtable = &ui_hstack_vtable,
 	};
 	ui->stack[ui->stack_length++] = element;
+	return element;
 }
 
 // MARK: VStack
@@ -653,7 +683,6 @@ void ui_vstack_layout(UI* ui, UI_Element* self) {
 		}
 	}
 }
-
 void ui_vstack_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	UI_VStack* vstack = self->data;
 	const u32 child_count = ui_element_seq_get_count(&vstack->children);
@@ -664,14 +693,25 @@ void ui_vstack_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 		}
 	}
 }
+void ui_vstack_handle_events(UI* ui, UI_Element* self) {
+	UI_VStack* vstack = self->data;
+	const u32 child_count = ui_element_seq_get_count(&vstack->children);
+	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
+		UI_Element* child = ui_element_seq_get_ptr(&vstack->children, child_idx);
+		if (child->vtable->handle_events) {
+			child->vtable->handle_events(ui, child);
+		}
+	}
+}
 const static UI_Element_VTable ui_vstack_vtable = {
 	.add_child = ui_vstack_add_child,
 	.get_extent = ui_vstack_get_extent,
 	.layout = ui_vstack_layout,
-	.render = ui_vstack_render
+	.render = ui_vstack_render,
+	.handle_events = ui_vstack_handle_events,
 };
 
-void ui_push_vstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Horizontal_Alignment alignment, f32 spacing) {
+UI_Element* ui_push_vstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Horizontal_Alignment alignment, f32 spacing) {
 	UI_VStack* vstack;
 	allocator_new(&ui->arena->allocator, vstack, 1);
 	*vstack = (UI_VStack) {
@@ -687,6 +727,7 @@ void ui_push_vstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Horizontal_
 		.vtable = &ui_vstack_vtable,
 	};
 	ui->stack[ui->stack_length++] = element;
+	return element;
 }
 
 // MARK: Spacer
@@ -702,12 +743,13 @@ UI_Extent ui_spacer_get_extent(UI* ui, UI_Element* self) {
 const static UI_Element_VTable ui_spacer_vtable = {
 	.get_extent = ui_spacer_get_extent,
 };
-void ui_spacer(UI* ui) {
+UI_Element* ui_spacer(UI* ui) {
 	UI_Element* element = ui_add_leaf(ui);
 	*element = (UI_Element) {
 		.data = NULL,
 		.vtable = &ui_spacer_vtable,
 	};
+	return element;
 }
 
 // MARK: ZStack
@@ -787,11 +829,25 @@ void ui_zstack_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 		}
 	}
 }
+void ui_zstack_handle_events(UI* ui, UI_Element* self) {
+	UI_ZStack* zstack = self->data;
+
+	// Iterate from top to bottom
+	const s32 child_count = (s32)ui_element_seq_get_count(&zstack->children);
+	for (s32 child_idx = child_count - 1; child_idx >= 0; child_idx--) {
+		UI_Element* child = ui_element_seq_get_ptr(&zstack->children, (u64)child_idx);
+		if (child->vtable->handle_events) {
+			child->vtable->handle_events(ui, child);
+		}
+	}
+}
+
 const static UI_Element_VTable ui_zstack_vtable = {
 	.add_child = ui_zstack_add_child,
 	.get_extent = ui_zstack_get_extent,
 	.layout = ui_zstack_layout,
 	.render = ui_zstack_render,
+	.handle_events = ui_zstack_handle_events,
 };
 
 UI_Element ui_zstack_new(UI* ui, UI_Extent extent, UI_Padding padding) {
@@ -809,11 +865,14 @@ UI_Element ui_zstack_new(UI* ui, UI_Extent extent, UI_Padding padding) {
 	return element;
 }
 
-void ui_push_zstack(UI* ui, UI_Extent extent, UI_Padding padding) {
+UI_Element* ui_push_zstack(UI* ui, UI_Extent extent, UI_Padding padding) {
 	UI_Element* element = ui_add_leaf(ui);
 	*element = ui_zstack_new(ui, extent, padding);
 	ui->stack[ui->stack_length++] = element;
+	return element;
 }
+
+// MARK: Frame
 
 void ui_begin_frame(UI* ui, Rect_f32 rect) {
 	sl_debug_assert(ui->stack_length == 0, "Must have an empty stack to begin a new frame.");
@@ -851,7 +910,7 @@ const static UI_Element_VTable ui_color_vtable = {
 	.render = ui_color_render,
 };
 
-void ui_color(UI* ui, UI_Extent extent, vec4_f32 color) {
+UI_Element* ui_color(UI* ui, UI_Extent extent, vec4_f32 color) {
 	UI_Color* color_el;
 	allocator_new(&ui->arena->allocator, color_el, 1);
 	*color_el = (UI_Color) {
@@ -863,32 +922,7 @@ void ui_color(UI* ui, UI_Extent extent, vec4_f32 color) {
 		.data = color_el,
 		.vtable = &ui_color_vtable,
 	};
-}
-
-// MARK: Text Measurements
-
-typedef struct UI_Text_Measurements {
-	Range_s32 y_range;
-	vec2_s32 size;
-} UI_Text_Measurements;
-
-UI_Text_Measurements ui_text_measurements(SL_Font_Atlas* font, const char* string) {
-	const Range_s32 font_y_range = sl_get_font_y_range(font);
-	const Rect_s32 label_rect = sl_font_atlas_measure_string(font, string);
-	const vec2_s32 label_size = size_rect_s32(label_rect);
-	return (UI_Text_Measurements) {
-		.size = label_size,
-		.y_range = font_y_range,
-	};
-}
-
-UI_Extent ui_text_measurements_get_extent(const UI_Text_Measurements* measurements) {
-	return (UI_Extent) {
-		.min_width = measurements->size.x,
-		.max_width = measurements->size.x,
-		.min_height = measurements->y_range.end - measurements->y_range.start,
-		.max_height = measurements->y_range.end - measurements->y_range.start,
-	};
+	return element;
 }
 
 // MARK: Button
@@ -921,19 +955,45 @@ void ui_button_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 		.y = roundf(rect.start.y + (rect_size.y * 0.5f) + button->label_measurements.y_range.end),
 	};
 
-	UI_Button_State button_state = UI_Button_State_Normal;
+	UI_Button_State button_state;
+	if (ui_id_equals(ui->active_item, button->id)) {
+		button_state = UI_Button_State_Active;
+	} else if (ui_id_equals(ui->hot_item, button->id)) {
+		button_state = UI_Button_State_Hot;
+	} else {
+		button_state = UI_Button_State_Normal;
+	}
 	const UI_Button_State_Style* state_style = &button->style.state[button_state];
 
 	ui_draw_nine_patch(ui, blitter, rect, state_style->backing, state_style->backing_color);
 	sl_blitter_draw_text(blitter, button->style.font, button->label, add_vec2_f32(text_offset, state_style->label_offset), state_style->label_color);
 }
+void ui_button_handle_events(UI* ui, UI_Element* self) {
+	UI_Button* button = self->data;
 
+	const bool mouse_over = !ui->mouse_obscured && contains_rect_f32(self->rect, ui->mouse_position);
+	if (mouse_over) {
+		ui->hot_item = button->id;
+		ui->mouse_obscured = true;
+	}
+
+	if (ui_id_is_null(ui->active_item) && (ui->mouse_button_down || ui->mouse_button_pressed) && mouse_over) {
+		ui->active_item = button->id;
+	}
+
+	if (ui_id_equals(ui->active_item, button->id) && ui->mouse_button_pressed) {
+		ui->mouse_button_pressed = false;
+		ui->active_item = UI_ID_NULL;
+		ui_trigger_callback(button->on_press);
+	}
+}
 const static UI_Element_VTable ui_button_vtable = {
 	.get_extent = ui_button_get_extent,
 	.render = ui_button_render,
+	.handle_events = ui_button_handle_events,
 };
 
-void ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press) {
+UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press) {
 	const u32 label_len = strlen(label);
 	char* label_copy;
 	allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
@@ -955,6 +1015,7 @@ void ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style,
 		.data = button,
 		.vtable = &ui_button_vtable,
 	};
+	return element;
 }
 
 // MARK: Slider
@@ -968,34 +1029,54 @@ typedef struct UI_Slider {
 	UI_Callback on_change;
 } UI_Slider;
 
-UI_Extent ui_slider_get_extent(UI* ui, UI_Element* self) {
+Rect_f32 ui_slider_get_track_rect(UI_Element* self) {
 	UI_Slider* slider = self->data;
-	return slider->extent;
-}
-void ui_slider_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
-	UI_Slider* slider = self->data;
-
 	const UI_Slider_Style* style = &slider->style;
-
 	const Rect_f32 rect = self->rect;
 	const vec2_f32 rect_size = size_rect_f32(rect);
 	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
 	const vec2_f32 needle_image_size = size_rect_f32(style->needle_image);
-
-	// track
 	const f32 track_lr_padding = ceil(needle_image_size.x * 0.5);
 	const vec2_f32 track_rect_start = {
 		rect.start.x + track_lr_padding,
 		round(center_y - (style->track_height * 0.5f)),
 	};
-	const Rect_f32 track_rect = {
+	return (Rect_f32) {
 		.start = track_rect_start,
 		.end = {
 			rect.end.x - track_lr_padding,
 			.y = track_rect_start.y + style->track_height,
 		},
 	};
+}
+UI_Extent ui_slider_get_extent(UI* ui, UI_Element* self) {
+	UI_Slider* slider = self->data;
+
+	const UI_Slider_Style* style = &slider->style;
+	const vec2_f32 needle_image_size = size_rect_f32(style->needle_image);
+
+	const UI_Extent slider_extent = {
+		.min_width = needle_image_size.x,
+		.max_width = needle_image_size.x,
+		.min_height = needle_image_size.y,
+		.max_height = needle_image_size.y,
+	};
+	const UI_Extent result = ui_extent_combine(slider->extent, slider_extent);
+
+	return result;
+}
+void ui_slider_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
+	UI_Slider* slider = self->data;
+
+	const UI_Slider_Style* style = &slider->style;
+
+	// track
+	const Rect_f32 track_rect = ui_slider_get_track_rect(self);
 	ui_draw_image(ui, blitter, track_rect, (Rect_f32) { .start = {} }, style->track_color);
+
+	const Rect_f32 rect = self->rect;
+	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
+	const vec2_f32 needle_image_size = size_rect_f32(style->needle_image);
 
 	// needle
 	const f32 progress = saturate_f32((*slider->value - slider->range.start) / (slider->range.end - slider->range.start));
@@ -1009,13 +1090,40 @@ void ui_slider_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	};
 	ui_draw_image(ui, blitter, needle_rect, style->needle_image, style->needle_color);
 }
+void ui_slider_handle_events(UI* ui, UI_Element* self) {
+	UI_Slider* slider = self->data;
 
+	const bool mouse_over = !ui->mouse_obscured && contains_rect_f32(self->rect, ui->mouse_position);
+	if (mouse_over) {
+		ui->hot_item = slider->id;
+		ui->mouse_obscured = true;
+	}
+
+	if (ui_id_is_null(ui->active_item) && (ui->mouse_button_down || ui->mouse_button_pressed) && mouse_over) {
+		ui->active_item = slider->id;
+	}
+
+	const bool change_value = ui_id_equals(ui->active_item, slider->id) && ui->mouse_button_down;
+	if (change_value) {
+		ui->mouse_button_pressed = false;
+
+		const Rect_f32 track_rect = ui_slider_get_track_rect(self);
+
+		const f32 mouse_progress = saturate_f32((ui->mouse_position.x - track_rect.start.x) / (track_rect.end.x - track_rect.start.x));
+		*slider->value = lerp_f32(slider->range.start, slider->range.end, mouse_progress);
+	}
+
+	if (ui_id_equals(ui->active_item, slider->id) && !ui->mouse_button_down) {
+		ui->active_item = UI_ID_NULL;
+	}
+}
 const static UI_Element_VTable ui_slider_vtable = {
 	.get_extent = ui_slider_get_extent,
 	.render = ui_slider_render,
+	.handle_events = ui_slider_handle_events,
 };
 
-void ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change) {
+UI_Element* ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change) {
 	UI_Slider* slider;
 	allocator_new(&ui->arena->allocator, slider, 1);
 	*slider = (UI_Slider) {
@@ -1031,6 +1139,7 @@ void ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* st
 		.data = slider,
 		.vtable = &ui_slider_vtable,
 	};
+	return element;
 }
 
 // MARK: Label
@@ -1064,13 +1173,12 @@ void ui_label_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	const UI_Label_Style* style = &label->style;
 	sl_blitter_draw_text(blitter, style->font, label->label, text_offset, style->color);
 }
-
 const static UI_Element_VTable ui_label_vtable = {
 	.get_extent = ui_label_get_extent,
 	.render = ui_label_render,
 };
 
-void ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label) {
+UI_Element* ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label) {
 	const u32 label_len = strlen(label);
 	char* label_copy;
 	allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
@@ -1090,10 +1198,81 @@ void ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char*
 		.data = label_el,
 		.vtable = &ui_label_vtable,
 	};
+	return element;
 }
 
-void ui_calculate_extents_recurse(UI_Element* element) {
+typedef struct UI_Custom {
+	UI_Extent extent;
+	UI_Render_Callback on_render;
+} UI_Custom;
+UI_Extent ui_custom_get_extent(UI* ui, UI_Element* self) {
+	UI_Custom* custom = self->data;
+	return custom->extent;
+}
+void ui_custom_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
+	UI_Custom* custom = self->data;
+	if (custom->on_render.render != NULL) {
+		custom->on_render.render(custom->on_render.ctx, self->rect, blitter);
+	}
+}
+const static UI_Element_VTable ui_custom_vtable = {
+	.get_extent = ui_custom_get_extent,
+	.render = ui_custom_render,
+};
 
+UI_Element* ui_custom(UI* ui, UI_Extent extent, UI_Render_Callback on_render) {
+	UI_Custom* custom;
+	allocator_new(&ui->arena->allocator, custom, 1);
+	*custom = (UI_Custom) {
+		.extent = extent,
+		.on_render = on_render,
+	};
+	UI_Element* element = ui_add_leaf(ui);
+	*element = (UI_Element) {
+		.data = custom,
+		.vtable = &ui_custom_vtable,
+	};
+	return element;
+}
+
+// MARK: Lifecycle
+
+void ui_begin(UI* ui, UI_Event_Seq* event_sink) {
+	sl_debug_assert(ui->lifecycle_state == UI_Lifecycle_State_Ended, "UI must be ended before begin.");
+	ui->lifecycle_state = UI_Lifecycle_State_Began;
+	++ui->frame_index;
+
+	sl_arena_allocator_reset(ui->arena, 0);
+	ui_frame_seq_clear(&ui->frames);
+
+	ui->stack_length = 0;
+
+	// Handle events
+	{
+		ui->mouse_obscured = false;
+		ui->mouse_button_pressed = false;
+		ui->hot_item = UI_ID_NULL;
+
+		const u32 event_count = ui_event_seq_get_count(event_sink);
+		for (u32 i = 0; i < event_count; i++) {
+			UI_Event event = ui_event_seq_get(event_sink, i);
+			switch (event.kind) {
+				case UI_Event_Kind_Mouse_Move: {
+					ui->mouse_position = event.mouse_move.position;
+				} break;
+
+				case UI_Event_Kind_Mouse_Mouse_Down: {
+					ui->mouse_button_down = true;
+				} break;
+
+				case UI_Event_Kind_Mouse_Mouse_Up: {
+					ui->mouse_button_pressed |= ui->mouse_button_down;
+					ui->mouse_button_down = false;
+				} break;
+			}
+		}
+		ui_event_seq_clear(event_sink);
+	}
 }
 
 void ui_layout_frames(UI* ui) {
@@ -1105,13 +1284,25 @@ void ui_layout_frames(UI* ui) {
 	}
 }
 
-void ui_end(UI* ui) {
-	ui_layout_frames(ui);
+void ui_handle_events(UI* ui) {
+	const u32 frame_count = ui_frame_seq_get_count(&ui->frames);
+	for (u32 i = 0; i < frame_count; i++) {
+		UI_Frame* frame = ui_frame_seq_get_ptr(&ui->frames, i);
+		frame->zstack.vtable->handle_events(ui, &frame->zstack);
+	}
 
 	if (ui->mouse_button_pressed) {
 		// unconsumed mouse press, reset the active item (it must be stale).
 		ui->active_item = UI_ID_NULL;
 	}
+}
+
+void ui_end(UI* ui) {
+	sl_debug_assert(ui->lifecycle_state == UI_Lifecycle_State_Began, "UI must have began before ending.");
+	ui->lifecycle_state = UI_Lifecycle_State_Ended;
+
+	ui_layout_frames(ui);
+	ui_handle_events(ui);
 }
 
 void ui_render(UI* ui, SL_Blitter* blitter) {
