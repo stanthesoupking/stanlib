@@ -15,6 +15,16 @@ typedef struct UI_Nine_Patch {
 	UI_Margins margins;
 } UI_Nine_Patch;
 
+typedef struct UI_Padding {
+	f32 top, bottom, left, right;
+} UI_Padding;
+
+#define UI_PADDING_NONE ((UI_Padding) {})
+
+sl_inline UI_Padding ui_padding_uniform(f32 amount) {
+	return (UI_Padding) { amount, amount, amount, amount };
+}
+
 typedef enum UI_Button_State {
 	UI_Button_State_Normal,
 	UI_Button_State_Hot,
@@ -31,6 +41,7 @@ typedef struct UI_Button_State_Style {
 
 typedef struct UI_Button_Style {
 	SL_Font_Atlas* font;
+	UI_Padding text_padding;
 	UI_Button_State_Style state[UI_BUTTON_STATE_COUNT];
 } UI_Button_Style;
 
@@ -101,19 +112,10 @@ typedef struct UI_Extent {
 } UI_Extent;
 
 #define UI_FILL -1.0f
+#define UI_EXTENT_IMPLICIT 0.0f
 
 #define UI_EXTENT_NONE ((UI_Extent) {})
 #define UI_EXTENT_FILL ((UI_Extent) { .max_width = UI_FILL, .max_height = UI_FILL })
-
-typedef struct UI_Padding {
-	f32 top, bottom, left, right;
-} UI_Padding;
-
-#define UI_PADDING_NONE ((UI_Padding) {})
-
-sl_inline UI_Padding ui_padding_uniform(f32 amount) {
-	return (UI_Padding) { amount, amount, amount, amount };
-}
 
 typedef struct UI_Callback {
 	void* ctx;
@@ -145,6 +147,6 @@ void ui_add_padding(UI* ui, UI_Padding padding);
 void ui_color(UI* ui, UI_Extent extent, vec4_f32 color);
 void ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press);
 void ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change);
-void ui_label(UI* ui, UI_ID id, UI_Extent extent, const UI_Label_Style* style, const char* label);
+void ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label);
 
 void ui_render(UI* ui, SL_Blitter* blitter);

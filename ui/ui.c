@@ -279,146 +279,6 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patc
 	sl_blitter_draw_textured_quads(blitter, ui->texture, quads, next_quad);
 }
 
-// bool ui_button(UI* ui, UI_ID id, const UI_Button_Style* style, const char* label, Rect_f32 rect) {
-// 	const u32 label_len = strlen(label);
-
-// 	char* label_copy;
-// 	allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
-// 	strcpy(label_copy, label);
-
-// 	const Range_s32 font_y_range = sl_get_font_y_range(style->font);
-// 	const Rect_s32 label_rect = sl_font_atlas_measure_string(style->font, label);
-// 	const vec2_s32 label_size = size_rect_s32(label_rect);
-// 	const vec2_f32 rect_size = size_rect_f32(rect);
-// 	const vec2_f32 text_offset = {
-// 		.x = rect.start.x + (rect_size.x * 0.5f) - (label_size.x * 0.5f),
-// 		.y = rect.start.y + (rect_size.y * 0.5f) - (font_y_range.start * 0.5f),
-// 	};
-
-// 	const bool mouse_over = !ui->mouse_obscured && contains_rect_f32(rect, ui->mouse_position);
-// 	if (mouse_over) {
-// 		ui->hot_item = id;
-// 		ui->mouse_obscured = true;
-// 	}
-
-// 	if (ui_id_is_null(ui->active_item) && (ui->mouse_button_down || ui->mouse_button_pressed) && mouse_over) {
-// 		ui->active_item = id;
-// 	}
-
-// 	UI_Button_State button_state;
-// 	if (ui_id_equals(ui->active_item, id)) {
-// 		button_state = UI_Button_State_Active;
-// 	} else if (ui_id_equals(ui->hot_item, id)) {
-// 		button_state = UI_Button_State_Hot;
-// 	} else {
-// 		button_state = UI_Button_State_Normal;
-// 	}
-// 	const UI_Button_State_Style* state_style = &style->state[button_state];
-
-// 	sl_blitter_command_seq_push(&ui->blitter_commands, (SL_Blitter_Command) {
-// 		.kind = SL_Blitter_Command_Kind_Draw_Text,
-// 		.draw_text = {
-// 			.font = style->font,
-// 			.string = label_copy,
-// 			.position = add_vec2_f32(text_offset, state_style->label_offset),
-// 			.color = state_style->label_color,
-// 		},
-// 	});
-
-// 	ui_draw_nine_patch(ui, rect, state_style->backing, state_style->backing_color);
-
-// 	if (ui_id_equals(ui->active_item, id) && ui->mouse_button_pressed) {
-// 		ui->mouse_button_pressed = false;
-// 		ui->active_item = UI_ID_NULL;
-// 		return mouse_over;
-// 	} else {
-// 		return false;
-// 	}
-// }
-
-// bool ui_slider_f32(UI* ui, UI_ID id, const UI_Slider_Style* style, f32* value, Range_f32 range, Rect_f32 rect) {
-// 	const vec2_f32 rect_size = size_rect_f32(rect);
-// 	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
-// 	const vec2_f32 needle_image_size = size_rect_f32(style->needle_image);
-
-// 	// track layout
-// 	const f32 track_lr_padding = ceil(needle_image_size.x * 0.5);
-// 	const vec2_f32 track_rect_start = {
-// 		rect.start.x + track_lr_padding,
-// 		round(center_y - (style->track_height * 0.5f)),
-// 	};
-// 	const Rect_f32 track_rect = {
-// 		.start = track_rect_start,
-// 		.end = {
-// 			rect.end.x - track_lr_padding,
-// 			.y = track_rect_start.y + style->track_height,
-// 		},
-// 	};
-
-// 	const bool mouse_over = !ui->mouse_obscured && contains_rect_f32(rect, ui->mouse_position);
-// 	if (mouse_over) {
-// 		ui->hot_item = id;
-// 		ui->mouse_obscured = true;
-// 	}
-
-// 	if (ui_id_is_null(ui->active_item) && (ui->mouse_button_down || ui->mouse_button_pressed) && mouse_over) {
-// 		ui->active_item = id;
-// 	}
-
-// 	const bool change_value = ui_id_equals(ui->active_item, id) && ui->mouse_button_down || ui->mouse_button_pressed;
-// 	if (change_value) {
-// 		ui->mouse_button_pressed = false;
-
-// 		const f32 mouse_progress = saturate_f32((ui->mouse_position.x - track_rect.start.x) / (track_rect.end.x - track_rect.start.x));
-// 		*value = lerp_f32(range.start, range.end, mouse_progress);
-// 	}
-
-// 	// needle
-// 	const f32 progress = saturate_f32((*value - range.start) / (range.end - range.start));
-// 	const vec2_f32 needle_offset = {
-// 		.x = round(lerp_f32(track_rect.start.x, track_rect.end.x, progress) - (needle_image_size.x * 0.5f)),
-// 		.y = round(center_y - (needle_image_size.y * 0.5f)),
-// 	};
-// 	const Rect_f32 needle_rect = {
-// 		.start = needle_offset,
-// 		.end = add_vec2_f32(needle_image_size, needle_offset),
-// 	};
-// 	ui_draw_image(ui, needle_rect, style->needle_image, style->needle_color);
-
-// 	// track
-// 	ui_draw_image(ui, track_rect, (Rect_f32) { .start = {} }, style->track_color);
-
-// 	if (ui_id_equals(ui->active_item, id) && !ui->mouse_button_down) {
-// 		ui->active_item = UI_ID_NULL;
-// 	}
-
-// 	return change_value;
-// }
-
-// void ui_label(UI* ui, UI_ID id, const UI_Label_Style* style, const char* label, Rect_f32 rect) {
-// 	const u32 label_len = strlen(label);
-
-// 	char* label_copy;
-// 	allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
-// 	strcpy(label_copy, label);
-
-// 	const Range_s32 font_y_range = sl_get_font_y_range(style->font);
-// 	const vec2_f32 rect_size = size_rect_f32(rect);
-// 	const vec2_f32 text_offset = {
-// 		.x = rect.start.x,
-// 		.y = rect.start.y + (rect_size.y * 0.5f) - (font_y_range.start * 0.5f),
-// 	};
-
-// 	sl_blitter_command_seq_push(&ui->blitter_commands, (SL_Blitter_Command) {
-// 		.kind = SL_Blitter_Command_Kind_Draw_Text,
-// 		.draw_text = {
-// 			.font = style->font,
-// 			.string = label_copy,
-// 			.position = text_offset,
-// 			.color = style->color,
-// 		},
-// 	});
-
 Rect_f32 ui_padded_rect(Rect_f32 rect, UI_Padding padding) {
 	return (Rect_f32) {
 		.start = {
@@ -431,27 +291,6 @@ Rect_f32 ui_padded_rect(Rect_f32 rect, UI_Padding padding) {
 		},
 	};
 }
-
-// typedef struct UI_Padding_Element {
-// 	UI_Padding padding;
-// 	UI_Element* child;
-// } UI_Padding_Element;
-
-// void ui_add_padding(UI* ui, UI_Padding padding) {
-// 	sl_debug_assert(ui->stack_length > 0, "Must be a container to pad.");
-
-// 	UI_Padding_Element* padding_el;
-// 	allocator_new(&ui->arena->allocator, padding_el, 1);
-// 	*padding_el = (UI_Padding_Element) {
-// 		.padding = padding,
-// 		.child = ui->stack[ui->stack_length - 1],
-// 	};
-// 	UI_Element* element = ui_add_leaf(ui);
-// 	*element = (UI_Element) {
-// 		.data = hstack,
-// 		.vtable = &ui_hstack_vtable,
-// 	};
-// }
 
 // MARK: Distribute
 
@@ -509,6 +348,8 @@ void ui_distribute(f32 size, f32 spacing, UI_Distribute_Item* items, u32 item_co
 	}
 }
 
+// MARK: Extent
+
 UI_Extent ui_extent_combine(UI_Extent parent, UI_Extent child) {
 	UI_Extent result = {
 		.min_width = sl_max(parent.min_width, child.min_width),
@@ -539,9 +380,20 @@ UI_Extent ui_extent_add_padding(UI_Extent extent, UI_Padding padding) {
 		.min_width = extent.min_width + padding.left + padding.right,
 		.min_height = extent.min_height + padding.top + padding.bottom,
 		.max_width = extent.max_width + padding.left + padding.right,
-		.max_height = extent.max_width + padding.top + padding.bottom,
+		.max_height = extent.max_height + padding.top + padding.bottom,
 	};
 }
+
+// MARK: Rect
+
+Rect_f32 ui_rect_snap_to_pixels(Rect_f32 rect) {
+	return (Rect_f32) {
+		.start = { roundf(rect.start.x), roundf(rect.start.y) },
+		.end = { roundf(rect.end.x), roundf(rect.end.y) },
+	};
+}
+
+// MARK: HStack
 
 typedef struct UI_HStack {
 	UI_Extent extent;
@@ -635,6 +487,7 @@ void ui_hstack_layout(UI* ui, UI_Element* self) {
 			.start = { current_x, offset_y },
 			.end = { current_x + child_width, offset_y + child_height },
 		};
+		child->rect = ui_rect_snap_to_pixels(child->rect);
 
 		current_x += child_width + hstack->spacing;
 	}
@@ -690,6 +543,8 @@ void ui_push_hstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Vertical_Al
 	};
 	ui->stack[ui->stack_length++] = element;
 }
+
+// MARK: VStack
 
 typedef struct UI_VStack {
 	UI_Extent extent;
@@ -783,6 +638,7 @@ void ui_vstack_layout(UI* ui, UI_Element* self) {
 			.start = { offset_x, current_y },
 			.end = { offset_x + child_width, current_y + child_height },
 		};
+		child->rect = ui_rect_snap_to_pixels(child->rect);
 
 		current_y += child_height + vstack->spacing;
 	}
@@ -833,6 +689,8 @@ void ui_push_vstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Horizontal_
 	ui->stack[ui->stack_length++] = element;
 }
 
+// MARK: Spacer
+
 UI_Extent ui_spacer_get_extent(UI* ui, UI_Element* self) {
 	return (UI_Extent) {
 		.min_width = 0.0f,
@@ -851,6 +709,8 @@ void ui_spacer(UI* ui) {
 		.vtable = &ui_spacer_vtable,
 	};
 }
+
+// MARK: ZStack
 
 typedef struct UI_ZStack {
 	UI_Extent extent;
@@ -910,6 +770,8 @@ void ui_zstack_layout(UI* ui, UI_Element* self) {
 		};
 
 		child->rect = child_rect;
+		child->rect = ui_rect_snap_to_pixels(child->rect);
+
 		if (child->vtable->layout) {
 			child->vtable->layout(ui, child);
 		}
@@ -969,6 +831,8 @@ void ui_end_frame(UI* ui) {
 	ui->stack_length = 0;
 }
 
+// MARK: Color
+
 typedef struct UI_Color {
 	UI_Extent extent;
 	vec4_f32 color;
@@ -1000,22 +864,232 @@ void ui_color(UI* ui, UI_Extent extent, vec4_f32 color) {
 		.vtable = &ui_color_vtable,
 	};
 }
+
+// MARK: Text Measurements
+
+typedef struct UI_Text_Measurements {
+	Range_s32 y_range;
+	vec2_s32 size;
+} UI_Text_Measurements;
+
+UI_Text_Measurements ui_text_measurements(SL_Font_Atlas* font, const char* string) {
+	const Range_s32 font_y_range = sl_get_font_y_range(font);
+	const Rect_s32 label_rect = sl_font_atlas_measure_string(font, string);
+	const vec2_s32 label_size = size_rect_s32(label_rect);
+	return (UI_Text_Measurements) {
+		.size = label_size,
+		.y_range = font_y_range,
+	};
+}
+
+UI_Extent ui_text_measurements_get_extent(const UI_Text_Measurements* measurements) {
+	return (UI_Extent) {
+		.min_width = measurements->size.x,
+		.max_width = measurements->size.x,
+		.min_height = measurements->y_range.end - measurements->y_range.start,
+		.max_height = measurements->y_range.end - measurements->y_range.start,
+	};
+}
+
+// MARK: Button
+
+typedef struct UI_Button {
+	UI_ID id;
+	UI_Extent extent;
+	UI_Button_Style style;
+	const char* label;
+	u32 label_len;
+	UI_Text_Measurements label_measurements;
+	UI_Callback on_press;
+} UI_Button;
+
+UI_Extent ui_button_get_extent(UI* ui, UI_Element* self) {
+	UI_Button* button = self->data;
+	const UI_Extent label_extent = ui_text_measurements_get_extent(&button->label_measurements);
+	const UI_Extent padded_label_extent = ui_extent_add_padding(label_extent, button->style.text_padding);
+	const UI_Extent result = ui_extent_combine(button->extent, padded_label_extent);
+	return result;
+}
+void ui_button_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
+	UI_Button* button = self->data;
+
+	const Rect_f32 rect = self->rect;
+	const vec2_f32 rect_size = size_rect_f32(rect);
+
+	const vec2_f32 text_offset = {
+		.x = roundf(rect.start.x + (rect_size.x * 0.5f) - (button->label_measurements.size.x * 0.5f)),
+		.y = roundf(rect.start.y + (rect_size.y * 0.5f) + button->label_measurements.y_range.end),
+	};
+
+	UI_Button_State button_state = UI_Button_State_Normal;
+	const UI_Button_State_Style* state_style = &button->style.state[button_state];
+
+	ui_draw_nine_patch(ui, blitter, rect, state_style->backing, state_style->backing_color);
+	sl_blitter_draw_text(blitter, button->style.font, button->label, add_vec2_f32(text_offset, state_style->label_offset), state_style->label_color);
+}
+
+const static UI_Element_VTable ui_button_vtable = {
+	.get_extent = ui_button_get_extent,
+	.render = ui_button_render,
+};
+
 void ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press) {
-	// UI_Element* element = ui_element_seq_push_reserve(&ui->elements);
-	// *element = (UI_Element) {
-	// 	.kind = UI_Element_Kind_Button,
-	// 	.parent = ui_top(ui),
-	// 	.extent = extent,
-	// 	.button = {
-	// 		// todo
-	// 	},
-	// };
+	const u32 label_len = strlen(label);
+	char* label_copy;
+	allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
+	strcpy(label_copy, label);
+
+	UI_Button* button;
+	allocator_new(&ui->arena->allocator, button, 1);
+	*button = (UI_Button) {
+		.id = id,
+		.extent = extent,
+		.style = *style,
+		.label = label_copy,
+		.label_len = label_len,
+		.label_measurements = ui_text_measurements(style->font, label),
+		.on_press = on_press,
+	};
+	UI_Element* element = ui_add_leaf(ui);
+	*element = (UI_Element) {
+		.data = button,
+		.vtable = &ui_button_vtable,
+	};
 }
+
+// MARK: Slider
+
+typedef struct UI_Slider {
+	UI_ID id;
+	UI_Extent extent;
+	UI_Slider_Style style;
+	f32* value;
+	Range_f32 range;
+	UI_Callback on_change;
+} UI_Slider;
+
+UI_Extent ui_slider_get_extent(UI* ui, UI_Element* self) {
+	UI_Slider* slider = self->data;
+	return slider->extent;
+}
+void ui_slider_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
+	UI_Slider* slider = self->data;
+
+	const UI_Slider_Style* style = &slider->style;
+
+	const Rect_f32 rect = self->rect;
+	const vec2_f32 rect_size = size_rect_f32(rect);
+	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
+	const vec2_f32 needle_image_size = size_rect_f32(style->needle_image);
+
+	// track
+	const f32 track_lr_padding = ceil(needle_image_size.x * 0.5);
+	const vec2_f32 track_rect_start = {
+		rect.start.x + track_lr_padding,
+		round(center_y - (style->track_height * 0.5f)),
+	};
+	const Rect_f32 track_rect = {
+		.start = track_rect_start,
+		.end = {
+			rect.end.x - track_lr_padding,
+			.y = track_rect_start.y + style->track_height,
+		},
+	};
+	ui_draw_image(ui, blitter, track_rect, (Rect_f32) { .start = {} }, style->track_color);
+
+	// needle
+	const f32 progress = saturate_f32((*slider->value - slider->range.start) / (slider->range.end - slider->range.start));
+	const vec2_f32 needle_offset = {
+		.x = round(lerp_f32(track_rect.start.x, track_rect.end.x, progress) - (needle_image_size.x * 0.5f)),
+		.y = round(center_y - (needle_image_size.y * 0.5f)),
+	};
+	const Rect_f32 needle_rect = {
+		.start = needle_offset,
+		.end = add_vec2_f32(needle_image_size, needle_offset),
+	};
+	ui_draw_image(ui, blitter, needle_rect, style->needle_image, style->needle_color);
+}
+
+const static UI_Element_VTable ui_slider_vtable = {
+	.get_extent = ui_slider_get_extent,
+	.render = ui_slider_render,
+};
+
 void ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change) {
-
+	UI_Slider* slider;
+	allocator_new(&ui->arena->allocator, slider, 1);
+	*slider = (UI_Slider) {
+		.id = id,
+		.extent = extent,
+		.style = *style,
+		.value = value,
+		.range = range,
+		.on_change = on_change,
+	};
+	UI_Element* element = ui_add_leaf(ui);
+	*element = (UI_Element) {
+		.data = slider,
+		.vtable = &ui_slider_vtable,
+	};
 }
-void ui_label(UI* ui, UI_ID id, UI_Extent extent, const UI_Label_Style* style, const char* label) {
 
+// MARK: Label
+
+typedef struct UI_Label {
+	UI_Extent extent;
+	UI_Label_Style style;
+	const char* label;
+	u32 label_len;
+	UI_Text_Measurements label_measurements;
+} UI_Label;
+
+UI_Extent ui_label_get_extent(UI* ui, UI_Element* self) {
+	UI_Label* label = self->data;
+	const UI_Extent text_extent = ui_text_measurements_get_extent(&label->label_measurements);
+	const UI_Extent result = ui_extent_combine(label->extent, text_extent);
+	return result;
+}
+void ui_label_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
+	UI_Label* label = self->data;
+
+	const Rect_f32 rect = self->rect;
+	const vec2_f32 rect_size = size_rect_f32(rect);
+
+	const vec2_f32 text_offset = {
+		.x = roundf(rect.start.x + (rect_size.x * 0.5f) - (label->label_measurements.size.x * 0.5f)),
+		.y = roundf(rect.start.y + (rect_size.y * 0.5f) + label->label_measurements.y_range.end),
+	};
+
+	UI_Button_State button_state = UI_Button_State_Normal;
+	const UI_Label_Style* style = &label->style;
+	sl_blitter_draw_text(blitter, style->font, label->label, text_offset, style->color);
+}
+
+const static UI_Element_VTable ui_label_vtable = {
+	.get_extent = ui_label_get_extent,
+	.render = ui_label_render,
+};
+
+void ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label) {
+	const u32 label_len = strlen(label);
+	char* label_copy;
+	allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
+	strcpy(label_copy, label);
+
+	UI_Label* label_el;
+	allocator_new(&ui->arena->allocator, label_el, 1);
+	*label_el = (UI_Label) {
+		.extent = extent,
+		.style = *style,
+		.label = label_copy,
+		.label_len = label_len,
+		.label_measurements = ui_text_measurements(style->font, label),
+	};
+	UI_Element* element = ui_add_leaf(ui);
+	*element = (UI_Element) {
+		.data = label_el,
+		.vtable = &ui_label_vtable,
+	};
 }
 
 void ui_calculate_extents_recurse(UI_Element* element) {

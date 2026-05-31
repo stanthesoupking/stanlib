@@ -85,8 +85,9 @@ SL_Font_Atlas* sl_new_font_atlas(const SL_Font_Atlas_Desc* desc) {
 		.end = s32_min,
 	};
 	for (u32 i = 0; i < SL_FONT_ATLAS_CHAR_COUNT; i++) {
-		y_range.start = sl_min(y_range.start, result->chars[i].y0 + result->chars[i].yoff);
-		y_range.end = sl_max(y_range.end, result->chars[i].y1 + result->chars[i].yoff);
+		const f32 char_h = result->chars[i].y1 - result->chars[i].y0;
+		y_range.start = sl_min(y_range.start, result->chars[i].yoff);
+		y_range.end = sl_max(y_range.end, result->chars[i].yoff + char_h);
 	}
 	result->y_range = y_range;
 
