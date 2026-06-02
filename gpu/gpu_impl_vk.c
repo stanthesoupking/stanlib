@@ -2204,6 +2204,8 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 				VkCommandBuffer vk_cb = gpu_fetch_command_buffer_emitter(&cb_emitter);
 
 				Gpu_Command_Dispatch* dispatch = command.data.dispatch;
+				sl_debug_assert(!sl_handle_is_null(dispatch->pipeline), "Pipeline must be non-null.");
+
 				Gpu_Compute_Pipeline_Data* pipeline_data = gpu_compute_pipeline_pool_resolve(&gpu.compute_pipeline_pool, dispatch->pipeline);
 				gpu_write_bindings(cb_data->arena, vk_cb, pipeline_data->pipeline_layout, VK_PIPELINE_BIND_POINT_COMPUTE, dispatch->bindings, dispatch->binding_count);
 				vkCmdBindPipeline(vk_cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_data->pipeline);
