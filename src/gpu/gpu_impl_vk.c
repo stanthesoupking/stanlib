@@ -18,7 +18,6 @@
 #include <vulkan/vulkan_wayland.h>
 #endif
 
-#include "gpu.h"
 #include <string.h>
 
 const char* gpu_DEVICE_EXTENSIONS[] = {
