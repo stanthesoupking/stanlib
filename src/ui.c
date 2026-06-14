@@ -1111,6 +1111,8 @@ void ui_slider_handle_events(UI* ui, UI_Element* self) {
 
 		const f32 mouse_progress = saturate_f32((ui->mouse_position.x - track_rect.start.x) / (track_rect.end.x - track_rect.start.x));
 		*slider->value = lerp_f32(slider->range.start, slider->range.end, mouse_progress);
+
+		ui_trigger_callback(slider->on_change);
 	}
 
 	if (ui_id_equals(ui->active_item, slider->id) && !ui->mouse_button_down) {

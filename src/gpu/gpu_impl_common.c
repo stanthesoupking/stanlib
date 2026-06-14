@@ -53,3 +53,7 @@ sl_inline u8 gpu_bytes_per_pixel_for_format(Gpu_Format format) {
 			return 16;
 	}
 }
+
+u32 gpu_get_command_buffer_index(Gpu_Command_Buffer cb) {
+	return cb.index;
+}

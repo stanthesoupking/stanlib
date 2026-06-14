@@ -409,12 +409,15 @@ typedef struct Gpu {
 
 static Gpu gpu;
 
+VkBool32 gpu_messenger_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageTypes, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
+	printf("%s\n", pCallbackData->pMessage);
+	return false;
+}
+
 void gpu_init_instance(const Gpu_Desc* desc) {
 	Allocator* allocator = desc->allocator;
 
 	const char* internal_required_extensions[] = {
-		VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
-		//VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME, // this breaks render doc
 		VK_EXT_DEBUG_UTILS_EXTENSION_NAME, // renderdoc
 	};
 
@@ -438,48 +441,67 @@ void gpu_init_instance(const Gpu_Desc* desc) {
 	create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	create_info.pApplicationInfo = &app_info;
 
-	//create_info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
-
 	create_info.enabledExtensionCount = combined_extension_count;
 	create_info.ppEnabledExtensionNames = combined_extensions;
 
 #if GPU_VALIDATION
-	{
-		const char* req_validation_layers[] = {
-			"VK_LAYER_KHRONOS_validation"
-		};
+	const char* req_validation_layers[] = {
+		"VK_LAYER_KHRONOS_validation"
+	};
 
-		u32 supported_layer_count;
-		vkEnumerateInstanceLayerProperties(&supported_layer_count, NULL);
+	u32 supported_layer_count;
+	vkEnumerateInstanceLayerProperties(&supported_layer_count, NULL);
 
-		VkLayerProperties* supported_layers;
-		allocator_new(desc->allocator, supported_layers, supported_layer_count);
-		vkEnumerateInstanceLayerProperties(&supported_layer_count, supported_layers);
+	VkLayerProperties* supported_layers;
+	allocator_new(desc->allocator, supported_layers, supported_layer_count);
+	vkEnumerateInstanceLayerProperties(&supported_layer_count, supported_layers);
 
-		u32 found_validation_layer_count = 0;
-		const char* found_validation_layers[sl_array_count(req_validation_layers)];
+	u32 found_validation_layer_count = 0;
+	const char* found_validation_layers[sl_array_count(req_validation_layers)];
 
-		for (u32 req_validation_layer_idx = 0; req_validation_layer_idx < sl_array_count(req_validation_layers); req_validation_layer_idx++) {
-			bool found_layer = false;
-			for (u32 supported_layer_idx = 0; supported_layer_idx < supported_layer_count; supported_layer_idx++) {
-				if (strcmp(supported_layers[supported_layer_idx].layerName, req_validation_layers[req_validation_layer_idx]) == 0) {
-					found_layer = true;
-					break;
-				}
-			}
-
-			if (found_layer) {
-				gpu_log("Enabling layer: %s", req_validation_layers[req_validation_layer_idx]);
-				found_validation_layers[found_validation_layer_count++] = req_validation_layers[req_validation_layer_idx];
-			} else {
-				gpu_log("Could not find layer: %s", req_validation_layers[req_validation_layer_idx]);
+	for (u32 req_validation_layer_idx = 0; req_validation_layer_idx < sl_array_count(req_validation_layers); req_validation_layer_idx++) {
+		bool found_layer = false;
+		for (u32 supported_layer_idx = 0; supported_layer_idx < supported_layer_count; supported_layer_idx++) {
+			if (strcmp(supported_layers[supported_layer_idx].layerName, req_validation_layers[req_validation_layer_idx]) == 0) {
+				found_layer = true;
+				break;
 			}
 		}
 
-		create_info.ppEnabledLayerNames = found_validation_layers;
-		create_info.enabledLayerCount = found_validation_layer_count;
+		if (found_layer) {
+			gpu_log("Enabling layer: %s", req_validation_layers[req_validation_layer_idx]);
+			found_validation_layers[found_validation_layer_count++] = req_validation_layers[req_validation_layer_idx];
+		} else {
+			gpu_log("Could not find layer: %s", req_validation_layers[req_validation_layer_idx]);
+		}
 	}
-#endif
+
+	VkDebugUtilsMessengerCreateInfoEXT debug_messenger_info = {
+		.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+		.pfnUserCallback = gpu_messenger_callback,
+		.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+		.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+	};
+
+	VkValidationFeatureEnableEXT enables[] = {
+		// VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+		// VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
+    	VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+     	VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT,
+      	VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
+	};
+
+	VkValidationFeaturesEXT validation_features = {
+    	.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
+     	.pNext = &debug_messenger_info,
+    	.enabledValidationFeatureCount = sl_array_count(enables),
+    	.pEnabledValidationFeatures = enables,
+	};
+	create_info.pNext = &validation_features;
+
+	create_info.ppEnabledLayerNames = found_validation_layers;
+	create_info.enabledLayerCount = found_validation_layer_count;
+	#endif
 
 	VkResult res = vkCreateInstance(&create_info, NULL, &gpu.instance);
 	sl_assert(res == VK_SUCCESS, "Failed to create Vulkan instance.");
@@ -852,18 +874,20 @@ void gpu_init_device(const Gpu_Desc* desc) {
 	};
 	device_create_info.pNext = &sync2_features;
 
-	VkPhysicalDeviceTimelineSemaphoreFeatures timeline_semaphore_features = {
-		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES,
-		.timelineSemaphore = VK_TRUE,
-	};
-	sync2_features.pNext = &timeline_semaphore_features;
-
-
 	VkPhysicalDeviceVulkan11Features device_features_11 = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-		.shaderDrawParameters = true,
+		.shaderDrawParameters = VK_TRUE,
 	};
-	timeline_semaphore_features.pNext = &device_features_11;
+	sync2_features.pNext = &device_features_11;
+
+	VkPhysicalDeviceVulkan12Features device_features_12 = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+		.timelineSemaphore = VK_TRUE,
+		.uniformAndStorageBuffer8BitAccess = VK_TRUE,
+		.shaderInt8 = VK_TRUE,
+		.storageBuffer8BitAccess = VK_TRUE,
+	};
+	device_features_11.pNext = &device_features_12;
 
 	VkResult create_device_result = vkCreateDevice(physical_device, &device_create_info, NULL, &gpu.device);
 	sl_assert(create_device_result == VK_SUCCESS, "Failed to create logical device.");
@@ -1827,7 +1851,7 @@ sl_inline void gpu_execute_transition_textures_to_layout(SL_Arena_Allocator* are
 		Gpu_Texture_Layout old_layout = texture_data->layout;
 		Gpu_Texture_Layout new_layout = layouts[texture_idx];
 		if (old_layout == new_layout) {
-			continue;
+			// continue;
 		}
 		texture_data->layout = new_layout;
 
@@ -2292,7 +2316,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 					.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
 					.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
 					.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-					.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+					.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
 				};
 
 				VkDependencyInfo dep = {

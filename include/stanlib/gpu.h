@@ -168,7 +168,7 @@ sl_inline Gpu_Slice gpu_slice(Gpu_Heap heap, u64 offset, u64 size) {
 }
 sl_inline bool gpu_slice_suballocate(Gpu_Slice basis, Gpu_Size_And_Align size_and_align, Gpu_Slice* out_allocation, Gpu_Slice* out_remainder) {
 	const u64 aligned_offset = sl_round_up_u64(basis.offset, size_and_align.align);
-	if (aligned_offset + size_and_align.size > basis.size) {
+	if ((aligned_offset - basis.offset) + size_and_align.size > basis.size) {
 		return false;
 	}
 
@@ -180,13 +180,16 @@ sl_inline bool gpu_slice_suballocate(Gpu_Slice basis, Gpu_Size_And_Align size_an
 	*out_remainder = (Gpu_Slice) {
 		.heap = basis.heap,
 		.offset = aligned_offset + size_and_align.size,
-		.size = basis.size - (basis.offset - aligned_offset + size_and_align.size),
+		.size = basis.size - ((aligned_offset - basis.offset) + size_and_align.size),
 	};
 	return true;
 }
 
 void* gpu_get_slice_host_ptr(Gpu_Slice slice);
+
+// Note: The GPU flushes host-visible caches on `gpu_enqueue()`, so a flush is not needed in this case.
 void gpu_flush_slice_to_gpu(Gpu_Slice slice);
+
 void gpu_flush_slice_from_gpu(Gpu_Slice slice);
 
 typedef enum Gpu_Binding_Kind {
@@ -329,6 +332,7 @@ void gpu_destroy_command_buffer_pool(Gpu_Command_Buffer_Pool pool);
 
 // Command Buffer
 bool gpu_new_command_buffer(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* out_cb);
+u32 gpu_get_command_buffer_index(Gpu_Command_Buffer cb);
 void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed);
 
 void gpu_add_on_complete_callback(Gpu_Command_Buffer cb, void* ctx, Gpu_Callback_Fn fn);
