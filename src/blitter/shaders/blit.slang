@@ -1,4 +1,4 @@
-#include "core.h"
+#include "stanlib/core.h"
 
 [SpecializationConstant]
 const bool swizzle_rrrr;

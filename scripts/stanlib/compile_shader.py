@@ -1,10 +1,11 @@
 #!/bin/python3
 
 import os
+import platform
 import struct
 import subprocess
-import platform
 from pathlib import Path
+
 
 def dump_bytes_to_file(file, source_file, source_variable):
     compiled_bytes = open(source_file, "rb").read()
@@ -22,6 +23,7 @@ def dump_bytes_to_file(file, source_file, source_variable):
 
     return len(compiled_bytes)
 
+
 def compile_shader(shader_path, c_name, entry_point, include_paths):
     parent_folder_path = str(Path(str(shader_path)).parent)
     compiled_spv_path = parent_folder_path + "/" + c_name + ".spv"
@@ -29,7 +31,17 @@ def compile_shader(shader_path, c_name, entry_point, include_paths):
     h_path = parent_folder_path + "/" + c_name + ".h"
     c_path = parent_folder_path + "/" + c_name + ".c"
 
-    args = [ "slangc", str(shader_path),"-target", "spirv", "-entry", entry_point, "-o", compiled_spv_path, "-fvk-use-entrypoint-name" ]
+    args = [
+        "slangc",
+        str(shader_path),
+        "-target",
+        "spirv",
+        "-entry",
+        entry_point,
+        "-o",
+        compiled_spv_path,
+        "-fvk-use-entrypoint-name",
+    ]
     for include_path in include_paths:
         args.append("-I")
         args.append(include_path)
@@ -39,7 +51,16 @@ def compile_shader(shader_path, c_name, entry_point, include_paths):
     is_macos = platform.system() == "Darwin"
 
     if is_macos:
-        args = [ "slangc", str(shader_path),"-target", "metallib", "-entry", entry_point, "-o", compiled_metal_lib_path ]
+        args = [
+            "slangc",
+            str(shader_path),
+            "-target",
+            "metallib",
+            "-entry",
+            entry_point,
+            "-o",
+            compiled_metal_lib_path,
+        ]
         for include_path in include_paths:
             args.append("-I")
             args.append(include_path)
@@ -48,7 +69,7 @@ def compile_shader(shader_path, c_name, entry_point, include_paths):
 
     c = open(c_path, "w")
     c.write("// machine generated, do not edit.\n")
-    c.write('#include "core.h"\n')
+    c.write('#include <stanlib/core.h>\n')
     c.write("\n")
 
     spv_source_variable = c_name + "_spv"
@@ -66,8 +87,8 @@ def compile_shader(shader_path, c_name, entry_point, include_paths):
 
     h = open(h_path, "w")
     h.write("// machine generated, do not edit.\n")
-    h.write("#include <core.h>\n")
-    h.write("#include <gpu/gpu.h>\n")
+    h.write("#include <stanlib/core.h>\n")
+    h.write("#include <stanlib/gpu.h>\n")
     h.write("\n")
     h.write(f"extern const u32 {spv_source_variable}[];\n")
     h.write(f"extern const u32 {metal_source_variable}[];\n")

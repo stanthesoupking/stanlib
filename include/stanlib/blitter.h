@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../core.h"
-#include "../gpu/gpu.h"
-#include "../text/text.h"
+#include <stanlib/core.h>
+#include <stanlib/gpu.h>
+#include <stanlib/text.h>
 
 // MARK: Blitter Resources
 

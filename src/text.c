@@ -1,10 +1,9 @@
-#include "core.h"
-#include "gpu/gpu.h"
-#include "text.h"
-#include <SDL3/SDL_gpu.h>
+#include <stanlib/core.h>
+#include <stanlib/gpu.h>
+#include <stanlib/text.h>
 
 #define STB_TRUETYPE_IMPLEMENTATION
-#include "../vendor/stb_truetype.h"
+#include "vendor/stb_truetype.h"
 
 #define SL_FONT_ATLAS_FIRST_CHAR 32
 #define SL_FONT_ATLAS_LAST_CHAR 127

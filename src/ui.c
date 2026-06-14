@@ -1,8 +1,8 @@
-#include "ui.h"
-#include "blitter/blitter.h"
-#include "core.h"
-#include "gpu/gpu.h"
-#include "text/text.h"
+#include <stanlib/core.h>
+#include <stanlib/ui.h>
+#include <stanlib/blitter.h>
+#include <stanlib/text.h>
+
 #include <string.h>
 
 UI_ID ui_id(UI_ID parent, u32 item, u32 index) {

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../core.h"
-#include "../gpu/gpu.h"
+#include <stanlib/core.h>
+#include <stanlib/gpu.h>
 
 typedef struct SL_Font_Atlas SL_Font_Atlas;
 

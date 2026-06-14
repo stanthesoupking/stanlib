@@ -1,11 +1,13 @@
-#include "blitter.h"
-#include "core.h"
-#include "gpu/gpu.h"
+
+#include <stanlib/core.h>
+#include <stanlib/gpu.h>
+#include <stanlib/blitter.h>
+#include <stanlib/text.h>
+
+#include <string.h>
 
 #include "shaders/blit_vs.h"
 #include "shaders/blit_fs.h"
-#include "text/text.h"
-#include <string.h>
 
 // MARK: Blitter Resources
 
@@ -293,6 +295,3 @@ void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
 
 	sl_blitter_cleanup(blitter_ptr);
 }
-
-#include "shaders/blit_vs.c"
-#include "shaders/blit_fs.c"

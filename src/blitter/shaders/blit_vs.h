@@ -1,6 +1,6 @@
 // machine generated, do not edit.
-#include <core.h>
-#include <gpu/gpu.h>
+#include <stanlib/core.h>
+#include <stanlib/gpu.h>
 
 extern const u32 blit_vs_spv[];
 extern const u32 blit_vs_metal[];

@@ -1,4 +1,4 @@
-#include "gpu.h"
+#include <stanlib/gpu.h>
 
 #if !defined(GPU_BACKEND)
 #define GPU_BACKEND GPU_BACKEND_DEFAULT

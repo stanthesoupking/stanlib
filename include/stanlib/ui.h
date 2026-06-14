@@ -1,10 +1,8 @@
 #pragma once
 
-#include "../core.h"
-#include "../text/text.h"
-#include "../blitter/blitter.h"
-
-// UI is processed front to back
+#include <stanlib/core.h>
+#include <stanlib/text.h>
+#include <stanlib/blitter.h>
 
 typedef struct UI_Margins {
 	u32 top, bottom, left, right;
