@@ -1274,7 +1274,9 @@ Gpu_Shader_Blob gpu_new_shader_blob(const Gpu_Shader_Blob_Desc* desc) {
     }
 
 	dispatch_data_t buffer_data = dispatch_data_create(desc->metallib.data, desc->metallib.size, nil, ^{});
-	id<MTLLibrary> library = [gpu.device newLibraryWithData:buffer_data error:nil];
+	
+	NSError* err = nil;
+	id<MTLLibrary> library = [gpu.device newLibraryWithData:buffer_data error:&err];
 	if (library == nil) {
 		return SL_HANDLE_NULL;
 	}

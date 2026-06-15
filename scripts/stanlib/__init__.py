@@ -1,1 +1,1 @@
-from .compile_shader import compile_shader
+from .compile_shader import *

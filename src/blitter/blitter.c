@@ -6,8 +6,7 @@
 
 #include <string.h>
 
-#include "shaders/blit_vs.h"
-#include "shaders/blit_fs.h"
+#include "shaders.h"
 
 // MARK: Blitter Resources
 

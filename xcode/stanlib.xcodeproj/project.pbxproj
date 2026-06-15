@@ -15,8 +15,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				blitter/blitter.c,
-				blitter/shaders/blit_fs.c,
-				blitter/shaders/blit_vs.c,
+				blitter/shaders.c,
 				gpu/gpu_impl.c,
 				text.c,
 				ui.c,

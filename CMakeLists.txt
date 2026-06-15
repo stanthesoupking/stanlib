@@ -13,8 +13,7 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(STANLIB_SOURCES
-    "src/blitter/shaders/blit_fs.c"
-    "src/blitter/shaders/blit_vs.c"
+    "src/blitter/shaders.c"
     "src/blitter/blitter.c"
     "src/gpu/gpu_impl.c"
     "src/text.c"
