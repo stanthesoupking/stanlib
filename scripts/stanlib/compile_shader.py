@@ -164,6 +164,61 @@ class SlangSource:
 		else:
 			return None
 
+class MetalSource:
+	def __init__(self, path: str, include_paths: Iterable[str]):
+		self.path = path
+		self.include_paths = include_paths
+
+	def compile(self, target: Target, settings: CompilerSettings) -> Optional[bytes]:
+		if target != Target.METALLIB:
+			return None
+
+		temp_file_air = "temp.air"
+		temp_file_metallib = "temp.metallib"
+		Path(temp_file_air).unlink(missing_ok=True)
+		Path(temp_file_metallib).unlink(missing_ok=True)
+
+		# produce .air
+		args = [
+			"xcrun",
+			"metal",
+			f"-mmacosx-version-min={settings.macos_min}",
+			"-O2",
+			"-ffast-math",
+			"-c",
+			self.path,
+			"-o",
+			temp_file_air,
+		]
+
+		for include_path in self.include_paths:
+			args.append("-I")
+			args.append(include_path)
+
+		if settings.include_sources:
+			args.append("-frecord-sources=flat")
+
+		subprocess.run(args, check=True)
+
+		# produce .metallib
+		args = [
+			"xcrun",
+			"metallib",
+			temp_file_air,
+			"-o",
+			temp_file_metallib,
+		]
+		subprocess.run(args, check=True)
+
+		with open(temp_file_metallib, "rb") as file:
+			compiled_bytes = file.read()
+
+		Path(temp_file_air).unlink(missing_ok=True)
+		Path(temp_file_metallib).unlink(missing_ok=True)
+
+		return compiled_bytes
+
+
 class Shader:
 	def __init__(self, name: str, sources: dict[Target, ShaderSource]):
 		self.name = name
