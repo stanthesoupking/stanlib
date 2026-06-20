@@ -64,10 +64,44 @@ typedef struct UI_ID {
 
 UI_ID ui_id(UI_ID parent, u32 item, u32 index);
 
+typedef enum UI_Touch_Kind {
+	UI_Touch_Kind_Mouse,
+	UI_Touch_Kind_Finger,
+	UI_Touch_Kind_Pencil,
+} UI_Touch_Kind;
+
+typedef enum UI_Touch_Kind_Mask {
+	UI_Touch_Kind_Mask_None = 0,
+	UI_Touch_Kind_Mask_Mouse = 1 << UI_Touch_Kind_Mouse,
+	UI_Touch_Kind_Mask_Finger = 1 << UI_Touch_Kind_Finger,
+	UI_Touch_Kind_Mask_Pencil = 1 << UI_Touch_Kind_Pencil,
+	UI_Touch_Kind_Mask_All = UI_Touch_Kind_Mask_Mouse | UI_Touch_Kind_Mask_Finger | UI_Touch_Kind_Mask_Pencil,
+} UI_Touch_Kind_Mask;
+
+typedef struct UI_Touch_ID {
+	UI_Touch_Kind kind;
+	u64 external;
+} UI_Touch_ID;
+
+typedef enum UI_Touch_State : u8 {
+	UI_Touch_State_Alive,
+	UI_Touch_State_Ended,
+	UI_Touch_State_Cancelled,
+} UI_Touch_State;
+
+typedef struct UI_Touch UI_Touch;
+
+typedef struct UI_Touch_Event {
+	UI_Touch_ID id;
+	vec2_f32 position;
+	f64 timestamp;
+} UI_Touch_Event;
+
 typedef enum UI_Event_Kind {
-	UI_Event_Kind_Mouse_Move,
-	UI_Event_Kind_Mouse_Mouse_Down,
-	UI_Event_Kind_Mouse_Mouse_Up,
+	UI_Event_Kind_Touch_Began,
+	UI_Event_Kind_Touch_Changed,
+	UI_Event_Kind_Touch_Ended,
+	UI_Event_Kind_Touch_Cancelled,
 } UI_Event_Kind;
 
 typedef struct UI_Event_Mouse_Move {
@@ -78,6 +112,7 @@ typedef struct UI_Event {
 	UI_Event_Kind kind;
 	union {
 		UI_Event_Mouse_Move mouse_move;
+		UI_Touch_Event touch;
 	};
 } UI_Event;
 sl_seq(UI_Event, UI_Event_Seq, ui_event_seq);
@@ -126,18 +161,55 @@ typedef struct UI_Render_Callback {
 	void (*render)(void* ctx, Rect_f32 rect, SL_Blitter* blitter);
 } UI_Render_Callback;
 
+// MARK: Gesture
+
+typedef struct UI_Gesture_VTable {
+	void (*touch_began)(UI* ui, void* ctx, UI_Touch* touch);
+	void (*touch_changed)(UI* ui, void* ctx, UI_Touch* touch);
+	void (*touch_ended)(UI* ui, void* ctx, UI_Touch* touch);
+	void (*touch_cancelled)(UI* ui, void* ctx, UI_Touch* touch);
+	void (*destroy)(UI* ui, void* ctx);
+} UI_Gesture_VTable;
+
+typedef enum UI_Gesture_State {
+	UI_Gesture_State_Began,
+	UI_Gesture_State_Changed,
+	UI_Gesture_State_Ended,
+	UI_Gesture_State_Cancelled,
+} UI_Gesture_State;
+
+typedef struct UI_Pan_Gesture_Frame {
+	UI_Gesture_State state;
+	vec2_f32 position;
+	vec2_f32 translation;
+	vec2_f32 velocity;
+} UI_Pan_Gesture_Frame;
+
+typedef struct UI_Pan_Gesture_Callback {
+	void* ctx;
+	void (*func)(void* ctx, const UI_Pan_Gesture_Frame* frame);
+} UI_Pan_Gesture_Callback;
+
+typedef struct UI_Pan_Gesture_Desc {
+	u32 minimum_touches;
+	u32 maximum_touches;
+	UI_Pan_Gesture_Callback callback;
+} UI_Pan_Gesture_Desc;
+
 typedef struct UI_Element UI_Element;
 
 UI* ui_new(Allocator* allocator, Gpu_Texture texture);
 void ui_destroy(UI* ui);
 
-void ui_begin(UI* ui, UI_Event_Seq* event_sink);
-void ui_end(UI* ui);
+void ui_begin(UI* ui);
+void ui_end(UI* ui, UI_Event_Seq* event_sink);
 
 void ui_begin_frame(UI* ui, Rect_f32 rect);
 void ui_end_frame(UI* ui);
 
-// ill available space in a hstack/vstack
+void ui_debug_touches(UI* ui, SL_Font_Atlas* font);
+
+// Fill available space in a hstack/vstack
 UI_Element* ui_spacer(UI* ui);
 
 UI_Element* ui_push_hstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing);
@@ -159,5 +231,7 @@ UI_Element* ui_custom(UI* ui, UI_Extent extent, UI_Render_Callback on_render);
 // Note #1: An element will only have a rect once layout has run (after calling ui_end()).
 // Note #2: When the element is culled, this function returns `false`.
 bool ui_element_get_layout_rect(UI* ui, UI_Element* element, Rect_f32* out_rect);
+
+void ui_pan_gesture(UI* ui, UI_ID id, const UI_Pan_Gesture_Desc* desc, UI_Element* element);
 
 void ui_render(UI* ui, SL_Blitter* blitter);

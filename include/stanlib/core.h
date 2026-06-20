@@ -14,6 +14,7 @@
 #include <intrin.h>
 #endif
 
+#define sl_unused __attribute__((unused))
 #define sl_inline static inline
 #define sl_concat(a, b) a ## b
 #define sl_min(a, b) ((a) < (b) ? (a) : (b))
@@ -2362,6 +2363,8 @@ sl_inline void sl_memset(void* dst, u8 value, u64 size) {
 
 #define sl_zero(x) sl_memset(&x, 0, sizeof(x))
 
+#define SL_SEQ_MIN_CHUNK_SIZE_BYTES 1024
+
 #define sl_seq(element, type, function_prefix)\
 	typedef struct type {\
 		Allocator* allocator;\
@@ -2371,13 +2374,13 @@ sl_inline void sl_memset(void* dst, u8 value, u64 size) {
 		u64 element_count;\
 	} type;\
 	\
-	sl_inline u64 sl_concat(function_prefix, _chunk_storage_for_count)(u64 chunk_count) {\
+	sl_unused sl_inline u64 sl_concat(function_prefix, _chunk_storage_for_count)(u64 chunk_count) {\
 		if (chunk_count == 0) {\
 			return 0;\
 		}\
 		return 1ULL << sl_next_pow2_exp_u64(chunk_count);\
 	}\
-	sl_inline void sl_concat(function_prefix, _ensure_capacity)(type* s, u64 capacity) {\
+	sl_unused sl_inline void sl_concat(function_prefix, _ensure_capacity)(type* s, u64 capacity) {\
 		const u64 new_chunk_count = (capacity + (1ull << s->chunk_size_exp)) >> s->chunk_size_exp;\
 		if (s->chunk_count < new_chunk_count) {\
 			const u64 old_storage_count = sl_concat(function_prefix, _chunk_storage_for_count)(s->chunk_count);\
@@ -2392,8 +2395,8 @@ sl_inline void sl_memset(void* dst, u8 value, u64 size) {
 			s->chunk_count = new_chunk_count;\
 		}\
 	}\
-	sl_inline type sl_concat(function_prefix, _new)(Allocator* allocator, u64 initial_capacity) {\
-		const u64 chunk_size_exp = sl_next_pow2_exp_u64(sl_max(4096 / sizeof(type), 1));\
+	sl_unused sl_inline type sl_concat(function_prefix, _new)(Allocator* allocator, u64 initial_capacity) {\
+		const u64 chunk_size_exp = sl_next_pow2_exp_u64(sl_max(SL_SEQ_MIN_CHUNK_SIZE_BYTES / sizeof(element), 1));\
 		type s = {\
 			.allocator = allocator,\
 			.chunks = NULL,\
@@ -2404,7 +2407,7 @@ sl_inline void sl_memset(void* dst, u8 value, u64 size) {
 		sl_concat(function_prefix, _ensure_capacity)(&s, initial_capacity);\
 		return s;\
 	}\
-	sl_inline void sl_concat(function_prefix, _destroy)(type* s) {\
+	sl_unused sl_inline void sl_concat(function_prefix, _destroy)(type* s) {\
 		for (u32 chunk_idx = 0; chunk_idx < s->chunk_count; chunk_idx++) {\
 			allocator_free(s->allocator, s->chunks[chunk_idx], 1ull << s->chunk_size_exp);\
 		}\
@@ -2412,30 +2415,30 @@ sl_inline void sl_memset(void* dst, u8 value, u64 size) {
 		allocator_free(s->allocator, s->chunks, storage_count);\
 		*s = (type) {0};\
 	}\
-	sl_inline element* sl_concat(function_prefix, _get_ptr)(type* s, u64 idx) {\
+	sl_unused sl_inline element* sl_concat(function_prefix, _get_ptr)(type* s, u64 idx) {\
 		sl_assert(idx < s->element_count, "Index exceeds count of sequence.");\
 		return &s->chunks[idx >> s->chunk_size_exp][idx & ((1ull << s->chunk_size_exp) - 1)];\
 	}\
-	sl_inline element sl_concat(function_prefix, _get)(type* s, u64 idx) {\
+	sl_unused sl_inline element sl_concat(function_prefix, _get)(type* s, u64 idx) {\
 		return *sl_concat(function_prefix, _get_ptr)(s, idx);\
 	}\
-	sl_inline void sl_concat(function_prefix, _push)(type* s, element e) {\
+	sl_unused sl_inline void sl_concat(function_prefix, _push)(type* s, element e) {\
 		sl_concat(function_prefix, _ensure_capacity)(s, s->element_count + 1);\
 		const u64 idx = s->element_count++;\
 		*sl_concat(function_prefix, _get_ptr)(s, idx) = e;\
 	}\
-	sl_inline element* sl_concat(function_prefix, _push_reserve)(type* s) {\
+	sl_unused sl_inline element* sl_concat(function_prefix, _push_reserve)(type* s) {\
 		sl_concat(function_prefix, _ensure_capacity)(s, s->element_count + 1);\
 		const u64 idx = s->element_count++;\
 		element* result = sl_concat(function_prefix, _get_ptr)(s, idx);\
 		sl_zero(*result);\
 		return result;\
 	}\
-	sl_inline void sl_concat(function_prefix, _reserve_count)(type* s, u32 count) {\
+	sl_unused sl_inline void sl_concat(function_prefix, _reserve_count)(type* s, u32 count) {\
 		sl_concat(function_prefix, _ensure_capacity)(s, s->element_count + count);\
 		s->element_count += count;\
 	}\
-	sl_inline bool sl_concat(function_prefix, _pop)(type* s, element* out_e) {\
+	sl_unused sl_inline bool sl_concat(function_prefix, _pop)(type* s, element* out_e) {\
 		if (s->element_count == 0) {\
 			return false;\
 		}\
@@ -2443,17 +2446,17 @@ sl_inline void sl_memset(void* dst, u8 value, u64 size) {
 		--s->element_count;\
 		return true;\
 	}\
-	sl_inline u64 sl_concat(function_prefix, _get_count)(type* s) {\
+	sl_unused sl_inline u64 sl_concat(function_prefix, _get_count)(type* s) {\
 		return s->element_count;\
 	}\
-	sl_inline void sl_concat(function_prefix, _remove)(type* s, u64 idx) {\
+	sl_unused sl_inline void sl_concat(function_prefix, _remove)(type* s, u64 idx) {\
 		sl_assert(idx < s->element_count, "Index exceeds count of sequence.");\
 		for (u64 i = idx; i < s->element_count - 1; i++) {\
 			*sl_concat(function_prefix, _get_ptr)(s, i) = *sl_concat(function_prefix, _get_ptr)(s, i + 1);\
 		}\
 		--s->element_count;\
 	}\
-	sl_inline void sl_concat(function_prefix, _clear)(type* s) {\
+	sl_unused sl_inline void sl_concat(function_prefix, _clear)(type* s) {\
 		s->element_count = 0;\
 	}
 
@@ -2572,7 +2575,7 @@ sl_inline u64 sl_arena_allocator_get_position(SL_Arena_Allocator* allocator) {
         Allocator* allocator; \
     } type; \
     \
-    sl_inline type sl_concat(function_prefix, _new)(Allocator* allocator, u64 initial_capacity) { \
+    sl_unused sl_inline type sl_concat(function_prefix, _new)(Allocator* allocator, u64 initial_capacity) { \
         type m = {0}; \
         m.allocator = allocator; \
         m.capacity = 1ULL << sl_next_pow2_exp_u64(initial_capacity); \
@@ -2584,14 +2587,17 @@ sl_inline u64 sl_arena_allocator_get_position(SL_Arena_Allocator* allocator) {
         return m; \
     } \
     \
-    sl_inline void sl_concat(function_prefix, _destroy)(type* m) { \
+	sl_unused sl_inline void sl_concat(function_prefix, _destroy)(type* m) { \
         allocator_free(m->allocator, m->keys, m->capacity); \
         allocator_free(m->allocator, m->values, m->capacity); \
         allocator_free(m->allocator, m->hashes, m->capacity); \
         *m = (type){0}; \
     } \
+	sl_unused sl_inline void sl_concat(function_prefix, _clear)(type* m) { \
+		for (u64 i = 0; i < m->capacity; i++) m->hashes[i] = 0; \
+	} \
     \
-    sl_inline void sl_concat(function_prefix, _resize)(type* m, u64 new_capacity) { \
+	sl_unused sl_inline void sl_concat(function_prefix, _resize)(type* m, u64 new_capacity) { \
         key_type* new_keys; allocator_new(m->allocator, new_keys, new_capacity); \
         value_type* new_values; allocator_new(m->allocator, new_values, new_capacity); \
         u64* new_hashes; allocator_new(m->allocator, new_hashes, new_capacity); \
@@ -2612,7 +2618,7 @@ sl_inline u64 sl_arena_allocator_get_position(SL_Arena_Allocator* allocator) {
         m->keys = new_keys; m->values = new_values; m->hashes = new_hashes; m->capacity = new_capacity; \
     } \
     \
-    sl_inline value_type* sl_concat(function_prefix, _insert)(type* m, key_type key, value_type value) { \
+	sl_unused sl_inline value_type* sl_concat(function_prefix, _insert)(type* m, key_type key, value_type value) { \
         if (m->count * 2 >= m->capacity) sl_concat(function_prefix, _resize)(m, m->capacity * 2); \
         u64 h = hash_func(key); \
         u64 idx = h & (m->capacity - 1); \
@@ -2624,7 +2630,7 @@ sl_inline u64 sl_arena_allocator_get_position(SL_Arena_Allocator* allocator) {
         return &m->values[idx];\
     } \
     \
-    sl_inline bool sl_concat(function_prefix, _get_ptr)(type* m, key_type key, value_type** out_value) { \
+	sl_unused sl_inline bool sl_concat(function_prefix, _get_ptr)(type* m, key_type key, value_type** out_value) { \
         if (m->count == 0) return false; \
         u64 h = hash_func(key); \
         u64 idx = h & (m->capacity - 1); \
@@ -2637,7 +2643,7 @@ sl_inline u64 sl_arena_allocator_get_position(SL_Arena_Allocator* allocator) {
         return false; \
     } \
     \
-    sl_inline bool sl_concat(function_prefix, _get)(type* m, key_type key, value_type* out_value) { \
+	sl_unused sl_inline bool sl_concat(function_prefix, _get)(type* m, key_type key, value_type* out_value) { \
     	value_type* value_ptr; \
     	if (sl_concat(function_prefix, _get_ptr)(m, key, &value_ptr)) {\
      		*out_value = *value_ptr; \
@@ -2647,7 +2653,7 @@ sl_inline u64 sl_arena_allocator_get_position(SL_Arena_Allocator* allocator) {
       	} \
     } \
     \
-    sl_inline bool sl_concat(function_prefix, _remove)(type* m, key_type key) { \
+	sl_unused sl_inline bool sl_concat(function_prefix, _remove)(type* m, key_type key) { \
         if (m->count == 0) return false; \
         u64 h = hash_func(key); \
         u64 idx = h & (m->capacity - 1); \
@@ -2663,7 +2669,7 @@ sl_inline u64 sl_arena_allocator_get_position(SL_Arena_Allocator* allocator) {
         return false; \
     } \
     \
-    sl_inline u64 sl_concat(function_prefix, _get_count)(type* m) { \
+	sl_unused sl_inline u64 sl_concat(function_prefix, _get_count)(type* m) { \
         return m->count; \
     }
 
@@ -3158,7 +3164,7 @@ sl_inline vec2_s32 size_rect_s32(Rect_s32 a) {
 	return sub_vec2_s32(a.end, a.start);
 }
 
-sl_inline bool contains_rect_f32(Rect_f32 a, vec2_f32 b) {
+sl_inline bool rect_contains_f32(Rect_f32 a, vec2_f32 b) {
 	return (b.x >= a.start.x) && (b.y >= a.start.y) && (b.x < a.end.x) && (b.y < a.end.y);
 }
 

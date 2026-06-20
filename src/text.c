@@ -67,7 +67,7 @@ SL_Font_Atlas* sl_new_font_atlas(const SL_Font_Atlas_Desc* desc) {
 
 	const Gpu_Copy_Slice_To_Texture_Desc copy_desc = {
 		.src = staging_slice,
-		.src_row_length = row_length,
+		.src_row_length = (u32)row_length,
 		.dst = result->texture,
 		.dst_start = { 0, 0, 0 },
 		.dst_end = { desc->atlas_size, desc->atlas_size, 1 },

@@ -239,7 +239,7 @@ void sl_blitter_execute_command(SL_Blitter* blitter, SL_Blitter_Command command)
 void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
 	SL_Blitter* blitter = *blitter_ptr;
 
-	const u32 quad_count = textured_quad_f32_seq_get_count(&blitter->quads);
+	const u32 quad_count = (u32)textured_quad_f32_seq_get_count(&blitter->quads);
 
 	Gpu_Slice quads_slice;
 	bool got_quads_slice = gpu_slice_suballocate(*parameters_slice, gpu_size_and_align_of_type(Textured_Quad_f32, quad_count), &quads_slice, parameters_slice);
@@ -255,7 +255,7 @@ void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
 	}
 	gpu_flush_slice_to_gpu(quads_slice);
 
-	const u32 draw_count = sl_blitter_draw_seq_get_count(&blitter->draws);
+	const u32 draw_count = (u32)sl_blitter_draw_seq_get_count(&blitter->draws);
 	for (u32 draw_idx = 0; draw_idx < draw_count; draw_idx++) {
 		const SL_Blitter_Draw draw = sl_blitter_draw_seq_get(&blitter->draws, draw_idx);
 

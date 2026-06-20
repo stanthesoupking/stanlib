@@ -324,11 +324,11 @@ void gpu_init(const Gpu_Desc* desc) {
 	gpu.command_pool_pool = gpu_command_buffer_pool_pool_new(gpu.allocator);
 	gpu.global_semaphore = gpu_new_semaphore();
 
-	const char* device_name = [gpu.device.name cStringUsingEncoding:NSUTF8StringEncoding];
+	sl_unused const char* device_name = [gpu.device.name cStringUsingEncoding:NSUTF8StringEncoding];
 	gpu_log("Initialised with device '%s', using Metal backend.", device_name);
 }
 
-void gpu_deinit() {
+void gpu_deinit(void) {
 	// todo
 }
 
@@ -940,9 +940,6 @@ bool gpu_fetch_swapchain_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb,
 	Gpu_Swapchain_Data* swapchain_data = gpu_swapchain_pool_resolve(&gpu.swapchain_pool, swapchain);
 
 	sl_mutex_lock(&swapchain_data->mutex);
-
-#warning temporary
-	swapchain_data->metal_layer.framebufferOnly = NO;
 
 	swapchain_data->metal_layer.drawableSize = (CGSize) { swapchain_desc.size.x, swapchain_desc.size.y };
 	swapchain_data->metal_layer.pixelFormat = gpu_format_to_mtl_pixel_format(swapchain_desc.format);
