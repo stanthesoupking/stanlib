@@ -18,6 +18,8 @@ set(STANLIB_SOURCES
     "src/gpu/gpu_impl.c"
     "src/text.c"
     "src/ui.c"
+	"src/atlas_pack.c"
+	"src/image.c"
 )
 
 add_library(stanlib "${STANLIB_SOURCES}")

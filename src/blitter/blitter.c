@@ -175,15 +175,15 @@ void sl_blitter_draw_textured_quads_raw(SL_Blitter* blitter, Gpu_Texture texture
 		});
 	}
 }
-void sl_blitter_draw_text(SL_Blitter* blitter, SL_Font_Atlas* font, const char* string, vec2_f32 position, vec4_f32 color) {
+void sl_blitter_draw_text(SL_Blitter* blitter, SL_Font* font, Gpu_Texture texture, const char* string, vec2_f32 position, vec4_f32 color) {
 	u32 quad_count;
-	sl_get_font_geometry_for_string(font, string, position, color, NULL, &quad_count);
+	sl_font_generate_geometry_for_string(font, texture, string, position, color, NULL, &quad_count);
 
 	Textured_Quad_f32* quads;
 	allocator_new(blitter->allocator, quads, quad_count);
-	sl_get_font_geometry_for_string(font, string, position, color, quads, NULL);
+	sl_font_generate_geometry_for_string(font, texture, string, position, color, quads, NULL);
 
-	sl_blitter_draw_textured_quads_raw(blitter, sl_get_font_atlas_texture(font), quads, quad_count, SL_Blitter_Draw_Kind_Swizzle_RRRR);
+	sl_blitter_draw_textured_quads_raw(blitter, texture, quads, quad_count, SL_Blitter_Draw_Kind_Normal);
 	allocator_free(blitter->allocator, quads, quad_count);
 }
 void sl_blitter_draw_texture(SL_Blitter* blitter, Gpu_Texture texture, vec2_f32 position, vec4_f32 color) {
@@ -220,21 +220,21 @@ void sl_blitter_draw_textured_quads(SL_Blitter* blitter, Gpu_Texture texture, co
 	sl_blitter_draw_textured_quads_raw(blitter, texture, quads, quad_count, SL_Blitter_Draw_Kind_Normal);
 }
 
-void sl_blitter_execute_command(SL_Blitter* blitter, SL_Blitter_Command command) {
-	switch (command.kind) {
-		case SL_Blitter_Command_Kind_Draw_Text: {
-			sl_blitter_draw_text(blitter, command.draw_text.font, command.draw_text.string, command.draw_text.position, command.draw_text.color);
-		} break;
-
-		case SL_Blitter_Command_Kind_Draw_Texture: {
-			sl_blitter_draw_texture(blitter, command.draw_texture.texture, command.draw_texture.position, command.draw_texture.color);
-		} break;
-
-		case SL_Blitter_Command_Kind_Draw_Textured_Quads: {
-			sl_blitter_draw_textured_quads(blitter, command.draw_textured_quads.texture, command.draw_textured_quads.quads, command.draw_textured_quads.quad_count);
-		} break;
-	}
-}
+//void sl_blitter_execute_command(SL_Blitter* blitter, SL_Blitter_Command command) {
+//	switch (command.kind) {
+//		case SL_Blitter_Command_Kind_Draw_Text: {
+//			sl_blitter_draw_text(blitter, command.draw_text.font, command.draw_text.string, command.draw_text.position, command.draw_text.color);
+//		} break;
+//
+//		case SL_Blitter_Command_Kind_Draw_Texture: {
+//			sl_blitter_draw_texture(blitter, command.draw_texture.texture, command.draw_texture.position, command.draw_texture.color);
+//		} break;
+//
+//		case SL_Blitter_Command_Kind_Draw_Textured_Quads: {
+//			sl_blitter_draw_textured_quads(blitter, command.draw_textured_quads.texture, command.draw_textured_quads.quads, command.draw_textured_quads.quad_count);
+//		} break;
+//	}
+//}
 
 void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
 	SL_Blitter* blitter = *blitter_ptr;

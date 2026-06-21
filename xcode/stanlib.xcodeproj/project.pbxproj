@@ -14,11 +14,14 @@
 		02B0FBC02FDE412500BC0892 /* Exceptions for "src" folder in "stanlib" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				atlas_pack.c,
 				blitter/blitter.c,
 				blitter/shaders.c,
 				gpu/gpu_impl.c,
+				image.c,
 				text.c,
 				ui.c,
+				vendor/stb_impl.c,
 			);
 			target = 027CE76E2FDE3FFD00E747CA /* stanlib */;
 		};

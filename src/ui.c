@@ -781,9 +781,9 @@ typedef struct UI_Text_Measurements {
 	vec2_s32 size;
 } UI_Text_Measurements;
 
-UI_Text_Measurements ui_text_measurements(SL_Font_Atlas* font, const char* string) {
-	const Range_s32 font_y_range = sl_get_font_y_range(font);
-	const Rect_s32 label_rect = sl_font_atlas_measure_string(font, string);
+UI_Text_Measurements ui_text_measurements(SL_Font* font, const char* string) {
+	const Range_s32 font_y_range = sl_font_get_y_range(font);
+	const Rect_s32 label_rect = sl_font_measure_string(font, string);
 	const vec2_s32 label_size = size_rect_s32(label_rect);
 	return (UI_Text_Measurements) {
 		.size = label_size,
@@ -1260,7 +1260,7 @@ void ui_end_frame(UI* ui) {
 
 // MARK: Debug Touches
 
-void ui_debug_touches(UI* ui, SL_Font_Atlas* font) {
+void ui_debug_touches(UI* ui, SL_Font* font, Gpu_Texture texture) {
 	const Rect_f32 rect = {
 		.start = {
 			40.0f,
@@ -1279,6 +1279,7 @@ void ui_debug_touches(UI* ui, SL_Font_Atlas* font) {
 	{
 		const UI_Label_Style label_style = {
 			.font = font,
+			.texture = texture,
 			.color = (vec4_f32) { 1.0f, 1.0f, 1.0f, 1.0f, },
 		};
 		ui_label(ui, UI_EXTENT_NONE, &label_style, "Touches");
@@ -1386,7 +1387,7 @@ void ui_button_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	const UI_Button_State_Style* state_style = &button->style.state[button_state];
 
 	ui_draw_nine_patch(ui, blitter, rect, state_style->backing, state_style->backing_color);
-	sl_blitter_draw_text(blitter, button->style.font, button->label, add_vec2_f32(text_offset, state_style->label_offset), state_style->label_color);
+	sl_blitter_draw_text(blitter, button->style.font, button->style.texture, button->label, add_vec2_f32(text_offset, state_style->label_offset), state_style->label_color);
 }
 const static UI_Element_VTable ui_button_vtable = {
 	.get_extent = ui_button_get_extent,
@@ -1619,7 +1620,7 @@ void ui_label_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	};
 
 	const UI_Label_Style* style = &label->style;
-	sl_blitter_draw_text(blitter, style->font, label->label, text_offset, style->color);
+	sl_blitter_draw_text(blitter, style->font, style->texture, label->label, text_offset, style->color);
 }
 const static UI_Element_VTable ui_label_vtable = {
 	.get_extent = ui_label_get_extent,

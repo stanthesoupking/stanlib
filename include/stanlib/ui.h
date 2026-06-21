@@ -38,7 +38,8 @@ typedef struct UI_Button_State_Style {
 } UI_Button_State_Style;
 
 typedef struct UI_Button_Style {
-	SL_Font_Atlas* font;
+	SL_Font* font;
+	Gpu_Texture texture;
 	UI_Padding text_padding;
 	UI_Button_State_Style state[UI_BUTTON_STATE_COUNT];
 } UI_Button_Style;
@@ -51,7 +52,8 @@ typedef struct UI_Slider_Style {
 } UI_Slider_Style;
 
 typedef struct UI_Label_Style {
-	SL_Font_Atlas* font;
+	SL_Font* font;
+	Gpu_Texture texture;
 	vec4_f32 color;
 } UI_Label_Style;
 
@@ -196,6 +198,51 @@ typedef struct UI_Pan_Gesture_Desc {
 	UI_Pan_Gesture_Callback callback;
 } UI_Pan_Gesture_Desc;
 
+typedef struct UI_Atlas UI_Atlas;
+
+typedef enum UI_Atlas_Entry_Kind {
+	UI_Atlas_Entry_Kind_Image,
+	UI_Atlas_Entry_Kind_Font,
+} UI_Atlas_Entry_Kind;
+
+typedef struct UI_Atlas_Entry_Image {
+	Immutable_Buffer buffer;
+	vec2_u32 size;
+	u32 row_length; // bytes
+} UI_Atlas_Entry_Image;
+
+typedef struct UI_Atlas_Entry_Font {
+	Immutable_Buffer buffer;
+	f32 size;
+} UI_Atlas_Entry_Font;
+
+typedef struct UI_Atlas_Entry {
+	UI_Atlas_Entry_Kind kind;
+	union {
+		UI_Atlas_Entry_Image image;
+		UI_Atlas_Entry_Font font;
+	};
+} UI_Atlas_Entry;
+
+typedef struct UI_Atlas_Desc {
+	Allocator* allocator;
+	
+	const UI_Atlas_Entry* entries;
+	u32 entry_count;
+	
+	Gpu_Command_Buffer command_buffer;
+	Gpu_Slice* inout_staging_slice;
+	Gpu_Slice* inout_persistent_slice;
+} UI_Atlas_Desc;
+
+typedef struct UI_Atlas_Handle {
+	UI_Atlas* atlas;
+	u32 index;
+} UI_Atlas_Handle;
+
+UI_Atlas* ui_atlas_new(const UI_Atlas_Desc* desc);
+void ui_atlas_destroy(UI_Atlas* atlas);
+
 typedef struct UI_Element UI_Element;
 
 UI* ui_new(Allocator* allocator, Gpu_Texture texture);
@@ -207,7 +254,7 @@ void ui_end(UI* ui, UI_Event_Seq* event_sink);
 void ui_begin_frame(UI* ui, Rect_f32 rect);
 void ui_end_frame(UI* ui);
 
-void ui_debug_touches(UI* ui, SL_Font_Atlas* font);
+void ui_debug_touches(UI* ui, SL_Font* font, Gpu_Texture texture);
 
 // Fill available space in a hstack/vstack
 UI_Element* ui_spacer(UI* ui);

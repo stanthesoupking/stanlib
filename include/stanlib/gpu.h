@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core.h"
+#include "image.h"
 
 #define GPU_BACKEND_VULKAN 1
 #define GPU_BACKEND_METAL 2
@@ -302,6 +303,7 @@ typedef struct Gpu_Texture_Desc {
 } Gpu_Texture_Desc;
 Gpu_Size_And_Align gpu_size_and_align_for_texture(const Gpu_Texture_Desc* desc);
 Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice);
+Gpu_Texture gpu_new_texture_from_image(SL_Image* image, Gpu_Slice* inout_staging_allocator, Gpu_Slice* inout_texture_allocator, Gpu_Command_Buffer command_buffer);
 void gpu_destroy_texture(Gpu_Texture texture);
 const Gpu_Texture_Desc* gpu_get_texture_desc(Gpu_Texture texture);
 
