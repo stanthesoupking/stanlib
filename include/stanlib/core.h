@@ -1966,6 +1966,13 @@ sl_inline bool eq_vec4_f64(vec4_f64 a, vec4_f64 b) {
 	return (a.x == b.x) && (a.y == b.y) && (a.z == b.z) && (a.w == b.w);
 }
 
+sl_inline vec2_f32 cvt_vec2_u32_f32(vec2_u32 v) {
+	return (vec2_f32) { (f32)v.x, (f32)v.y };
+}
+sl_inline vec2_u32 cvt_vec2_f32_u32(vec2_f32 v) {
+	return (vec2_u32) { (u32)v.x, (u32)v.y };
+}
+
 sl_inline vec2_f32 rotate_vec2_f32(vec2_f32 v, f32 a) {
 	f32 cos_a = cosf(a);
 	f32 sin_a = sinf(a);
@@ -3143,10 +3150,16 @@ sl_inline vec2_f32 centre_rect_f32(Rect_f32 a) {
 	return mul_vec2_f32(add_vec2_f32(a.start, a.end), (vec2_f32) { 0.5f, 0.5f });
 }
 
-sl_inline Rect_f32 offset_rect_f32(Rect_f32 a, vec2_f32 b) {
+sl_inline Rect_f32 rect_offset_f32(Rect_f32 a, vec2_f32 b) {
 	return (Rect_f32) {
 		.start = add_vec2_f32(a.start, b),
 		.end = add_vec2_f32(a.end, b),
+	};
+}
+sl_inline Rect_u32 rect_offset_u32(Rect_u32 a, vec2_u32 b) {
+	return (Rect_u32) {
+		.start = add_vec2_u32(a.start, b),
+		.end = add_vec2_u32(a.end, b),
 	};
 }
 
@@ -3157,11 +3170,27 @@ sl_inline Rect_f32 div_rect_vec_f32(Rect_f32 a, vec2_f32 b) {
 	};
 }
 
-sl_inline vec2_f32 size_rect_f32(Rect_f32 a) {
+sl_inline Rect_f32 cvt_rect_u32_f32(Rect_u32 v) {
+	return (Rect_f32) {
+		.start = cvt_vec2_u32_f32(v.start),
+		.end = cvt_vec2_u32_f32(v.end),
+	};
+}
+sl_inline Rect_u32 cvt_rect_f32_u32(Rect_f32 v) {
+	return (Rect_u32) {
+		.start = cvt_vec2_f32_u32(v.start),
+		.end = cvt_vec2_f32_u32(v.end),
+	};
+}
+
+sl_inline vec2_f32 rect_size_f32(Rect_f32 a) {
 	return sub_vec2_f32(a.end, a.start);
 }
-sl_inline vec2_s32 size_rect_s32(Rect_s32 a) {
+sl_inline vec2_s32 rect_size_s32(Rect_s32 a) {
 	return sub_vec2_s32(a.end, a.start);
+}
+sl_inline vec2_u32 rect_size_u32(Rect_u32 a) {
+	return sub_vec2_u32(a.end, a.start);
 }
 
 sl_inline bool rect_contains_f32(Rect_f32 a, vec2_f32 b) {

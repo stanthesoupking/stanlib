@@ -784,7 +784,7 @@ typedef struct UI_Text_Measurements {
 UI_Text_Measurements ui_text_measurements(SL_Font* font, const char* string) {
 	const Range_s32 font_y_range = sl_font_get_y_range(font);
 	const Rect_s32 label_rect = sl_font_measure_string(font, string);
-	const vec2_s32 label_size = size_rect_s32(label_rect);
+	const vec2_s32 label_size = rect_size_s32(label_rect);
 	return (UI_Text_Measurements) {
 		.size = label_size,
 		.y_range = font_y_range,
@@ -862,7 +862,7 @@ void ui_hstack_layout(UI* ui, UI_Element* self) {
 	}
 
 	const Rect_f32 padded_rect = ui_padded_rect(self->rect, hstack->padding);
-	const vec2_f32 padded_rect_size = size_rect_f32(padded_rect);
+	const vec2_f32 padded_rect_size = rect_size_f32(padded_rect);
 	ui_distribute(padded_rect_size.x, hstack->spacing, distribute_items, child_count);
 
 	f32 current_x = padded_rect.start.x;
@@ -1014,7 +1014,7 @@ void ui_vstack_layout(UI* ui, UI_Element* self) {
 	}
 
 	const Rect_f32 padded_rect = ui_padded_rect(self->rect, vstack->padding);
-	const vec2_f32 padded_rect_size = size_rect_f32(padded_rect);
+	const vec2_f32 padded_rect_size = rect_size_f32(padded_rect);
 	ui_distribute(padded_rect_size.y, vstack->spacing, distribute_items, child_count);
 
 	f32 current_y = padded_rect.start.y;
@@ -1166,7 +1166,7 @@ void ui_zstack_layout(UI* ui, UI_Element* self) {
 	UI_ZStack* zstack = self->data;
 
 	const Rect_f32 padded_rect = ui_padded_rect(self->rect, zstack->padding);
-	const vec2_f32 padded_rect_size = size_rect_f32(padded_rect);
+	const vec2_f32 padded_rect_size = rect_size_f32(padded_rect);
 	const vec2_f32 padded_rect_center = centre_rect_f32(padded_rect);
 
 	const u64 child_count = ui_element_seq_get_count(&zstack->children);
@@ -1376,7 +1376,7 @@ void ui_button_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	UI_Button* button = self->data;
 
 	const Rect_f32 rect = self->rect;
-	const vec2_f32 rect_size = size_rect_f32(rect);
+	const vec2_f32 rect_size = rect_size_f32(rect);
 
 	const vec2_f32 text_offset = {
 		.x = roundf(rect.start.x + (rect_size.x * 0.5f) - (button->label_measurements.size.x * 0.5f)),
@@ -1483,7 +1483,7 @@ Rect_f32 ui_slider_get_track_rect(UI_Element* self) {
 	const UI_Slider_Style* style = &slider->style;
 	const Rect_f32 rect = self->rect;
 	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
-	const vec2_f32 needle_image_size = size_rect_f32(style->needle_image);
+	const vec2_f32 needle_image_size = cvt_vec2_u32_f32(rect_size_u32(style->needle_image));
 	const f32 track_lr_padding = ceil(needle_image_size.x * 0.5);
 	const vec2_f32 track_rect_start = {
 		rect.start.x + track_lr_padding,
@@ -1501,7 +1501,7 @@ UI_Extent ui_slider_get_extent(UI* ui, UI_Element* self) {
 	UI_Slider* slider = self->data;
 
 	const UI_Slider_Style* style = &slider->style;
-	const vec2_f32 needle_image_size = size_rect_f32(style->needle_image);
+	const vec2_f32 needle_image_size = cvt_vec2_u32_f32(rect_size_u32(style->needle_image));
 
 	const UI_Extent slider_extent = {
 		.min_width = needle_image_size.x,
@@ -1524,7 +1524,7 @@ void ui_slider_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 
 	const Rect_f32 rect = self->rect;
 	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
-	const vec2_f32 needle_image_size = size_rect_f32(style->needle_image);
+	const vec2_f32 needle_image_size = cvt_vec2_u32_f32(rect_size_u32(style->needle_image));
 
 	// needle
 	const f32 progress = saturate_f32((*slider->value - slider->range.start) / (slider->range.end - slider->range.start));
@@ -1536,7 +1536,7 @@ void ui_slider_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 		.start = needle_offset,
 		.end = add_vec2_f32(needle_image_size, needle_offset),
 	};
-	ui_draw_image(ui, blitter, needle_rect, style->needle_image, style->needle_color);
+	ui_draw_image(ui, blitter, needle_rect, cvt_rect_u32_f32(style->needle_image), style->needle_color);
 }
 //void ui_slider_handle_events(UI* ui, UI_Element* self) {
 //	UI_Slider* slider = self->data;
@@ -1612,7 +1612,7 @@ void ui_label_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	UI_Label* label = self->data;
 
 	const Rect_f32 rect = self->rect;
-	const vec2_f32 rect_size = size_rect_f32(rect);
+	const vec2_f32 rect_size = rect_size_f32(rect);
 
 	const vec2_f32 text_offset = {
 		.x = roundf(rect.start.x + (rect_size.x * 0.5f) - (label->label_measurements.size.x * 0.5f)),
