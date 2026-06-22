@@ -20,6 +20,7 @@ set(STANLIB_SOURCES
     "src/ui.c"
 	"src/atlas_pack.c"
 	"src/image.c"
+	"src/vendor/stb_impl.c"
 )
 
 add_library(stanlib "${STANLIB_SOURCES}")
