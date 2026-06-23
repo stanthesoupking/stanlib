@@ -36,13 +36,13 @@ bool ui_id_is_null(UI_ID a) {
 
 typedef struct UI_Gesture {
 	Allocator* allocator;
-	
+
 	const UI_Gesture_VTable* vtable;
-	
+
 	void* ctx;
-	
+
 	UI_Element* element;
-	
+
 	// The frame index, at the time the gesture was created.
 	u64 init_frame_index;
 } UI_Gesture;
@@ -122,7 +122,7 @@ void ui_persistent_store_purge(UI_Persistent_Store* store, u64 min_frame) {
 			if (state->destroy) {
 				state->destroy(state->data);
 			}
-			
+
 			const u64 new_generation = state->generation + 1;
 			*state = (UI_Persistent_State) {
 				.exists = false,
@@ -145,15 +145,15 @@ UI_Persistent_State* ui_persistent_state_handle_resolve(UI_Persistent_State_Hand
 
 typedef struct UI_Touch {
 	UI_Touch_ID id;
-	
+
 	UI_Touch_State state;
-	
+
 	vec2_f32 position;
-	
+
 	f64 timestamp;
-	
+
 	u32 rc;
-	
+
 	// Gestures that receive updates relating to the touch.
 	// Note: receivers could become null if the gesture no longer exists.
 	UI_Persistent_State_Handle_Seq receivers;
@@ -195,7 +195,7 @@ typedef struct UI_Element {
 
 	// Derived during layout
 	Rect_f32 rect;
-	
+
 	UI_Persistent_State_Ptr_Seq gestures;
 } UI_Element;
 
@@ -231,12 +231,12 @@ typedef struct UI {
 	u32 stack_length;
 
 	SL_Arena_Allocator* arena;
-	
+
 	// Touch tracking
 	UI_Touch_Map active_touch_map;
 	UI_Touch_Seq touches;
 	UI_Touch_Ptr_Seq touch_freelist;
-	
+
 	UI_Persistent_Store persistent_store;
 } UI;
 
@@ -288,14 +288,14 @@ UI_Touch* ui_touch_new(UI* ui, UI_Touch_ID id) {
 			.receivers = ui_persistent_state_handle_seq_new(ui->allocator, 8),
 		};
 	}
-	
+
 	touch->state = UI_Touch_State_Alive;
 	touch->position = (vec2_f32) {};
 	touch->id = id;
 	touch->rc = 1;
-	
+
 	ui_touch_map_insert(&ui->active_touch_map, id, touch);
-	
+
 	return touch;
 }
 void ui_touch_retain(UI* ui, UI_Touch* touch) {
@@ -305,7 +305,7 @@ void ui_touch_retain(UI* ui, UI_Touch* touch) {
 void ui_touch_release(UI* ui, UI_Touch* touch) {
 	sl_debug_assert(touch->rc > 0, "RC must be > 0 to release.");
 	touch->rc--;
-	
+
 	if (touch->rc == 0) {
 		touch->id = (UI_Touch_ID) {0};
 		ui_persistent_state_handle_seq_clear(&touch->receivers);
@@ -342,10 +342,10 @@ void ui_touch_ended(UI* ui, UI_Touch* touch) {
 			gesture->vtable->touch_ended(ui, gesture->ctx, touch);
 		}
 	}
-	
+
 	sl_unused bool removed = ui_touch_map_remove(&ui->active_touch_map, touch->id);
 	sl_debug_assert(removed, "Should have removed touch from alive map.");
-	
+
 	ui_touch_release(ui, touch);
 }
 void ui_touch_cancelled(UI* ui, UI_Touch* touch) {
@@ -358,10 +358,10 @@ void ui_touch_cancelled(UI* ui, UI_Touch* touch) {
 			gesture->vtable->touch_cancelled(ui, gesture->ctx, touch);
 		}
 	}
-	
+
 	sl_unused bool removed = ui_touch_map_remove(&ui->active_touch_map, touch->id);
 	sl_debug_assert(removed, "Should have removed touch from alive map.");
-	
+
 	ui_touch_release(ui, touch);
 }
 
@@ -656,7 +656,7 @@ UI_Gesture* ui_gesture_new(UI* ui, UI_ID id, const UI_Gesture_VTable* vtable, UI
 	}
 
 	ui_persistent_state_ptr_seq_push(&element->gestures, persistent_state);
-	
+
 	return persistent_state->data;
 }
 
@@ -676,12 +676,12 @@ UI_Pan_Gesture_Frame ui_pan_gesture_resolve_frame(UI_Pan_Gesture_State* pan, UI_
 	if (dt > 0.0) {
 		const f32 tau = 0.03f;
 		const f32 alpha = 1.0f - expf(-dt / tau);
-		
+
 		const vec2_f32 raw_velocity = div_vec2_f32(sub_vec2_f32(pan->active_touch->position, pan->previous_position), splat_vec2_f32(dt));
-		
+
 		pan->smoothed_velocity = add_vec2_f32(pan->smoothed_velocity, mul_vec2_f32(sub_vec2_f32(raw_velocity, pan->smoothed_velocity), splat_vec2_f32(alpha)));
 	}
-	
+
 	return (UI_Pan_Gesture_Frame) {
 		.state = state,
 		.position = pan->active_touch->position,
@@ -697,7 +697,7 @@ void ui_pan_gesture_touch_began(UI* ui, void* ctx, UI_Touch* touch) {
 		state->initial_position = touch->position;
 		state->previous_position = touch->position;
 		state->previous_timestamp = touch->timestamp;
-		
+
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Began);
 		state->desc.callback.func(state->desc.callback.ctx, &frame);
 	}
@@ -716,7 +716,7 @@ void ui_pan_gesture_touch_ended(UI* ui, void* ctx, UI_Touch* touch) {
 	if (state->active_touch == touch) {
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Ended);
 		state->desc.callback.func(state->desc.callback.ctx, &frame);
-		
+
 		ui_touch_release(ui, touch);
 		state->active_touch = NULL;
 	}
@@ -726,7 +726,7 @@ void ui_pan_gesture_touch_cancelled(UI* ui, void* ctx, UI_Touch* touch) {
 	if (state->active_touch == touch) {
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Cancelled);
 		state->desc.callback.func(state->desc.callback.ctx, &frame);
-		
+
 		ui_touch_release(ui, touch);
 		state->active_touch = NULL;
 	}
@@ -749,7 +749,7 @@ const static UI_Gesture_VTable ui_pan_gesture_vtable = {
 
 void ui_pan_gesture(UI* ui, UI_ID id, const UI_Pan_Gesture_Desc* desc, UI_Element* element) {
 	UI_Gesture* gesture = ui_gesture_new(ui, id, &ui_pan_gesture_vtable, element);
-	
+
 	if (gesture->ctx == NULL) {
 		// Allocate state
 		UI_Pan_Gesture_State* state;
@@ -757,7 +757,7 @@ void ui_pan_gesture(UI* ui, UI_ID id, const UI_Pan_Gesture_Desc* desc, UI_Elemen
 		*state = (UI_Pan_Gesture_State) {0};
 		gesture->ctx = state;
 	}
-	
+
 	UI_Pan_Gesture_State* state = gesture->ctx;
 	state->desc = *desc;
 }
@@ -1275,7 +1275,7 @@ void ui_debug_touches(UI* ui, SL_Font* font, Gpu_Texture texture) {
 	ui_push_zstack(ui, UI_EXTENT_FILL, UI_PADDING_NONE);
 	ui_color(ui, UI_EXTENT_FILL, (vec4_f32) { .w = 0.9f });
 	ui_push_vstack(ui, UI_EXTENT_FILL, ui_padding_uniform(40.0f), UI_Horizontal_Alignment_Left, 4.0f);
-	
+
 	{
 		const UI_Label_Style label_style = {
 			.font = font,
@@ -1284,11 +1284,11 @@ void ui_debug_touches(UI* ui, SL_Font* font, Gpu_Texture texture) {
 		};
 		ui_label(ui, UI_EXTENT_NONE, &label_style, "Touches");
 	}
-		
+
 //	char buf[128];
 //	for (u8 i = 0; i < UI_MAX_TOUCHES; i++) {
 //		const UI_Touch* touch = &ui->touch_tracker.touches[i];
-//		
+//
 //		if ((touch->state & UI_Touch_State_Exists) > 0) {
 //			const UI_Label_Style label_style = {
 //				.font = font,
@@ -1298,7 +1298,7 @@ void ui_debug_touches(UI* ui, SL_Font* font, Gpu_Texture texture) {
 //			ui_label(ui, UI_EXTENT_NONE, &label_style, buf);
 //		}
 //	}
-	
+
 	ui_spacer(ui);
 	ui_pop(ui);
 	ui_pop(ui);
@@ -1397,19 +1397,19 @@ const static UI_Element_VTable ui_button_vtable = {
 void ui_button_pan_callback(void* ctx, const UI_Pan_Gesture_Frame* frame) {
 	UI_Element* element = ctx;
 	UI_Button* button = element->data;
-	
+
 	switch (frame->state) {
 		case UI_Gesture_State_Began:
 		case UI_Gesture_State_Changed: {
 			button->persistent_state->state = UI_Button_State_Active;
 		} break;
-			
+
 		case UI_Gesture_State_Ended:
 		case UI_Gesture_State_Cancelled: {
 			button->persistent_state->state = UI_Button_State_Normal;
 		} break;
 	}
-	
+
 	if (frame->state == UI_Gesture_State_Ended && rect_contains_f32(element->rect, frame->position)) {
 		ui_trigger_callback(button->on_press);
 	}
@@ -1420,7 +1420,7 @@ UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style*
 	char* label_copy;
 	allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
 	strcpy(label_copy, label);
-	
+
 	const UI_ID persistent_state_id = ui_id_internal(id, 0, 0, true);
 	UI_Persistent_State* persistent_state = ui_persistent_store_acquire(&ui->persistent_store, persistent_state_id, ui->frame_index);
 	if (persistent_state->data == NULL) {
@@ -1452,7 +1452,7 @@ UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style*
 		.vtable = &ui_button_vtable,
 		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
 	};
-	
+
 	const UI_ID pan_gesture_id = ui_id_internal(id, 1, 0, true);
 	const UI_Pan_Gesture_Desc pan_desc = {
 		.minimum_touches = 1,
@@ -1463,7 +1463,7 @@ UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style*
 		},
 	};
 	ui_pan_gesture(ui, pan_gesture_id, &pan_desc, element);
-	
+
 	return element;
 }
 
@@ -1572,6 +1572,27 @@ const static UI_Element_VTable ui_slider_vtable = {
 	.render = ui_slider_render,
 };
 
+void ui_slider_pan_callback(void* ctx, const UI_Pan_Gesture_Frame* frame) {
+	UI_Element* element = ctx;
+	UI_Slider* slider = element->data;
+
+	if (frame->state == UI_Gesture_State_Cancelled) {
+		// Restore original slider value?
+		return;
+	}
+
+	const Rect_f32 track_rect = ui_slider_get_track_rect(element);
+
+	const f32 mouse_progress = saturate_f32((frame->position.x - track_rect.start.x) / (track_rect.end.x - track_rect.start.x));
+	const f32 old_value = *slider->value;
+	const f32 new_value = lerp_f32(slider->range.start, slider->range.end, mouse_progress);
+	*slider->value = new_value;
+
+	if (old_value != new_value) {
+		ui_trigger_callback(slider->on_change);
+	}
+}
+
 UI_Element* ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change) {
 	UI_Slider* slider;
 	allocator_new(&ui->arena->allocator, slider, 1);
@@ -1589,6 +1610,18 @@ UI_Element* ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_St
 		.vtable = &ui_slider_vtable,
 		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
 	};
+
+	const UI_ID pan_gesture_id = ui_id_internal(id, 1, 0, true);
+	const UI_Pan_Gesture_Desc pan_desc = {
+		.minimum_touches = 1,
+		.maximum_touches = 1,
+		.callback = {
+			.ctx = element,
+			.func = ui_slider_pan_callback,
+		},
+	};
+	ui_pan_gesture(ui, pan_gesture_id, &pan_desc, element);
+
 	return element;
 }
 
@@ -1701,18 +1734,18 @@ bool ui_populate_receivers_with_element(UI* ui, UI_Touch* touch, UI_Element* ele
 				}
 			}
 		}
-		
+
 		const u64 gesture_count = ui_persistent_state_ptr_seq_get_count(&element->gestures);
 		for (u64 gesture_idx = 0; gesture_idx < gesture_count; gesture_idx++) {
 			UI_Persistent_State* gesture_persistent_state = ui_persistent_state_ptr_seq_get(&element->gestures, gesture_idx);
-			
+
 			// TODO: Filter gestures based on what they're interested in (i.e. pencil, finger, mouse).
 			// UI_Gesture* gesture = ui_gesture_for_handle(ui, gesture_handle);
 			// ...
 
 			ui_persistent_state_handle_seq_push(&touch->receivers, ui_persistent_state_get_handle(gesture_persistent_state));
 		}
-		
+
 		// TODO: Some views may not occlude touches (i.e. passthrough).
 		return true;
 	} else {
@@ -1765,14 +1798,14 @@ void ui_handle_events(UI* ui, UI_Event_Seq* event_sink) {
 					ui_touch_ended(ui, touch);
 					touch = NULL;
 				}
-				
+
 				touch = ui_touch_new(ui, event.touch.id);
 				touch->position = event.touch.position;
 				touch->timestamp = event.touch.timestamp;
 				ui_populate_receivers(ui, touch);
 				ui_touch_began(ui, touch);
 			} break;
-				
+
 			case UI_Event_Kind_Touch_Changed: {
 				UI_Touch* touch;
 				if (ui_touch_map_get(&ui->active_touch_map, event.touch.id, &touch)) {
@@ -1781,7 +1814,7 @@ void ui_handle_events(UI* ui, UI_Event_Seq* event_sink) {
 					ui_touch_changed(ui, touch);
 				}
 			} break;
-				
+
 			case UI_Event_Kind_Touch_Ended: {
 				UI_Touch* touch;
 				if (ui_touch_map_get(&ui->active_touch_map, event.touch.id, &touch)) {
@@ -1790,7 +1823,7 @@ void ui_handle_events(UI* ui, UI_Event_Seq* event_sink) {
 					ui_touch_ended(ui, touch);
 				}
 			} break;
-				
+
 			case UI_Event_Kind_Touch_Cancelled: {
 				UI_Touch* touch;
 				if (ui_touch_map_get(&ui->active_touch_map, event.touch.id, &touch)) {
@@ -1799,7 +1832,7 @@ void ui_handle_events(UI* ui, UI_Event_Seq* event_sink) {
 					ui_touch_cancelled(ui, touch);
 				}
 			} break;
-				
+
 			default:
 				break;
 		}
