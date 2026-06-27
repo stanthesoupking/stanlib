@@ -59,6 +59,8 @@
 #define sl_align_of(x) alignof(typeof(x))
 #endif
 
+#define sl_max_align sl_align_of(max_align_t)
+
 #define SL_PI 3.14159265359f
 
 #if defined(__SLANG__)
@@ -191,6 +193,10 @@ typedef atomic_int_fast8_t atomic_s8;
 typedef atomic_int_fast16_t atomic_s16;
 typedef atomic_int_fast32_t atomic_s32;
 typedef atomic_int_fast64_t atomic_s64;
+
+sl_inline void sl_memcpy(void* dst, void* src, u64 size) {
+	__builtin_memcpy(dst, src, size);
+}
 
 sl_inline f64 sl_now(void) {
 	struct timespec ts;
