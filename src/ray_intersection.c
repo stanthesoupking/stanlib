@@ -2,6 +2,13 @@
 #include <math.h>
 #include <stanlib/ray_intersection.h>
 
+SL_Ray sl_ray_advance(SL_Ray ray, f32 amount) {
+	return (SL_Ray) {
+		.origin = add_vec3_f32(ray.origin, mul_vec3_f32(ray.direction, splat_vec3_f32(amount))),
+		.direction = ray.direction,
+	};
+}
+
 SL_Ray_Intersection sl_ray_intersect_box(SL_Ray ray, Box_f32 box) {
 	const f32 epsilon = 0.0001f;
 	const vec3_f32 direction_recip = {

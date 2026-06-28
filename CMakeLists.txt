@@ -20,6 +20,7 @@ set(STANLIB_SOURCES
     "src/ui.c"
 	"src/atlas_pack.c"
 	"src/image.c"
+	"src/ray_intersection.c"
 	"src/vendor/stb_impl.c"
 )
 

@@ -2005,6 +2005,12 @@ sl_inline vec2_f32 cvt_vec2_u32_f32(vec2_u32 v) {
 sl_inline vec2_u32 cvt_vec2_f32_u32(vec2_f32 v) {
 	return (vec2_u32) { (u32)v.x, (u32)v.y };
 }
+sl_inline vec3_u32 cvt_vec3_s32_u32(vec3_s32 v) {
+	return (vec3_u32) { (u32)v.x, (u32)v.y, (u32)v.z };
+}
+sl_inline vec3_s32 cvt_vec3_u32_s32(vec3_u32 v) {
+	return (vec3_s32) { (s32)v.x, (s32)v.y, (s32)v.z };
+}
 
 sl_inline vec2_f32 rotate_vec2_f32(vec2_f32 v, f32 a) {
 	f32 cos_a = cosf(a);

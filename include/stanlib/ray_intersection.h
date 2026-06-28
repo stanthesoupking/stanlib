@@ -7,6 +7,8 @@ typedef struct SL_Ray {
 	vec3_f32 direction;
 } SL_Ray;
 
+SL_Ray sl_ray_advance(SL_Ray ray, f32 amount);
+
 typedef struct SL_Ray_Intersection {
 	bool hit;
 	f32 near;
