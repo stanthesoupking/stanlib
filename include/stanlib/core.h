@@ -21,6 +21,7 @@
 #define sl_max(a, b) ((a) > (b) ? (a) : (b))
 #define sl_clamp(v, min_v, max_v) (sl_min(sl_max(v, min_v), max_v))
 #define sl_array_count(x) (sizeof(x) / sizeof(*x))
+#define sl_index_in_array(element, array) ((u64)(((void*)(array) - (void*)(element)) / sizeof(*(array))))
 
 #define sl_lru_make_newest(entry, lru) do { \
 	(entry)->lru_newer = NULL; \
@@ -256,6 +257,10 @@ sl_inline u64 sl_next_pow2_exp_u64(u64 x) {
 #else
 	return (u64)(64u - __builtin_clzll(x - 1));
 #endif
+}
+
+sl_inline u64 sl_popcount_u64(u64 x) {
+	return (u64)__builtin_popcountll(x);
 }
 
 // vec2
@@ -1862,6 +1867,28 @@ sl_inline vec4_f64 neg_vec4_f64(vec4_f64 a) {
 	};
 }
 
+sl_inline f32 sign_f32(f32 a) {
+	return (a > 0.0f) - (a < 0.0f);
+}
+sl_inline f64 sign_f64(f64 a) {
+	return (a > 0.0) - (a < 0.0);
+}
+
+sl_inline vec3_f32 sign_vec3_f32(vec3_f32 a) {
+	return (vec3_f32) {
+		.x = sign_f32(a.x),
+		.y = sign_f32(a.y),
+		.z = sign_f32(a.z),
+	};
+}
+sl_inline vec3_f64 sign_vec3_f64(vec3_f64 a) {
+	return (vec3_f64) {
+		.x = sign_f64(a.x),
+		.y = sign_f64(a.y),
+		.z = sign_f64(a.z),
+	};
+}
+
 sl_inline vec3_f32 pow_vec3_f32(vec3_f32 a, vec3_f32 b) {
 	return (vec3_f32) {
 		.x = powf(a.x, b.x),
@@ -3080,6 +3107,45 @@ sl_inline bool sl_get_application_path(const char* subdirectory, const char* nam
 	return false;
 }
 #endif
+
+sl_inline void sl_format_time(f64 time, Mutable_Buffer out_buf) {
+	const f64 seconds = time;
+	if (time >= 1.0) {
+		snprintf(out_buf.data, out_buf.size, "%.2fs", time);
+	} else if (time >= 1e-3) {
+		snprintf(out_buf.data, out_buf.size, "%.2fms", time * 1e+3);
+	} else if (time >= 1e-6) {
+		snprintf(out_buf.data, out_buf.size, "%.2fμs", time * 1e+6);
+	} else if (time >= 1e-9) {
+		snprintf(out_buf.data, out_buf.size, "%.2fns", time * 1e+9);
+	}
+}
+
+typedef struct SL_Profile {
+	bool began;
+	const char* label;
+	f64 start_time;
+} SL_Profile;
+
+sl_inline SL_Profile sl_profile_begin(const char* label) {
+	return (SL_Profile) {
+		.began = true,
+		.label = label,
+		.start_time = sl_now(),
+	};
+}
+sl_inline void sl_profile_end(SL_Profile* profile) {
+	const f64 duration = sl_now() - profile->start_time;
+	sl_assert(profile->began, "Profile can only be ended once.");
+
+	char buf[64];
+	sl_format_time(duration, mutable_buffer_for(buf));
+	printf("'%s' took %s.\n", profile->label, buf);
+
+	*profile = (SL_Profile) {
+		.began = false,
+	};
+}
 
 typedef struct SL_Autorelease_Pool {
 	void* ptr;
