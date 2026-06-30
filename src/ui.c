@@ -668,6 +668,7 @@ typedef struct UI_Pan_Gesture_State {
 	vec2_f32 initial_position;
 	vec2_f32 previous_position;
 	vec2_f32 smoothed_velocity;
+	f32 total_movement;
 	f64 previous_timestamp;
 } UI_Pan_Gesture_State;
 
@@ -682,11 +683,14 @@ UI_Pan_Gesture_Frame ui_pan_gesture_resolve_frame(UI_Pan_Gesture_State* pan, UI_
 		pan->smoothed_velocity = add_vec2_f32(pan->smoothed_velocity, mul_vec2_f32(sub_vec2_f32(raw_velocity, pan->smoothed_velocity), splat_vec2_f32(alpha)));
 	}
 
+	pan->total_movement += dist_vec2_f32(pan->previous_position, pan->active_touch->position);
+
 	return (UI_Pan_Gesture_Frame) {
 		.state = state,
 		.position = pan->active_touch->position,
 		.translation = sub_vec2_f32(pan->active_touch->position, pan->initial_position),
 		.velocity = pan->smoothed_velocity,
+		.total_movement = pan->total_movement,
 	};
 }
 void ui_pan_gesture_touch_began(UI* ui, void* ctx, UI_Touch* touch) {
@@ -697,6 +701,7 @@ void ui_pan_gesture_touch_began(UI* ui, void* ctx, UI_Touch* touch) {
 		state->initial_position = touch->position;
 		state->previous_position = touch->position;
 		state->previous_timestamp = touch->timestamp;
+		state->total_movement = 0.0f;
 
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Began);
 		state->desc.callback.func(state->desc.callback.ctx, &frame);

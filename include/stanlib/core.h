@@ -2029,6 +2029,44 @@ sl_inline vec2_f64 rotate_vec2_f64(vec2_f64 v, f64 a) {
 	};
 }
 
+sl_inline f32 len_vec2_f32(vec2_f32 v) {
+	return sqrtf((v.x * v.x) + (v.y * v.y));
+}
+sl_inline f64 len_vec2_f64(vec2_f64 v) {
+	return sqrt((v.x * v.x) + (v.y * v.y));
+}
+sl_inline f32 len_vec3_f32(vec3_f32 v) {
+	return sqrtf((v.x * v.x) + (v.y * v.y) + (v.z * v.z));
+}
+sl_inline f64 len_vec3_f64(vec3_f64 v) {
+	return sqrt((v.x * v.x) + (v.y * v.y) + (v.z * v.z));
+}
+sl_inline f32 len_vec4_f32(vec4_f32 v) {
+	return sqrtf((v.x * v.x) + (v.y * v.y) + (v.z * v.z) + (v.w * v.w));
+}
+sl_inline f64 len_vec4_f64(vec4_f64 v) {
+	return sqrt((v.x * v.x) + (v.y * v.y) + (v.z * v.z) + (v.w * v.w));
+}
+
+sl_inline f32 dist_vec2_f32(vec2_f32 a, vec2_f32 b) {
+	return len_vec2_f32(sub_vec2_f32(b, a));
+}
+sl_inline f64 dist_vec2_f64(vec2_f64 a, vec2_f64 b) {
+	return len_vec2_f64(sub_vec2_f64(b, a));
+}
+sl_inline f32 dist_vec3_f32(vec3_f32 a, vec3_f32 b) {
+	return len_vec3_f32(sub_vec3_f32(b, a));
+}
+sl_inline f64 dist_vec3_f64(vec3_f64 a, vec3_f64 b) {
+	return len_vec3_f64(sub_vec3_f64(b, a));
+}
+sl_inline f32 dist_vec4_f32(vec4_f32 a, vec4_f32 b) {
+	return len_vec4_f32(sub_vec4_f32(b, a));
+}
+sl_inline f64 dist_vec4_f64(vec4_f64 a, vec4_f64 b) {
+	return len_vec4_f64(sub_vec4_f64(b, a));
+}
+
 sl_inline vec4_f32 mul_mat4x4_vec4_f32(mat4x4_f32 m, vec4_f32 v) {
 	return (vec4_f32) {
 		m.x.x*v.x + m.y.x*v.y + m.z.x*v.z + m.w.x*v.w,

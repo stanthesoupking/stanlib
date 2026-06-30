@@ -185,6 +185,7 @@ typedef struct UI_Pan_Gesture_Frame {
 	vec2_f32 position;
 	vec2_f32 translation;
 	vec2_f32 velocity;
+	f32 total_movement;
 } UI_Pan_Gesture_Frame;
 
 typedef struct UI_Pan_Gesture_Callback {
@@ -226,10 +227,10 @@ typedef struct UI_Atlas_Entry {
 
 typedef struct UI_Atlas_Desc {
 	Allocator* allocator;
-	
+
 	const UI_Atlas_Entry* entries;
 	u32 entry_count;
-	
+
 	Gpu_Command_Buffer command_buffer;
 	Gpu_Slice* inout_staging_slice;
 	Gpu_Slice* inout_persistent_slice;
