@@ -19,6 +19,7 @@
 				blitter/shaders.c,
 				gpu/gpu_impl.c,
 				image.c,
+				ray_intersection.c,
 				text.c,
 				ui.c,
 				vendor/stb_impl.c,
