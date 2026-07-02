@@ -5,7 +5,10 @@
 typedef struct SL_Ray {
 	vec3_f32 origin;
 	vec3_f32 direction;
+	vec3_f32 direction_recip;
 } SL_Ray;
+
+SL_Ray sl_ray_from_ndc(mat4x4_f32 to_world_from_ndc, vec2_f32 ndc);
 
 SL_Ray sl_ray_advance(SL_Ray ray, f32 amount);
 

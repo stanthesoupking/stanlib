@@ -21,7 +21,7 @@
 #define sl_max(a, b) ((a) > (b) ? (a) : (b))
 #define sl_clamp(v, min_v, max_v) (sl_min(sl_max(v, min_v), max_v))
 #define sl_array_count(x) (sizeof(x) / sizeof(*x))
-#define sl_index_in_array(element, array) ((u64)(((void*)(array) - (void*)(element)) / sizeof(*(array))))
+#define sl_index_in_array(element, array) ((u64)(((void*)(element) - (void*)(array)) / sizeof(*(element))))
 
 #define sl_lru_make_newest(entry, lru) do { \
 	(entry)->lru_newer = NULL; \
@@ -1228,7 +1228,7 @@ sl_inline vec3_s64 neg_vec_s64(vec3_s64 a) {
 }
 sl_inline vec3_f32 neg_vec3_f32(vec3_f32 a) {
 	return (vec3_f32) {
-		.x = -a.x ,
+		.x = -a.x,
 		.y = -a.y,
 		.z = -a.z,
 	};
@@ -1904,6 +1904,36 @@ sl_inline vec3_f64 pow_vec3_f64(vec3_f64 a, vec3_f64 b) {
 	};
 }
 
+sl_inline vec3_f32 abs_vec3_f32(vec3_f32 a) {
+	return (vec3_f32) {
+		.x = fabsf(a.x),
+		.y = fabsf(a.y),
+		.z = fabsf(a.z),
+	};
+}
+sl_inline vec3_f64 abs_vec3_f64(vec3_f64 a) {
+	return (vec3_f64) {
+		.x = fabs(a.x),
+		.y = fabs(a.y),
+		.z = fabs(a.z),
+	};
+}
+
+sl_inline vec3_f32 clamp_vec3_f32(vec3_f32 v, f32 min_v, f32 max_v) {
+	return (vec3_f32) {
+		.x = sl_clamp(v.x, min_v, max_v),
+		.y = sl_clamp(v.y, min_v, max_v),
+		.z = sl_clamp(v.z, min_v, max_v),
+	};
+}
+sl_inline vec3_f64 clamp_vec3_f64(vec3_f64 v, f64 min_v, f64 max_v) {
+	return (vec3_f64) {
+		.x = sl_clamp(v.x, min_v, max_v),
+		.y = sl_clamp(v.y, min_v, max_v),
+		.z = sl_clamp(v.z, min_v, max_v),
+	};
+}
+
 sl_inline f32 saturate_f32(f32 a) {
 	return sl_clamp(a, 0.0f, 1.0f);
 }
@@ -2011,6 +2041,18 @@ sl_inline vec3_u32 cvt_vec3_s32_u32(vec3_s32 v) {
 sl_inline vec3_s32 cvt_vec3_u32_s32(vec3_u32 v) {
 	return (vec3_s32) { (s32)v.x, (s32)v.y, (s32)v.z };
 }
+sl_inline vec3_f32 cvt_vec3_s16_f32(vec3_s16 v) {
+	return (vec3_f32) { (f32)v.x, (f32)v.y, (f32)v.z };
+}
+sl_inline vec3_s16 cvt_vec3_f32_s16(vec3_f32 v) {
+	return (vec3_s16) { (s16)v.x, (s16)v.y, (s16)v.z };
+}
+sl_inline vec3_f32 cvt_vec3_s32_f32(vec3_s32 v) {
+	return (vec3_f32) { .x = (f32)v.x, .y = (f32)v.y, .z = (f32)v.z };
+}
+sl_inline vec3_s32 cvt_vec3_f32_s32(vec3_f32 v) {
+	return (vec3_s32) { (s32)v.x, (s32)v.y, (s32)v.z };
+}
 
 sl_inline vec2_f32 rotate_vec2_f32(vec2_f32 v, f32 a) {
 	f32 cos_a = cosf(a);
@@ -2065,6 +2107,38 @@ sl_inline f32 dist_vec4_f32(vec4_f32 a, vec4_f32 b) {
 }
 sl_inline f64 dist_vec4_f64(vec4_f64 a, vec4_f64 b) {
 	return len_vec4_f64(sub_vec4_f64(b, a));
+}
+
+sl_inline vec3_f32 normalize_vec3_f32(vec3_f32 v) {
+	const f32 v_len = len_vec3_f32(v);
+	return (vec3_f32) {
+		v.x / v_len,
+		v.y / v_len,
+		v.z / v_len,
+	};
+}
+sl_inline vec3_f64 normalize_vec3_f64(vec3_f64 v) {
+	const f64 v_len = len_vec3_f64(v);
+	return (vec3_f64) {
+		v.x / v_len,
+		v.y / v_len,
+		v.z / v_len,
+	};
+}
+
+sl_inline f32 dot_vec3_f32(vec3_f32 a, vec3_f32 b) {
+	return (a.x * b.x) + (a.y * b.y) + (a.z * b.z);
+}
+sl_inline f64 dot_vec3_f64(vec3_f64 a, vec3_f64 b) {
+	return (a.x * b.x) + (a.y * b.y) + (a.z * b.z);
+}
+
+sl_inline vec3_f32 step_vec3_f32(vec3_f32 edge, vec3_f32 x) {
+	return (vec3_f32) {
+		(x.x >= edge.x) ? 1.0f : 0.0f,
+		(x.y >= edge.y) ? 1.0f : 0.0f,
+		(x.z >= edge.z) ? 1.0f : 0.0f,
+	};
 }
 
 sl_inline vec4_f32 mul_mat4x4_vec4_f32(mat4x4_f32 m, vec4_f32 v) {
