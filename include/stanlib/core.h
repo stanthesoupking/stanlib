@@ -2702,13 +2702,13 @@ typedef struct SL_Arena_Allocator {
 
 static void* sl_arena_allocator_new_fn(void* ctx, u64 size, u64 alignment) {
 	SL_Arena_Allocator* arena = ctx;
+	
+	u8* aligned_offset = (u8*)sl_round_up_u64((u64)arena->next_position, alignment);
+	sl_assert((aligned_offset + size) < (arena->buffer + arena->size), "Arena capacity exceeded.");
+	
+	arena->next_position = aligned_offset + size;
 
-	arena->next_position += (u64)arena->next_position % alignment;
-	sl_assert(arena->next_position < (arena->buffer + arena->size), "Arena capacity exceeded.");
-	void* result = arena->next_position;
-	arena->next_position += size;
-
-	return result;
+	return aligned_offset;
 }
 static void* sl_arena_allocator_resize_fn(void* ctx, void* ptr, u64 old_size, u64 new_size, u64 alignment) {
 	return sl_arena_allocator_new_fn(ctx, new_size, alignment);
