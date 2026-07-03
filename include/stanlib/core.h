@@ -2053,6 +2053,12 @@ sl_inline vec3_f32 cvt_vec3_s32_f32(vec3_s32 v) {
 sl_inline vec3_s32 cvt_vec3_f32_s32(vec3_f32 v) {
 	return (vec3_s32) { (s32)v.x, (s32)v.y, (s32)v.z };
 }
+sl_inline vec3_f32 cvt_vec3_u32_f32(vec3_u32 v) {
+	return (vec3_f32) { .x = (f32)v.x, .y = (f32)v.y, .z = (f32)v.z };
+}
+sl_inline vec3_u32 cvt_vec3_f32_u32(vec3_f32 v) {
+	return (vec3_u32) { (u32)v.x, (u32)v.y, (u32)v.z };
+}
 
 sl_inline vec2_f32 rotate_vec2_f32(vec2_f32 v, f32 a) {
 	f32 cos_a = cosf(a);
@@ -2451,6 +2457,24 @@ typedef struct Box_f32 {
 
 sl_inline vec3_f32 box_f32_get_center(Box_f32 b) {
 	return mul_vec3_f32(add_vec3_f32(b.start, b.end), (vec3_f32) { 0.5f, 0.5f, 0.5f });
+}
+sl_inline Box_f32 box_f32_translate(Box_f32 v, vec3_f32 translation) {
+	return (Box_f32) {
+		.start = add_vec3_f32(v.start, translation),
+		.end = add_vec3_f32(v.end, translation),
+	};
+}
+sl_inline Box_f32 box_f32_scale(Box_f32 v, f32 scale) {
+	return (Box_f32) {
+		.start = mul_vec3_f32(v.start, splat_vec3_f32(scale)),
+		.end = mul_vec3_f32(v.end, splat_vec3_f32(scale)),
+	};
+}
+sl_inline Box_f32 box_f32_union(Box_f32 a, Box_f32 b) {
+	return (Box_f32) {
+		.start = min_vec3_f32(a.start, b.start),
+		.end = max_vec3_f32(a.end, b.end),
+	};
 }
 
 typedef struct Mutable_Buffer {
