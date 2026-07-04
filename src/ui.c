@@ -789,6 +789,14 @@ typedef struct UI_Text_Measurements {
 
 UI_Text_Measurements ui_text_measurements(SL_Font* font, const char* string) {
 	const Range_s32 font_y_range = sl_font_get_y_range(font);
+
+	if (string == NULL) {
+		return (UI_Text_Measurements) {
+			.size = {},
+			.y_range = font_y_range,
+		};
+	}
+
 	const Rect_s32 label_rect = sl_font_measure_string(font, string);
 	const vec2_s32 label_size = rect_size_s32(label_rect);
 	return (UI_Text_Measurements) {
@@ -1386,16 +1394,31 @@ void ui_button_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	const Rect_f32 rect = self->rect;
 	const vec2_f32 rect_size = rect_size_f32(rect);
 
-	const vec2_f32 text_offset = {
-		.x = roundf(rect.start.x + (rect_size.x * 0.5f) - (button->label_measurements.size.x * 0.5f)),
-		.y = roundf(rect.start.y + (rect_size.y * 0.5f) + button->label_measurements.y_range.end),
-	};
-
 	const UI_Button_State button_state = button->persistent_state->state;
 	const UI_Button_State_Style* state_style = &button->style.state[button_state];
 
 	ui_draw_nine_patch(ui, blitter, button->style.texture, rect, state_style->backing, state_style->backing_color);
-	sl_blitter_draw_text(blitter, button->style.font, button->style.texture, button->label, add_vec2_f32(text_offset, state_style->label_offset), state_style->label_color);
+
+	const bool has_label = (button->label != NULL);
+	if (has_label) {
+		const vec2_f32 text_offset = {
+			.x = roundf(rect.start.x + (rect_size.x * 0.5f) - (button->label_measurements.size.x * 0.5f)),
+			.y = roundf(rect.start.y + (rect_size.y * 0.5f) + button->label_measurements.y_range.end),
+		};
+		sl_blitter_draw_text(blitter, button->style.font, button->style.texture, button->label, add_vec2_f32(text_offset, state_style->label_offset), state_style->label_color);
+	} else if (state_style->has_icon) {
+		const vec2_f32 icon_size = cvt_vec2_u32_f32(rect_size_u32(state_style->icon_texture_rect));
+		const vec2_f32 icon_offset = {
+			.x = roundf(rect.start.x + (rect_size.x * 0.5f) - (icon_size.x * 0.5f)),
+			.y = roundf(rect.start.y + (rect_size.y * 0.5f) - (icon_size.y * 0.5f)),
+		};
+
+		const Rect_f32 icon_rect = {
+			.start = icon_offset,
+			.end = add_vec2_f32(icon_offset, icon_size),
+		};
+		ui_draw_image(ui, blitter, button->style.texture, icon_rect, cvt_rect_u32_f32(state_style->icon_texture_rect), state_style->icon_tint);
+	}
 }
 const static UI_Element_VTable ui_button_vtable = {
 	.get_extent = ui_button_get_extent,
@@ -1424,10 +1447,16 @@ void ui_button_pan_callback(void* ctx, const UI_Pan_Gesture_Frame* frame) {
 }
 
 UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press) {
-	const u32 label_len = (u32)strlen(label);
 	char* label_copy;
-	allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
-	strcpy(label_copy, label);
+	u32 label_len;
+	if (label) {
+		label_len = (u32)strlen(label);
+		allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
+		strcpy(label_copy, label);
+	} else {
+		label_copy = NULL;
+		label_len = 0;
+	}
 
 	const UI_ID persistent_state_id = ui_id_internal(id, 0, 0, true);
 	UI_Persistent_State* persistent_state = ui_persistent_store_acquire(&ui->persistent_store, persistent_state_id, ui->frame_index);

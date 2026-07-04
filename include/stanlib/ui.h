@@ -33,6 +33,11 @@ typedef enum UI_Button_State {
 typedef struct UI_Button_State_Style {
 	vec2_f32 label_offset;
 	vec4_f32 label_color;
+
+	bool has_icon;
+	Rect_u32 icon_texture_rect;
+	vec4_f32 icon_tint;
+
 	UI_Nine_Patch backing;
 	vec4_f32 backing_color;
 } UI_Button_State_Style;
