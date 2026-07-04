@@ -1407,7 +1407,7 @@ void ui_button_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 		};
 		sl_blitter_draw_text(blitter, button->style.font, button->style.texture, button->label, add_vec2_f32(text_offset, state_style->label_offset), state_style->label_color);
 	} else if (state_style->has_icon) {
-		const vec2_f32 icon_size = cvt_vec2_u32_f32(rect_size_u32(state_style->icon_texture_rect));
+		const vec2_f32 icon_size = mul_vec2_f32(cvt_vec2_u32_f32(rect_size_u32(state_style->icon_texture_rect)), splat_vec2_f32((f32)state_style->icon_scale));
 		const vec2_f32 icon_offset = {
 			.x = roundf(rect.start.x + (rect_size.x * 0.5f) - (icon_size.x * 0.5f)),
 			.y = roundf(rect.start.y + (rect_size.y * 0.5f) - (icon_size.y * 0.5f)),

@@ -47,6 +47,7 @@ typedef struct UI_Button_State_Style {
 	bool has_icon;
 	Rect_u32 icon_texture_rect;
 	vec4_f32 icon_tint;
+	u32 icon_scale;
 
 	UI_Nine_Patch backing;
 	vec4_f32 backing_color;

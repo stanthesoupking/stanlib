@@ -19,6 +19,7 @@ typedef struct SL_Blitter_Resources {
 	Allocator* allocator;
 	Gpu_Render_Pipeline normal_pipeline;
 	Gpu_Render_Pipeline swizzle_rrrr_pipeline;
+	Gpu_Sampler nearest_sampler;
 	Gpu_Sampler linear_sampler;
 } SL_Blitter_Resources;
 
@@ -80,6 +81,12 @@ SL_Blitter_Resources* sl_blitter_resources_new(Allocator* allocator) {
 	};
 	Gpu_Sampler linear_sampler = gpu_new_sampler(&linear_sampler_desc);
 
+	const Gpu_Sampler_Desc nearest_sampler_desc = {
+		.min_filter = Gpu_Filter_Nearest,
+		.mag_filter = Gpu_Filter_Nearest,
+	};
+	Gpu_Sampler nearest_sampler = gpu_new_sampler(&nearest_sampler_desc);
+
 	SL_Blitter_Resources* result;
 	allocator_new(allocator, result, 1);
 	*result = (SL_Blitter_Resources) {
@@ -87,6 +94,7 @@ SL_Blitter_Resources* sl_blitter_resources_new(Allocator* allocator) {
 		.normal_pipeline = sl_blitter_new_render_pipeline(false),
 		.swizzle_rrrr_pipeline = sl_blitter_new_render_pipeline(true),
 		.linear_sampler = linear_sampler,
+		.nearest_sampler = nearest_sampler,
 	};
 	return result;
 }
@@ -278,7 +286,7 @@ void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
 			},
 			{
 				.kind = Gpu_Binding_Kind_Sampler,
-				.texture = blitter->resources->linear_sampler,
+				.texture = blitter->resources->nearest_sampler,
 				.index = 2,
 			},
 		};
