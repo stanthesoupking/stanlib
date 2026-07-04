@@ -45,6 +45,7 @@ typedef struct UI_Button_Style {
 } UI_Button_Style;
 
 typedef struct UI_Slider_Style {
+	Gpu_Texture texture;
 	Rect_u32 needle_image;
 	vec4_f32 needle_color;
 	vec4_f32 track_color;
@@ -246,7 +247,7 @@ void ui_atlas_destroy(UI_Atlas* atlas);
 
 typedef struct UI_Element UI_Element;
 
-UI* ui_new(Allocator* allocator, Gpu_Texture texture);
+UI* ui_new(Allocator* allocator);
 void ui_destroy(UI* ui);
 
 void ui_begin(UI* ui);
@@ -266,7 +267,7 @@ UI_Element* ui_push_zstack(UI* ui, UI_Extent extent, UI_Padding padding);
 
 void ui_pop(UI* ui);
 
-UI_Element* ui_color(UI* ui, UI_Extent extent, vec4_f32 color);
+UI_Element* ui_color(UI* ui, UI_Extent extent, Gpu_Texture texture, vec4_f32 color);
 UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press);
 UI_Element* ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change);
 UI_Element* ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label);

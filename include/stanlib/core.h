@@ -3188,14 +3188,20 @@ sl_inline bool sl_read_file(Allocator* allocator, const char* path, Mutable_Buff
 	return true;
 }
 
+typedef struct SL_Path_Components {
+	const char* subdirectory;
+	const char* name;
+	const char* ext;
+} SL_Path_Components;
+
 #if defined(SL_PLATFORM_APPLE)
 #include <CoreFoundation/CoreFoundation.h>
-sl_inline bool sl_get_application_path(const char* subdirectory, const char* name, const char* ext, u32 out_path_length, char* out_path) {
+sl_inline bool sl_get_application_path(SL_Path_Components components, u32 out_path_length, char* out_path) {
     CFBundleRef main_bundle = CFBundleGetMainBundle();
 
-	CFStringRef cf_subdirectory = subdirectory ? CFStringCreateWithCString(NULL, subdirectory, kCFStringEncodingUTF8) : NULL;
-	CFStringRef cf_name = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
-	CFStringRef cf_ext = CFStringCreateWithCString(NULL, ext, kCFStringEncodingUTF8);
+	CFStringRef cf_subdirectory = components.subdirectory ? CFStringCreateWithCString(NULL, components.subdirectory, kCFStringEncodingUTF8) : NULL;
+	CFStringRef cf_name = CFStringCreateWithCString(NULL, components.name, kCFStringEncodingUTF8);
+	CFStringRef cf_ext = CFStringCreateWithCString(NULL, components.ext, kCFStringEncodingUTF8);
 
 	CFURLRef url = CFBundleCopyResourceURL(main_bundle, cf_name, cf_ext, cf_subdirectory);
 
@@ -3222,7 +3228,7 @@ sl_inline bool sl_get_application_path(const char* subdirectory, const char* nam
 #elif defined(SL_PLATFORM_LINUX)
 #include <unistd.h>
 #include <libgen.h>
-sl_inline bool sl_get_application_path(const char* subdirectory, const char* name, const char* ext, u32 out_path_length, char* out_path) {
+sl_inline bool sl_get_application_path(SL_Path_Components components, u32 out_path_length, char* out_path) {
 	char application_path[256];
 	ssize_t len = readlink("/proc/self/exe", application_path, sl_array_count(application_path) - 1);
     if (len == -1) {
@@ -3233,10 +3239,10 @@ sl_inline bool sl_get_application_path(const char* subdirectory, const char* nam
     char* application_dir = dirname(application_path);
 
 	s32 written_length;
-	if (subdirectory) {
-		written_length = snprintf(out_path, out_path_length, "%s/%s/%s.%s", application_dir, subdirectory, name, ext);
+	if (components.subdirectory) {
+		written_length = snprintf(out_path, out_path_length, "%s/%s/%s.%s", application_dir, components.subdirectory, components.name, components.ext);
 	} else {
-		written_length = snprintf(out_path, out_path_length, "%s/%s.%s", application_dir, name, ext);
+		written_length = snprintf(out_path, out_path_length, "%s/%s.%s", application_dir, components.name, components.ext);
 	}
     if (written_length > out_path_length - 1) {
     	return false;
@@ -3245,7 +3251,8 @@ sl_inline bool sl_get_application_path(const char* subdirectory, const char* nam
     return true;
 }
 #else
-sl_inline bool sl_get_application_path(const char* subdirectory, const char* name, const char* ext, u32 out_path_length, char* out_path) {
+sl_inline bool sl_get_application_path(SL_Path_Components components, u32 out_path_length, char* out_path) {
+	// Not yet implemented
 	return false;
 }
 #endif

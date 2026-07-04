@@ -1,3 +1,4 @@
+#include "stanlib/gpu.h"
 #include <stanlib/core.h>
 #include <stanlib/ui.h>
 #include <stanlib/blitter.h>
@@ -218,8 +219,6 @@ typedef enum UI_Lifecycle_State {
 
 typedef struct UI {
 	Allocator* allocator;
-	Gpu_Texture texture;
-	vec2_f32 texture_size;
 
 	u64 frame_index;
 
@@ -240,16 +239,11 @@ typedef struct UI {
 	UI_Persistent_Store persistent_store;
 } UI;
 
-UI* ui_new(Allocator* allocator, Gpu_Texture texture) {
-	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
-	const vec2_f32 texture_size = { texture_desc->size.x, texture_desc->size.y };
-
+UI* ui_new(Allocator* allocator) {
 	UI* ui;
 	allocator_new(allocator, ui, 1);
 	*ui = (UI) {
 		.allocator = allocator,
-		.texture = texture,
-		.texture_size = texture_size,
 		.frame_index = 0ull,
 		.lifecycle_state = UI_Lifecycle_State_Ended,
 		.arena = sl_arena_allocator_new(allocator, 64ull * 1024ull),
@@ -365,11 +359,15 @@ void ui_touch_cancelled(UI* ui, UI_Touch* touch) {
 	ui_touch_release(ui, touch);
 }
 
-void ui_draw_image(UI* ui, SL_Blitter* blitter, Rect_f32 rect, Rect_f32 atlas_rect, vec4_f32 color) {
+void ui_draw_image(UI* ui, SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, Rect_f32 atlas_rect, vec4_f32 color) {
 	Textured_Quad_f32* quad;
 	allocator_new(&ui->arena->allocator, quad, 1);
-	*quad = textured_quad_for_sub_region_f32(rect, div_rect_vec_f32(atlas_rect, ui->texture_size), color);
-	sl_blitter_draw_textured_quads(blitter, ui->texture, quad, 1);
+
+	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
+	const vec2_f32 texture_size = { (f32)texture_desc->size.x, (f32)texture_desc->size.y };
+
+	*quad = textured_quad_for_sub_region_f32(rect, div_rect_vec_f32(atlas_rect, texture_size), color);
+	sl_blitter_draw_textured_quads(blitter, texture, quad, 1);
 }
 
 void ui_pop(UI* ui) {
@@ -379,9 +377,12 @@ void ui_pop(UI* ui) {
 	}
 }
 
-void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patch nine_patch, vec4_f32 tint) {
+void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, UI_Nine_Patch nine_patch, vec4_f32 tint) {
 	Textured_Quad_f32* quads;
 	allocator_new(&ui->arena->allocator, quads, 9);
+
+	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
+	const vec2_f32 texture_size = { (f32)texture_desc->size.x, (f32)texture_desc->size.y };
 
 	u32 next_quad = 0;
 
@@ -395,7 +396,7 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patc
 			.start = { nine_patch.atlas_region.start.x, nine_patch.atlas_region.start.y },
 			.end = { nine_patch.atlas_region.start.x + nine_patch.margins.left, nine_patch.atlas_region.start.y + nine_patch.margins.top },
 		};
-		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, ui->texture_size), tint);
+		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, texture_size), tint);
 	}
 
 	// tr
@@ -408,7 +409,7 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patc
 			.start = { nine_patch.atlas_region.end.x - nine_patch.margins.right, nine_patch.atlas_region.start.y },
 			.end = { nine_patch.atlas_region.end.x, nine_patch.atlas_region.start.y + nine_patch.margins.top },
 		};
-		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, ui->texture_size), tint);
+		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, texture_size), tint);
 	}
 
 	// bl
@@ -421,7 +422,7 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patc
 			.start = { nine_patch.atlas_region.start.x, nine_patch.atlas_region.end.y - nine_patch.margins.bottom },
 			.end = { nine_patch.atlas_region.start.x + nine_patch.margins.left, nine_patch.atlas_region.end.y },
 		};
-		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, ui->texture_size), tint);
+		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, texture_size), tint);
 	}
 
 	// br
@@ -434,7 +435,7 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patc
 			.start = { nine_patch.atlas_region.end.x - nine_patch.margins.right, nine_patch.atlas_region.end.y - nine_patch.margins.bottom },
 			.end = { nine_patch.atlas_region.end.x, nine_patch.atlas_region.end.y },
 		};
-		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, ui->texture_size), tint);
+		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, texture_size), tint);
 	}
 
 	// t
@@ -447,7 +448,7 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patc
 			.start = { nine_patch.atlas_region.start.x + nine_patch.margins.left, nine_patch.atlas_region.start.y },
 			.end = { nine_patch.atlas_region.start.x + nine_patch.margins.left, nine_patch.atlas_region.start.y + nine_patch.margins.top },
 		};
-		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, ui->texture_size), tint);
+		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, texture_size), tint);
 	}
 
 	// b
@@ -460,7 +461,7 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patc
 			.start = { nine_patch.atlas_region.start.x + nine_patch.margins.left, nine_patch.atlas_region.end.y - nine_patch.margins.bottom },
 			.end = { nine_patch.atlas_region.start.x + nine_patch.margins.left, nine_patch.atlas_region.end.y },
 		};
-		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, ui->texture_size), tint);
+		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, texture_size), tint);
 	}
 
 	// l
@@ -473,7 +474,7 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patc
 			.start = { nine_patch.atlas_region.start.x, nine_patch.atlas_region.start.y + nine_patch.margins.top },
 			.end = { nine_patch.atlas_region.start.x + nine_patch.margins.left, nine_patch.atlas_region.end.y - nine_patch.margins.bottom },
 		};
-		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, ui->texture_size), tint);
+		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, texture_size), tint);
 	}
 
 	// r
@@ -486,7 +487,7 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patc
 			.start = { nine_patch.atlas_region.end.x - nine_patch.margins.right, nine_patch.atlas_region.start.y + nine_patch.margins.top },
 			.end = { nine_patch.atlas_region.end.x, nine_patch.atlas_region.end.y - nine_patch.margins.bottom },
 		};
-		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, ui->texture_size), tint);
+		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, texture_size), tint);
 	}
 
 	// c
@@ -499,10 +500,10 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Rect_f32 rect, UI_Nine_Patc
 			.start = { nine_patch.atlas_region.start.x + nine_patch.margins.left, nine_patch.atlas_region.start.y + nine_patch.margins.top },
 			.end = { nine_patch.atlas_region.end.x - nine_patch.margins.right, nine_patch.atlas_region.end.y - nine_patch.margins.bottom },
 		};
-		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, ui->texture_size), tint);
+		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, texture_size), tint);
 	}
 
-	sl_blitter_draw_textured_quads(blitter, ui->texture, quads, next_quad);
+	sl_blitter_draw_textured_quads(blitter, texture, quads, next_quad);
 }
 
 // MARK: Rect
@@ -1278,7 +1279,7 @@ void ui_debug_touches(UI* ui, SL_Font* font, Gpu_Texture texture) {
 	};
 	ui_begin_frame(ui, rect);
 	ui_push_zstack(ui, UI_EXTENT_FILL, UI_PADDING_NONE);
-	ui_color(ui, UI_EXTENT_FILL, (vec4_f32) { .w = 0.9f });
+	ui_color(ui, UI_EXTENT_FILL, texture, (vec4_f32) { .w = 0.9f });
 	ui_push_vstack(ui, UI_EXTENT_FILL, ui_padding_uniform(40.0f), UI_Horizontal_Alignment_Left, 4.0f);
 
 	{
@@ -1314,6 +1315,7 @@ void ui_debug_touches(UI* ui, SL_Font* font, Gpu_Texture texture) {
 
 typedef struct UI_Color {
 	UI_Extent extent;
+	Gpu_Texture texture;
 	vec4_f32 color;
 } UI_Color;
 
@@ -1323,19 +1325,20 @@ UI_Extent ui_color_get_extent(UI* ui, UI_Element* self) {
 }
 void ui_color_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	UI_Color* color = self->data;
-	ui_draw_image(ui, blitter, self->rect, (Rect_f32){0}, color->color);
+	ui_draw_image(ui, blitter, color->texture, self->rect, (Rect_f32){0}, color->color);
 }
 const static UI_Element_VTable ui_color_vtable = {
 	.get_extent = ui_color_get_extent,
 	.render = ui_color_render,
 };
 
-UI_Element* ui_color(UI* ui, UI_Extent extent, vec4_f32 color) {
+UI_Element* ui_color(UI* ui, UI_Extent extent, Gpu_Texture texture, vec4_f32 color) {
 	UI_Color* color_el;
 	allocator_new(&ui->arena->allocator, color_el, 1);
 	*color_el = (UI_Color) {
 		.extent = extent,
 		.color = color,
+		.texture = texture,
 	};
 	UI_Element* element = ui_add_leaf(ui);
 	*element = (UI_Element) {
@@ -1391,7 +1394,7 @@ void ui_button_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	const UI_Button_State button_state = button->persistent_state->state;
 	const UI_Button_State_Style* state_style = &button->style.state[button_state];
 
-	ui_draw_nine_patch(ui, blitter, rect, state_style->backing, state_style->backing_color);
+	ui_draw_nine_patch(ui, blitter, button->style.texture, rect, state_style->backing, state_style->backing_color);
 	sl_blitter_draw_text(blitter, button->style.font, button->style.texture, button->label, add_vec2_f32(text_offset, state_style->label_offset), state_style->label_color);
 }
 const static UI_Element_VTable ui_button_vtable = {
@@ -1525,7 +1528,7 @@ void ui_slider_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 
 	// track
 	const Rect_f32 track_rect = ui_slider_get_track_rect(self);
-	ui_draw_image(ui, blitter, track_rect, (Rect_f32) { .start = {} }, style->track_color);
+	ui_draw_image(ui, blitter, style->texture, track_rect, (Rect_f32) { .start = {} }, style->track_color);
 
 	const Rect_f32 rect = self->rect;
 	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
@@ -1541,7 +1544,7 @@ void ui_slider_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 		.start = needle_offset,
 		.end = add_vec2_f32(needle_image_size, needle_offset),
 	};
-	ui_draw_image(ui, blitter, needle_rect, cvt_rect_u32_f32(style->needle_image), style->needle_color);
+	ui_draw_image(ui, blitter, style->texture, needle_rect, cvt_rect_u32_f32(style->needle_image), style->needle_color);
 }
 //void ui_slider_handle_events(UI* ui, UI_Element* self) {
 //	UI_Slider* slider = self->data;
