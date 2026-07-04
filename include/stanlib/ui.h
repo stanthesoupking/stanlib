@@ -23,6 +23,16 @@ sl_inline UI_Padding ui_padding_uniform(f32 amount) {
 	return (UI_Padding) { amount, amount, amount, amount };
 }
 
+sl_inline UI_Padding ui_padding_add(UI_Padding a, UI_Padding b) {
+	return (UI_Padding) {
+		.left = a.left + b.left,
+		.right = a.right + b.right,
+		.top = a.top + b.top,
+		.bottom = a.bottom + b.bottom,
+	};
+}
+
+
 typedef enum UI_Button_State {
 	UI_Button_State_Normal,
 	UI_Button_State_Hot,
