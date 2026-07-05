@@ -8,5 +8,6 @@
 #include "gpu.h"
 #include "mesh.h"
 #include "text.h"
+#include "input.h"
 #include "ui.h"
 #include "ray_intersection.h"

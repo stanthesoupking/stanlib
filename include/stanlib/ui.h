@@ -3,6 +3,7 @@
 #include <stanlib/core.h>
 #include <stanlib/text.h>
 #include <stanlib/blitter.h>
+#include <stanlib/input.h>
 
 typedef struct UI_Margins {
 	u32 top, bottom, left, right;
@@ -83,59 +84,6 @@ typedef struct UI_ID {
 
 UI_ID ui_id(UI_ID parent, u32 item, u32 index);
 
-typedef enum UI_Touch_Kind {
-	UI_Touch_Kind_Mouse,
-	UI_Touch_Kind_Finger,
-	UI_Touch_Kind_Pencil,
-} UI_Touch_Kind;
-
-typedef enum UI_Touch_Kind_Mask {
-	UI_Touch_Kind_Mask_None = 0,
-	UI_Touch_Kind_Mask_Mouse = 1 << UI_Touch_Kind_Mouse,
-	UI_Touch_Kind_Mask_Finger = 1 << UI_Touch_Kind_Finger,
-	UI_Touch_Kind_Mask_Pencil = 1 << UI_Touch_Kind_Pencil,
-	UI_Touch_Kind_Mask_All = UI_Touch_Kind_Mask_Mouse | UI_Touch_Kind_Mask_Finger | UI_Touch_Kind_Mask_Pencil,
-} UI_Touch_Kind_Mask;
-
-typedef struct UI_Touch_ID {
-	UI_Touch_Kind kind;
-	u64 external;
-} UI_Touch_ID;
-
-typedef enum UI_Touch_State : u8 {
-	UI_Touch_State_Alive,
-	UI_Touch_State_Ended,
-	UI_Touch_State_Cancelled,
-} UI_Touch_State;
-
-typedef struct UI_Touch UI_Touch;
-
-typedef struct UI_Touch_Event {
-	UI_Touch_ID id;
-	vec2_f32 position;
-	f64 timestamp;
-} UI_Touch_Event;
-
-typedef enum UI_Event_Kind {
-	UI_Event_Kind_Touch_Began,
-	UI_Event_Kind_Touch_Changed,
-	UI_Event_Kind_Touch_Ended,
-	UI_Event_Kind_Touch_Cancelled,
-} UI_Event_Kind;
-
-typedef struct UI_Event_Mouse_Move {
-	vec2_f32 position;
-} UI_Event_Mouse_Move;
-
-typedef struct UI_Event {
-	UI_Event_Kind kind;
-	union {
-		UI_Event_Mouse_Move mouse_move;
-		UI_Touch_Event touch;
-	};
-} UI_Event;
-sl_seq(UI_Event, UI_Event_Seq, ui_event_seq);
-
 typedef enum UI_Direction {
 	UI_Direction_Horizontal,
 	UI_Direction_Vertical,
@@ -181,6 +129,8 @@ typedef struct UI_Render_Callback {
 } UI_Render_Callback;
 
 // MARK: Gesture
+
+typedef struct UI_Touch UI_Touch;
 
 typedef struct UI_Gesture_VTable {
 	void (*touch_began)(UI* ui, void* ctx, UI_Touch* touch);
@@ -267,7 +217,7 @@ UI* ui_new(Allocator* allocator);
 void ui_destroy(UI* ui);
 
 void ui_begin(UI* ui);
-void ui_end(UI* ui, UI_Event_Seq* event_sink);
+void ui_end(UI* ui, Input_Tracker* input_tracker);
 
 void ui_begin_frame(UI* ui, Rect_f32 rect);
 void ui_end_frame(UI* ui);
@@ -284,6 +234,7 @@ UI_Element* ui_push_zstack(UI* ui, UI_Extent extent, UI_Padding padding);
 void ui_pop(UI* ui);
 
 UI_Element* ui_color(UI* ui, UI_Extent extent, Gpu_Texture texture, vec4_f32 color);
+UI_Element* ui_image(UI* ui, UI_Extent extent, Gpu_Texture texture, Rect_u32 texture_rect, vec4_f32 tint);
 UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press);
 UI_Element* ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change);
 UI_Element* ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label);

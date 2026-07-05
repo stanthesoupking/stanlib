@@ -1,4 +1,5 @@
 #include "stanlib/gpu.h"
+#include "stanlib/input.h"
 #include <stanlib/core.h>
 #include <stanlib/ui.h>
 #include <stanlib/blitter.h>
@@ -144,8 +145,14 @@ UI_Persistent_State* ui_persistent_state_handle_resolve(UI_Persistent_State_Hand
 
 // MARK: Touch
 
+typedef enum UI_Touch_State : u8 {
+	UI_Touch_State_Alive,
+	UI_Touch_State_Ended,
+	UI_Touch_State_Cancelled,
+} UI_Touch_State;
+
 typedef struct UI_Touch {
-	UI_Touch_ID id;
+	Input_Touch_ID id;
 
 	UI_Touch_State state;
 
@@ -160,19 +167,19 @@ typedef struct UI_Touch {
 	UI_Persistent_State_Handle_Seq receivers;
 } UI_Touch;
 
-u64 ui_touch_id_hash(UI_Touch_ID id) {
+u64 input_touch_id_hash(Input_Touch_ID id) {
 	SL_Hasher hasher;
 	sl_hasher_init(&hasher);
 	sl_hasher_push(&hasher, immutable_buffer_for(id.kind));
 	sl_hasher_push(&hasher, immutable_buffer_for(id.external));
 	return sl_hasher_finalise(&hasher);
 }
-bool ui_touch_id_equals(UI_Touch_ID a, UI_Touch_ID b) {
+bool input_touch_id_equals(Input_Touch_ID a, Input_Touch_ID b) {
 	return (a.kind == b.kind) && (a.external == b.external);
 }
 sl_seq(UI_Touch, UI_Touch_Seq, ui_touch_seq);
 sl_seq(UI_Touch*, UI_Touch_Ptr_Seq, ui_touch_ptr_seq);
-sl_hashmap(UI_Touch_ID, UI_Touch*, UI_Touch_Map, ui_touch_map, ui_touch_id_hash, ui_touch_id_equals);
+sl_hashmap(Input_Touch_ID, UI_Touch*, UI_Touch_Map, ui_touch_map, input_touch_id_hash, input_touch_id_equals);
 
 // MARK: Element
 
@@ -274,7 +281,7 @@ UI_Gesture* ui_persistent_state_handle_resolve_gesture(UI_Persistent_State_Handl
 
 // MARK: Touch
 
-UI_Touch* ui_touch_new(UI* ui, UI_Touch_ID id) {
+UI_Touch* ui_touch_new(UI* ui, Input_Touch_ID id) {
 	UI_Touch* touch;
 	if (!ui_touch_ptr_seq_pop(&ui->touch_freelist, &touch)) {
 		touch = ui_touch_seq_push_reserve(&ui->touches);
@@ -301,7 +308,7 @@ void ui_touch_release(UI* ui, UI_Touch* touch) {
 	touch->rc--;
 
 	if (touch->rc == 0) {
-		touch->id = (UI_Touch_ID) {0};
+		touch->id = (Input_Touch_ID) {0};
 		ui_persistent_state_handle_seq_clear(&touch->receivers);
 		ui_touch_ptr_seq_push(&ui->touch_freelist, touch);
 	}
@@ -1357,6 +1364,63 @@ UI_Element* ui_color(UI* ui, UI_Extent extent, Gpu_Texture texture, vec4_f32 col
 	return element;
 }
 
+// MARK: Image
+
+typedef struct UI_Image {
+	UI_Extent extent;
+	Gpu_Texture texture;
+	Rect_u32 texture_rect;
+	vec4_f32 tint;
+} UI_Image;
+
+UI_Extent ui_image_get_extent(UI* ui, UI_Element* self) {
+	UI_Image* image = self->data;
+	UI_Extent extent = image->extent;
+
+	const vec2_f32 texture_rect_size = cvt_vec2_u32_f32(rect_size_u32(image->texture_rect));
+
+	if (extent.min_width == UI_EXTENT_IMPLICIT) {
+		extent.min_width = texture_rect_size.x;
+	}
+	if (extent.max_width == UI_EXTENT_IMPLICIT) {
+		extent.max_width = texture_rect_size.x;
+	}
+	if (extent.min_height == UI_EXTENT_IMPLICIT) {
+		extent.min_height = texture_rect_size.y;
+	}
+	if (extent.max_height == UI_EXTENT_IMPLICIT) {
+		extent.max_height = texture_rect_size.y;
+	}
+
+	return extent;
+}
+void ui_image_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
+	UI_Image* image = self->data;
+	ui_draw_image(ui, blitter, image->texture, self->rect, cvt_rect_u32_f32(image->texture_rect), image->tint);
+}
+const static UI_Element_VTable ui_image_vtable = {
+	.get_extent = ui_image_get_extent,
+	.render = ui_image_render,
+};
+
+UI_Element* ui_image(UI* ui, UI_Extent extent, Gpu_Texture texture, Rect_u32 texture_rect, vec4_f32 tint) {
+	UI_Image* image_el;
+	allocator_new(&ui->arena->allocator, image_el, 1);
+	*image_el = (UI_Image) {
+		.extent = extent,
+		.texture = texture,
+		.texture_rect = texture_rect,
+		.tint = tint,
+	};
+	UI_Element* element = ui_add_leaf(ui);
+	*element = (UI_Element) {
+		.data = image_el,
+		.vtable = &ui_image_vtable,
+		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
+	};
+	return element;
+}
+
 // MARK: Button
 
 typedef struct UI_Button_Persistent_State {
@@ -1822,12 +1886,13 @@ void ui_layout_frames(UI* ui) {
 	}
 }
 
-void ui_handle_events(UI* ui, UI_Event_Seq* event_sink) {
-	const u64 event_count = ui_event_seq_get_count(event_sink);
-	for (u64 i = 0; i < event_count; i++) {
-		const UI_Event event = ui_event_seq_get(event_sink, i);
+void ui_handle_events(UI* ui, Input_Tracker* input_tracker) {
+	Input_Event_Iterator event_iterator = input_tracker_get_event_iterator(input_tracker);
+
+	Input_Event event;
+	while (input_event_iterator_get_next(&event_iterator, &event)) {
 		switch (event.kind) {
-			case UI_Event_Kind_Touch_Began: {
+			case Input_Event_Kind_Touch_Began: {
 				UI_Touch* touch;
 				if (ui_touch_map_get(&ui->active_touch_map, event.touch.id, &touch)) {
 					// Prior touch with same ID never received an ended/cancelled event.
@@ -1843,7 +1908,7 @@ void ui_handle_events(UI* ui, UI_Event_Seq* event_sink) {
 				ui_touch_began(ui, touch);
 			} break;
 
-			case UI_Event_Kind_Touch_Changed: {
+			case Input_Event_Kind_Touch_Changed: {
 				UI_Touch* touch;
 				if (ui_touch_map_get(&ui->active_touch_map, event.touch.id, &touch)) {
 					touch->position = event.touch.position;
@@ -1852,7 +1917,7 @@ void ui_handle_events(UI* ui, UI_Event_Seq* event_sink) {
 				}
 			} break;
 
-			case UI_Event_Kind_Touch_Ended: {
+			case Input_Event_Kind_Touch_Ended: {
 				UI_Touch* touch;
 				if (ui_touch_map_get(&ui->active_touch_map, event.touch.id, &touch)) {
 					touch->position = event.touch.position;
@@ -1861,7 +1926,7 @@ void ui_handle_events(UI* ui, UI_Event_Seq* event_sink) {
 				}
 			} break;
 
-			case UI_Event_Kind_Touch_Cancelled: {
+			case Input_Event_Kind_Touch_Cancelled: {
 				UI_Touch* touch;
 				if (ui_touch_map_get(&ui->active_touch_map, event.touch.id, &touch)) {
 					touch->position = event.touch.position;
@@ -1874,15 +1939,14 @@ void ui_handle_events(UI* ui, UI_Event_Seq* event_sink) {
 				break;
 		}
 	}
-	ui_event_seq_clear(event_sink);
 }
 
-void ui_end(UI* ui, UI_Event_Seq* event_sink) {
+void ui_end(UI* ui, Input_Tracker* input_tracker) {
 	sl_debug_assert(ui->lifecycle_state == UI_Lifecycle_State_Began, "UI must have began before ending.");
 	ui->lifecycle_state = UI_Lifecycle_State_Ended;
 
 	ui_layout_frames(ui);
-	ui_handle_events(ui, event_sink);
+	ui_handle_events(ui, input_tracker);
 	ui_persistent_store_purge(&ui->persistent_store, ui->frame_index);
 }
 
