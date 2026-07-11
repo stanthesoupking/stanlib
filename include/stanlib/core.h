@@ -195,7 +195,7 @@ typedef atomic_int_fast16_t atomic_s16;
 typedef atomic_int_fast32_t atomic_s32;
 typedef atomic_int_fast64_t atomic_s64;
 
-sl_inline void sl_memcpy(void* dst, void* src, u64 size) {
+sl_inline void sl_memcpy(void* dst, const void* src, u64 size) {
 	__builtin_memcpy(dst, src, size);
 }
 
@@ -1961,6 +1961,14 @@ sl_inline vec2_f64 lerp_vec2_f64(vec2_f64 a, vec2_f64 b, f64 t) {
 	};
 }
 
+sl_inline vec3_f32 lerp_vec3_f32(vec3_f32 a, vec3_f32 b, f32 t) {
+	return (vec3_f32) {
+		.x = lerp_f32(a.x, b.x, t),
+		.y = lerp_f32(a.y, b.y, t),
+		.z = lerp_f32(a.z, b.z, t),
+	};
+}
+
 sl_inline vec3_f32 saturate_vec3_f32(vec3_f32 a) {
 	return (vec3_f32) {
 		.x = saturate_f32(a.x),
@@ -2060,6 +2068,27 @@ sl_inline vec3_u32 cvt_vec3_f32_u32(vec3_f32 v) {
 	return (vec3_u32) { (u32)v.x, (u32)v.y, (u32)v.z };
 }
 
+sl_inline vec3_f32 xyz_vec4_f32(vec4_f32 v) {
+	return (vec3_f32) { .x = v.x, .y = v.y, .z = v.z };
+}
+
+sl_inline vec3_f32 xyz_div_w_vec4_f32(vec4_f32 v) {
+	return (vec3_f32) { .x = v.x / v.w, .y = v.y / v.w, .z = v.z / v.w };
+}
+
+sl_inline vec4_f32 xyz0_vec3_f32(vec3_f32 v) {
+	return (vec4_f32) { .x = v.x, .y = v.y, .z = v.z, 0.0f };
+}
+sl_inline vec4_f32 xyz1_vec3_f32(vec3_f32 v) {
+	return (vec4_f32) { .x = v.x, .y = v.y, .z = v.z, 1.0f };
+}
+
+sl_inline f32 angle_between_vec2_f32(vec2_f32 a, vec2_f32 b) {
+	f32 cross = a.x * b.y - a.y * b.x;
+	f32 dot   = a.x * b.x + a.y * b.y;
+	return atan2f(cross, dot);
+}
+
 sl_inline vec2_f32 rotate_vec2_f32(vec2_f32 v, f32 a) {
 	f32 cos_a = cosf(a);
 	f32 sin_a = sinf(a);
@@ -2074,6 +2103,16 @@ sl_inline vec2_f64 rotate_vec2_f64(vec2_f64 v, f64 a) {
 	return (vec2_f64) {
 		.x = v.x * cos_a - v.y * sin_a,
 		.y = v.x * sin_a + v.y * cos_a,
+	};
+}
+
+sl_inline vec3_f32 rotate_y_vec3_f32(vec3_f32 v, f32 a) {
+	f32 cos_a = cosf(a);
+	f32 sin_a = sinf(a);
+	return (vec3_f32) {
+		.x = v.x * cos_a - v.z * sin_a,
+		.y = v.y,
+		.z = v.x * sin_a + v.z * cos_a,
 	};
 }
 
@@ -2145,6 +2184,16 @@ sl_inline vec3_f32 step_vec3_f32(vec3_f32 edge, vec3_f32 x) {
 		(x.y >= edge.y) ? 1.0f : 0.0f,
 		(x.z >= edge.z) ? 1.0f : 0.0f,
 	};
+}
+
+sl_inline f32 extract_y_rotation_mat4x4_f32(mat4x4_f32 m) {
+	vec3_f32 forward = xyz_vec4_f32(m.z);
+	
+	forward.y = 0.0f;
+	forward = normalize_vec3_f32(forward);
+	
+	const f32 yaw = atan2f(forward.x, forward.z);
+	return yaw;
 }
 
 sl_inline vec4_f32 mul_mat4x4_vec4_f32(mat4x4_f32 m, vec4_f32 v) {
@@ -2417,6 +2466,45 @@ sl_inline mat4x4_f64 rotate_z_mat4x4_f64(f64 angle) {
 	};
 }
 
+sl_inline mat4x4_f32 rotate_axis_mat4x4_f32(vec3_f32 axis, f32 angle) {
+	axis = normalize_vec3_f32(axis);
+
+	f32 c = cosf(angle);
+	f32 s = sinf(angle);
+	f32 t = 1.0f - c;
+
+	f32 x = axis.x;
+	f32 y = axis.y;
+	f32 z = axis.z;
+
+	return (mat4x4_f32) {
+		{
+			t*x*x + c,
+			t*x*y + s*z,
+			t*x*z - s*y,
+			0.0f
+		},
+		{
+			t*x*y - s*z,
+			t*y*y + c,
+			t*y*z + s*x,
+			0.0f
+		},
+		{
+			t*x*z + s*y,
+			t*y*z - s*x,
+			t*z*z + c,
+			0.0f
+		},
+		{
+			0.0f,
+			0.0f,
+			0.0f,
+			1.0f
+		}
+	};
+}
+
 sl_inline vec4_f32 sl_hsba_to_rgba_f32(f32 h, f32 s, f32 v, f32 a) {
 	f32 r, g, b;
 	if (s <= 0.0f) {
@@ -2476,6 +2564,8 @@ sl_inline Box_f32 box_f32_union(Box_f32 a, Box_f32 b) {
 		.end = max_vec3_f32(a.end, b.end),
 	};
 }
+
+#define sl_alloca(x) __builtin_alloca(x)
 
 typedef struct Mutable_Buffer {
 	void* data;
@@ -3258,7 +3348,6 @@ sl_inline bool sl_get_application_path(SL_Path_Components components, u32 out_pa
 #endif
 
 sl_inline void sl_format_time(f64 time, Mutable_Buffer out_buf) {
-	const f64 seconds = time;
 	if (time >= 1.0) {
 		snprintf(out_buf.data, out_buf.size, "%.2fs", time);
 	} else if (time >= 1e-3) {
@@ -3439,6 +3528,150 @@ sl_inline Textured_Quad_f32 textured_quad_for_sub_region_f32(Rect_f32 position_r
 			tint
 		},
 	};
+}
+
+typedef void (*SL_Solve_Compute_Residuals_Fn)(void* ctx, u32 parameter_count, u32 residual_count, const f32* parameters, f32* out_residuals);
+
+typedef struct SL_Solve_Desc {
+	f32* parameters; // in/out
+	const f32* parameter_epsilon;
+	u32 parameter_count;
+	u32 residual_count;
+	u32 iterations;
+	
+	void* ctx;
+	SL_Solve_Compute_Residuals_Fn compute_residuals_fn;
+} SL_Solve_Desc;
+
+sl_inline void _sl_solve_compute_jacobian(const SL_Solve_Desc* desc, f32* out_j) {
+	f32* base_r = sl_alloca(sizeof(f32) * desc->residual_count);
+	f32* perturbed_r = sl_alloca(sizeof(f32) * desc->residual_count);
+	f32* perturbed_parameters = sl_alloca(sizeof(f32) * desc->parameter_count);
+	
+	desc->compute_residuals_fn(desc->ctx, desc->parameter_count, desc->residual_count, desc->parameters, base_r);
+	for (u32 param_idx = 0; param_idx < desc->parameter_count; param_idx++) {
+		sl_memcpy(perturbed_parameters, desc->parameters, sizeof(f32) * desc->parameter_count);
+		perturbed_parameters[param_idx] += desc->parameter_epsilon[param_idx];
+		
+		desc->compute_residuals_fn(desc->ctx, desc->parameter_count, desc->residual_count, perturbed_parameters, perturbed_r);
+		
+		for (u32 residual_idx = 0; residual_idx < desc->residual_count; residual_idx++) {
+			out_j[(residual_idx * desc->parameter_count) + param_idx] = (perturbed_r[residual_idx] - base_r[residual_idx]) / desc->parameter_epsilon[param_idx];
+		}
+	}
+}
+
+sl_inline void _sl_solve_build_normal_equations(const SL_Solve_Desc* desc, const f32* jacobian, const f32* r, f32* out_a, f32* out_b) {
+	for (u32 i = 0; i < desc->parameter_count; i++) {
+		out_b[i] = 0.0f;
+
+		for (u32 j = 0; j < desc->parameter_count; j++) {
+			out_a[(i * desc->parameter_count) + j] = 0.0f;
+		}
+	}
+	
+	for (u32 residual_idx = 0; residual_idx < desc->residual_count; residual_idx++) {
+		for (u32 i = 0; i < desc->parameter_count; i++) {
+			out_b[i] += jacobian[(residual_idx * desc->parameter_count) + i] * r[residual_idx];
+			for (u32 j = 0; j < desc->parameter_count; j++) {
+				out_a[(i * desc->parameter_count) + j] += jacobian[(residual_idx * desc->parameter_count) + i] * jacobian[(residual_idx * desc->parameter_count) + j];
+			}
+		}
+	}
+	
+	for (u32 i = 0; i < desc->parameter_count; i++) {
+		out_b[i] = -out_b[i];
+	}
+	
+	// Dampening
+	for (u32 i = 0; i < desc->parameter_count; i++) {
+		out_a[i * desc->parameter_count + i] += 1e-3f;
+	}
+}
+
+sl_inline bool _sl_solve_linear_system(u32 n, f32* a, f32* b, f32* out_delta) {
+	// Forward elimination
+	for (u32 col = 0; col < n; col++) {
+		// Find pivot
+		u32 pivot = col;
+		f32 max_abs = fabsf(a[col * n + col]);
+		
+		for (u32 row = col + 1; row < n; row++) {
+			f32 v = fabsf(a[row * n + col]);
+			
+			if (v > max_abs) {
+				max_abs = v;
+				pivot = row;
+			}
+		}
+		
+		// Matrix is singular
+		if (max_abs < 1e-8f) {
+			return false;
+		}
+		
+		// Swap rows
+		if (pivot != col) {
+			for (u32 j = col; j < n; j++) {
+				f32 tmp = a[col * n + j];
+				a[col * n + j] = a[pivot * n + j];
+				a[pivot * n + j] = tmp;
+			}
+			
+			f32 tmp = b[col];
+			b[col] = b[pivot];
+			b[pivot] = tmp;
+		}
+		
+		// Eliminate below pivot
+		for (u32 row = col + 1; row < n; row++) {
+			f32 factor = a[row * n + col] / a[col * n + col];
+			
+			a[row * n + col] = 0.0f;
+			
+			for (u32 j = col + 1; j < n; j++) {
+				a[row * n + j] -= factor * a[col * n + j];
+			}
+			
+			b[row] -= factor * b[col];
+		}
+	}
+	
+	// Back substitution
+	for (s32 row = n - 1; row >= 0; row--) {
+		f32 sum = b[row];
+		for (u32 j = row + 1; j < n; j++) {
+			sum -= a[row * n + j] * out_delta[j];
+		}
+		
+		out_delta[row] = sum / a[row * n + row];
+	}
+	
+	return true;
+}
+
+sl_inline void sl_solve(const SL_Solve_Desc* desc) {
+	// Residuals
+	f32* r = sl_alloca(sizeof(f32) * desc->residual_count);
+	
+	// Jacobian
+	f32* j = sl_alloca(sizeof(f32) * desc->parameter_count * desc->residual_count);
+	
+	f32* norm_a = sl_alloca(sizeof(f32) * desc->parameter_count * desc->parameter_count);
+	f32* norm_b = sl_alloca(sizeof(f32) * desc->parameter_count);
+	f32* deltas = sl_alloca(sizeof(f32) * desc->parameter_count);
+	
+	for (u32 iteration = 0; iteration < desc->iterations; iteration++) {
+		desc->compute_residuals_fn(desc->ctx, desc->parameter_count, desc->residual_count, desc->parameters, r);
+		_sl_solve_compute_jacobian(desc, j);
+		_sl_solve_build_normal_equations(desc, j, r, norm_a, norm_b);
+		
+		if (_sl_solve_linear_system(desc->parameter_count, norm_a, norm_b, deltas)) {
+			for (u32 i = 0; i < desc->parameter_count; i++) {
+				desc->parameters[i] += deltas[i];
+			}
+		}
+	}
 }
 
 #endif

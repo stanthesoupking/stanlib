@@ -132,6 +132,9 @@ typedef struct UI_Render_Callback {
 
 typedef struct UI_Touch UI_Touch;
 
+vec2_f32 ui_touch_get_position(UI_Touch* touch);
+bool ui_touch_equals(UI_Touch* a, UI_Touch* b);
+
 typedef struct UI_Gesture_VTable {
 	void (*touch_began)(UI* ui, void* ctx, UI_Touch* touch);
 	void (*touch_changed)(UI* ui, void* ctx, UI_Touch* touch);
@@ -248,6 +251,8 @@ UI_Element* ui_custom(UI* ui, UI_Extent extent, UI_Render_Callback on_render);
 // Note #2: When the element is culled, this function returns `false`.
 bool ui_element_get_layout_rect(UI* ui, UI_Element* element, Rect_f32* out_rect);
 
+
+void ui_custom_gesture(UI* ui, UI_ID id, const UI_Gesture_VTable* vtable, void* ctx, UI_Element* element);
 void ui_pan_gesture(UI* ui, UI_ID id, const UI_Pan_Gesture_Desc* desc, UI_Element* element);
 
 void ui_render(UI* ui, SL_Blitter* blitter);

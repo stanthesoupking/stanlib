@@ -181,6 +181,14 @@ sl_seq(UI_Touch, UI_Touch_Seq, ui_touch_seq);
 sl_seq(UI_Touch*, UI_Touch_Ptr_Seq, ui_touch_ptr_seq);
 sl_hashmap(Input_Touch_ID, UI_Touch*, UI_Touch_Map, ui_touch_map, input_touch_id_hash, input_touch_id_equals);
 
+vec2_f32 ui_touch_get_position(UI_Touch* touch) {
+	return touch->position;
+}
+
+bool ui_touch_equals(UI_Touch* a, UI_Touch* b) {
+	return input_touch_id_equals(a->id, b->id);
+}
+
 // MARK: Element
 
 typedef struct UI_Element UI_Element;
@@ -759,6 +767,11 @@ const static UI_Gesture_VTable ui_pan_gesture_vtable = {
 	.touch_cancelled = ui_pan_gesture_touch_cancelled,
 	.destroy = ui_pan_gesture_destroy,
 };
+
+void ui_custom_gesture(UI* ui, UI_ID id, const UI_Gesture_VTable* vtable, void* ctx, UI_Element* element) {
+	UI_Gesture* gesture = ui_gesture_new(ui, id, vtable, element);
+	gesture->ctx = ctx;
+}
 
 void ui_pan_gesture(UI* ui, UI_ID id, const UI_Pan_Gesture_Desc* desc, UI_Element* element) {
 	UI_Gesture* gesture = ui_gesture_new(ui, id, &ui_pan_gesture_vtable, element);
