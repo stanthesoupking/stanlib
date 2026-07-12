@@ -120,7 +120,7 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 	switch (event->type) {
 		case SDL_EVENT_MOUSE_MOTION: {
 			// Handled via touch
-			if (event->motion.which == SDL_TOUCH_MOUSEID) {
+			if ((event->motion.which == SDL_TOUCH_MOUSEID) || (event->motion.which == SDL_PEN_MOUSEID)) {
 				return false;
 			}
 
@@ -133,7 +133,7 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 
 		case SDL_EVENT_MOUSE_BUTTON_DOWN: {
 			// Handled via touch
-			if (event->button.which == SDL_TOUCH_MOUSEID) {
+			if ((event->motion.which == SDL_TOUCH_MOUSEID) || (event->motion.which == SDL_PEN_MOUSEID)) {
 				return false;
 			}
 
@@ -146,7 +146,7 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 
 		case SDL_EVENT_MOUSE_BUTTON_UP: {
 			// Handled via touch
-			if (event->button.which == SDL_TOUCH_MOUSEID) {
+			if ((event->motion.which == SDL_TOUCH_MOUSEID) || (event->motion.which == SDL_PEN_MOUSEID)) {
 				return false;
 			}
 
@@ -158,6 +158,11 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 		} break;
 
 		case SDL_EVENT_FINGER_DOWN: {
+			// Handled via mouse
+			if (event->tfinger.touchID == SDL_MOUSE_TOUCHID) {
+				return false;
+			}
+			
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Began,
 				.touch = input_touch_event_from_sdl_touch_event(window, &event->tfinger),
@@ -166,6 +171,11 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 		} break;
 
 		case SDL_EVENT_FINGER_UP: {
+			// Handled via mouse
+			if (event->tfinger.touchID == SDL_MOUSE_TOUCHID) {
+				return false;
+			}
+			
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Ended,
 				.touch = input_touch_event_from_sdl_touch_event(window, &event->tfinger),
@@ -174,6 +184,11 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 		} break;
 
 		case SDL_EVENT_FINGER_MOTION: {
+			// Handled via mouse
+			if (event->tfinger.touchID == SDL_MOUSE_TOUCHID) {
+				return false;
+			}
+			
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Changed,
 				.touch = input_touch_event_from_sdl_touch_event(window, &event->tfinger),
@@ -182,6 +197,11 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 		} break;
 
 		case SDL_EVENT_FINGER_CANCELED: {
+			// Handled via mouse
+			if (event->tfinger.touchID == SDL_MOUSE_TOUCHID) {
+				return false;
+			}
+			
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Cancelled,
 				.touch = input_touch_event_from_sdl_touch_event(window, &event->tfinger),

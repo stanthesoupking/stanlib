@@ -667,6 +667,10 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 				const Gpu_Command_Copy_Slice* copy_slice = command.data.copy_slice;
 				Gpu_Heap_Data* src_heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, copy_slice->src.heap);
 				Gpu_Heap_Data* dst_heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, copy_slice->dst.heap);
+				
+				gpu_validate((copy_slice->src.offset + copy_slice->src.size) <= src_heap_data->size, "Copy source exceeded size of the heap.");
+				gpu_validate((copy_slice->dst.offset + copy_slice->dst.size) <= dst_heap_data->size, "Copy destination exceeded size of the heap.");
+				
 				[encoder_state.blit_encoder copyFromBuffer:src_heap_data->buffer sourceOffset:copy_slice->src.offset toBuffer:dst_heap_data->buffer destinationOffset:copy_slice->dst.offset size:copy_slice->src.size];
 			} break;
 
