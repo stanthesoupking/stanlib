@@ -768,11 +768,6 @@ const static UI_Gesture_VTable ui_pan_gesture_vtable = {
 	.destroy = ui_pan_gesture_destroy,
 };
 
-void ui_custom_gesture(UI* ui, UI_ID id, const UI_Gesture_VTable* vtable, void* ctx, UI_Element* element) {
-	UI_Gesture* gesture = ui_gesture_new(ui, id, vtable, element);
-	gesture->ctx = ctx;
-}
-
 void ui_pan_gesture(UI* ui, UI_ID id, const UI_Pan_Gesture_Desc* desc, UI_Element* element) {
 	UI_Gesture* gesture = ui_gesture_new(ui, id, &ui_pan_gesture_vtable, element);
 
@@ -786,6 +781,90 @@ void ui_pan_gesture(UI* ui, UI_ID id, const UI_Pan_Gesture_Desc* desc, UI_Elemen
 
 	UI_Pan_Gesture_State* state = gesture->ctx;
 	state->desc = *desc;
+}
+
+// MARK: Tap Gesture
+
+typedef struct UI_Tap_Gesture_State {
+	UI_Tap_Gesture_Desc desc;
+	UI_Touch* active_touch;
+	vec2_f32 previous_position;
+	f32 total_movement;
+} UI_Tap_Gesture_State;
+
+void ui_tap_gesture_touch_began(UI* ui, void* ctx, UI_Touch* touch) {
+	UI_Tap_Gesture_State* state = ctx;
+	if (state->active_touch == NULL) {
+		ui_touch_retain(ui, touch);
+		state->active_touch = touch;
+		state->previous_position = touch->position;
+		state->total_movement = 0.0f;
+	}
+}
+void ui_tap_gesture_touch_changed(UI* ui, void* ctx, UI_Touch* touch) {
+	UI_Tap_Gesture_State* state = ctx;
+	if (state->active_touch == touch) {
+		state->total_movement += dist_vec2_f32(state->previous_position, state->active_touch->position);
+		state->previous_position = touch->position;
+	}
+}
+void ui_tap_gesture_touch_ended(UI* ui, void* ctx, UI_Touch* touch) {
+	UI_Tap_Gesture_State* state = ctx;
+	if (state->active_touch == touch) {
+		state->total_movement += dist_vec2_f32(state->previous_position, state->active_touch->position);
+
+		if (state->total_movement < state->desc.maximum_movement) {
+			const UI_Tap_Gesture_Frame frame = {
+				.position = state->active_touch->position,
+			};
+			state->desc.callback.func(state->desc.callback.ctx, &frame);
+		}
+
+		ui_touch_release(ui, touch);
+		state->active_touch = NULL;
+	}
+}
+void ui_tap_gesture_touch_cancelled(UI* ui, void* ctx, UI_Touch* touch) {
+	UI_Tap_Gesture_State* state = ctx;
+	if (state->active_touch == touch) {
+		ui_touch_release(ui, touch);
+		state->active_touch = NULL;
+	}
+}
+void ui_tap_gesture_destroy(UI* ui, void* ctx) {
+	UI_Tap_Gesture_State* state = ctx;
+	if (state->active_touch != NULL) {
+		ui_touch_release(ui, state->active_touch);
+		state->active_touch = NULL;
+	}
+	allocator_free(ui->allocator, state, 1);
+}
+const static UI_Gesture_VTable ui_tap_gesture_vtable = {
+	.touch_began = ui_tap_gesture_touch_began,
+	.touch_changed = ui_tap_gesture_touch_changed,
+	.touch_ended = ui_tap_gesture_touch_ended,
+	.touch_cancelled = ui_tap_gesture_touch_cancelled,
+	.destroy = ui_tap_gesture_destroy,
+};
+
+void ui_tap_gesture(UI* ui, UI_ID id, const UI_Tap_Gesture_Desc* desc, UI_Element* element) {
+	UI_Gesture* gesture = ui_gesture_new(ui, id, &ui_tap_gesture_vtable, element);
+	
+	if (gesture->ctx == NULL) {
+		// Allocate state
+		UI_Tap_Gesture_State* state;
+		allocator_new(ui->allocator, state, 1);
+		*state = (UI_Tap_Gesture_State) {0};
+		gesture->ctx = state;
+	}
+
+	UI_Tap_Gesture_State* state = gesture->ctx;
+	state->desc = *desc;
+}
+
+void ui_custom_gesture(UI* ui, UI_ID id, const UI_Gesture_VTable* vtable, void* ctx, UI_Element* element) {
+	UI_Gesture* gesture = ui_gesture_new(ui, id, vtable, element);
+	gesture->ctx = ctx;
 }
 
 UI_Element* ui_add_leaf(UI* ui) {

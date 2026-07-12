@@ -169,6 +169,24 @@ typedef struct UI_Pan_Gesture_Desc {
 	UI_Pan_Gesture_Callback callback;
 } UI_Pan_Gesture_Desc;
 
+typedef struct UI_Tap_Gesture_Frame {
+	vec2_f32 position;
+} UI_Tap_Gesture_Frame;
+
+typedef struct UI_Tap_Gesture_Callback {
+	void* ctx;
+	void (*func)(void* ctx, const UI_Tap_Gesture_Frame* frame);
+} UI_Tap_Gesture_Callback;
+
+#define UI_TAP_GESTURE_MAXIMUM_MOVEMENT_DEFAULT 10.0f
+
+typedef struct UI_Tap_Gesture_Desc {
+	// Default reccommended value is UI_TAP_GESTURE_MAXIMUM_MOVEMENT_DEFAULT.
+	f32 maximum_movement;
+	
+	UI_Tap_Gesture_Callback callback;
+} UI_Tap_Gesture_Desc;
+
 typedef struct UI_Atlas UI_Atlas;
 
 typedef enum UI_Atlas_Entry_Kind {
@@ -254,5 +272,6 @@ bool ui_element_get_layout_rect(UI* ui, UI_Element* element, Rect_f32* out_rect)
 
 void ui_custom_gesture(UI* ui, UI_ID id, const UI_Gesture_VTable* vtable, void* ctx, UI_Element* element);
 void ui_pan_gesture(UI* ui, UI_ID id, const UI_Pan_Gesture_Desc* desc, UI_Element* element);
+void ui_tap_gesture(UI* ui, UI_ID id, const UI_Tap_Gesture_Desc* desc, UI_Element* element);
 
 void ui_render(UI* ui, SL_Blitter* blitter);
