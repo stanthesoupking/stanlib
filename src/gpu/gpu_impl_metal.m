@@ -332,6 +332,10 @@ void gpu_deinit(void) {
 	// todo
 }
 
+u64 gpu_get_minimum_uniform_slice_alignment(void) {
+	return 1;
+}
+
 void gpu_init_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 	*command_buffer = (Gpu_Command_Buffer_Data) {
 		.state = Gpu_Command_Buffer_State_Idle,
@@ -585,7 +589,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 							[encoder setFragmentSamplerState:sampler_data->sampler atIndex:i];
 						} break;
 
-						case Gpu_Binding_Kind_Slice: {
+						case Gpu_Binding_Kind_Storage_Slice: {
 							Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, binding.slice.heap);
 							[encoder setVertexBuffer:heap_data->buffer offset:binding.slice.offset atIndex:i];
 							[encoder setFragmentBuffer:heap_data->buffer offset:binding.slice.offset atIndex:i];
@@ -625,7 +629,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 							[encoder setSamplerState:sampler_data->sampler atIndex:i];
 						} break;
 
-						case Gpu_Binding_Kind_Slice: {
+						case Gpu_Binding_Kind_Storage_Slice: {
 							Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, binding.slice.heap);
 							[encoder setBuffer:heap_data->buffer offset:binding.slice.offset atIndex:i];
 						} break;
@@ -667,10 +671,10 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 				const Gpu_Command_Copy_Slice* copy_slice = command.data.copy_slice;
 				Gpu_Heap_Data* src_heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, copy_slice->src.heap);
 				Gpu_Heap_Data* dst_heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, copy_slice->dst.heap);
-				
+
 				gpu_validate((copy_slice->src.offset + copy_slice->src.size) <= src_heap_data->size, "Copy source exceeded size of the heap.");
 				gpu_validate((copy_slice->dst.offset + copy_slice->dst.size) <= dst_heap_data->size, "Copy destination exceeded size of the heap.");
-				
+
 				[encoder_state.blit_encoder copyFromBuffer:src_heap_data->buffer sourceOffset:copy_slice->src.offset toBuffer:dst_heap_data->buffer destinationOffset:copy_slice->dst.offset size:copy_slice->src.size];
 			} break;
 
@@ -1000,20 +1004,20 @@ void gpu_end_render(Gpu_Command_Buffer cb) {
 
 MTLFunctionConstantValues* gpu_function_constants_to_mtl_function_constant_values(const Gpu_Function_Constant* constants, u32 count) {
 	MTLFunctionConstantValues* result = [MTLFunctionConstantValues new];
-	
+
 	for (u32 i = 0; i < count; i++) {
 		const Gpu_Function_Constant constant = constants[i];
 		switch (constant.kind) {
 			case Gpu_Function_Constant_Kind_U32: {
 				[result setConstantValue:&constant.v_u32 type:MTLDataTypeUInt atIndex:constant.index];
 			} break;
-				
+
 			case Gpu_Function_Constant_Kind_Bool: {
 				[result setConstantValue:&constant.v_bool type:MTLDataTypeBool atIndex:constant.index];
 			} break;
 		}
 	}
-	
+
 	return result;
 }
 
@@ -1024,7 +1028,7 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 	if ((vert_blob_data == NULL) || (frag_blob_data == NULL)) {
 		return SL_HANDLE_NULL;
 	}
-	
+
 	MTLFunctionConstantValues* constants = gpu_function_constants_to_mtl_function_constant_values(desc->constants, desc->constant_count);
 
 	id<MTLFunction> vert_function = [vert_blob_data->library newFunctionWithName:[NSString stringWithCString:desc->vertex_entry_point encoding:NSUTF8StringEncoding] constantValues:constants error:nil];
@@ -1044,7 +1048,7 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 	for (u8 i = 0; i < desc->render_pass_layout.attachment_count; i++) {
 		MTLRenderPipelineColorAttachmentDescriptor* mtl_attachment = pipeline_desc.colorAttachments[i];
 		mtl_attachment.pixelFormat = gpu_format_to_mtl_pixel_format(desc->render_pass_layout.attachments[i].format);
-		
+
 		if (desc->alpha_blending) {
 			mtl_attachment.blendingEnabled = YES;
 			mtl_attachment.rgbBlendOperation = MTLBlendOperationAdd;
@@ -1275,7 +1279,7 @@ Gpu_Shader_Blob gpu_new_shader_blob(const Gpu_Shader_Blob_Desc* desc) {
     }
 
 	dispatch_data_t buffer_data = dispatch_data_create(desc->metallib.data, desc->metallib.size, nil, ^{});
-	
+
 	NSError* err = nil;
 	id<MTLLibrary> library = [gpu.device newLibraryWithData:buffer_data error:&err];
 	if (library == nil) {

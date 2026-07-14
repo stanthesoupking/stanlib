@@ -39,7 +39,7 @@ Gpu_Render_Pipeline sl_blitter_new_render_pipeline(bool swizzle_rrrr) {
 
 	const Gpu_Layout_Binding blit_quad_bindings[] = {
 		{
-			.kind = Gpu_Binding_Kind_Slice,
+			.kind = Gpu_Binding_Kind_Storage_Slice,
 			.index = 0,
 		},
 		{
@@ -275,7 +275,7 @@ void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
 
 		const Gpu_Binding draw_bindings[] = {
 			{
-				.kind = Gpu_Binding_Kind_Slice,
+				.kind = Gpu_Binding_Kind_Storage_Slice,
 				.slice = draw_slice,
 				.index = 0,
 			},

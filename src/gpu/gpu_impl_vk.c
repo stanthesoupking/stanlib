@@ -1,3 +1,4 @@
+#include "stanlib/gpu.h"
 #include "vulkan/vulkan_core.h"
 #include <vulkan/vulkan.h>
 
@@ -23,7 +24,7 @@
 const char* gpu_DEVICE_EXTENSIONS[] = {
 	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 	VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-	VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME
+	VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 };
 
 typedef SL_Handle Gpu_Render_Pass_Object;
@@ -907,9 +908,15 @@ void gpu_init_device(const Gpu_Desc* desc) {
 // Texture
 sl_inline VkImageType gpu_texture_kind_to_vk_image_type(Gpu_Texture_Kind kind) {
 	switch (kind) {
-		case Gpu_Texture_Kind_1D: return VK_IMAGE_TYPE_1D;
-		case Gpu_Texture_Kind_2D: return VK_IMAGE_TYPE_2D;
-		case Gpu_Texture_Kind_3D: return VK_IMAGE_TYPE_3D;
+		case Gpu_Texture_Kind_1D:
+			return VK_IMAGE_TYPE_1D;
+
+		case Gpu_Texture_Kind_2D:
+		case Gpu_Texture_Kind_Cube:
+			return VK_IMAGE_TYPE_2D;
+
+		case Gpu_Texture_Kind_3D:
+			return VK_IMAGE_TYPE_3D;
 	}
 }
 sl_inline VkImageViewType gpu_texture_kind_to_vk_image_view_type(Gpu_Texture_Kind kind) {
@@ -917,6 +924,20 @@ sl_inline VkImageViewType gpu_texture_kind_to_vk_image_view_type(Gpu_Texture_Kin
 		case Gpu_Texture_Kind_1D: return VK_IMAGE_VIEW_TYPE_1D;
 		case Gpu_Texture_Kind_2D: return VK_IMAGE_VIEW_TYPE_2D;
 		case Gpu_Texture_Kind_3D: return VK_IMAGE_VIEW_TYPE_3D;
+		case Gpu_Texture_Kind_2D_Array: return VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+		case Gpu_Texture_Kind_Cube: return VK_IMAGE_VIEW_TYPE_CUBE;
+	}
+}
+sl_inline VkImageCreateFlagBits gpu_texture_kind_get_vk_image_create_flags(Gpu_Texture_Kind kind) {
+	switch (kind) {
+		case Gpu_Texture_Kind_1D:
+		case Gpu_Texture_Kind_2D:
+		case Gpu_Texture_Kind_3D:
+		case Gpu_Texture_Kind_2D_Array:
+			return 0;
+
+		case Gpu_Texture_Kind_Cube:
+			return VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
 	}
 }
 sl_inline VkImageUsageFlags gpu_texture_usage_to_vk_image_usage_flags(Gpu_Texture_Usage usage) {
@@ -993,8 +1014,10 @@ sl_inline VkSamplerAddressMode gpu_sampler_address_mode_to_vk_sampler_address_mo
 }
 
 bool gpu_new_image_for_texture_desc(const Gpu_Texture_Desc* desc, VkImage* out_image) {
+	gpu_validate((desc->kind != Gpu_Texture_Kind_Cube) || (desc->array_layers == 6), "Cube must have 6 array layers.");
 	VkImageCreateInfo image_create_info = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.flags = gpu_texture_kind_get_vk_image_create_flags(desc->kind),
 		.imageType = gpu_texture_kind_to_vk_image_type(desc->kind),
 		.usage = gpu_texture_usage_to_vk_image_usage_flags(desc->usage),
 		.format = gpu_format_to_vk_format(desc->format),
@@ -1090,6 +1113,42 @@ Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice) {
 
 	return texture;
 }
+
+Gpu_Texture gpu_new_texture_view(Gpu_Texture texture, const Gpu_Texture_Desc* desc) {
+	Gpu_Texture_Data* texture_data = gpu_texture_pool_resolve(&gpu.texture_pool, texture);
+
+	Gpu_Texture texture_view = gpu_texture_pool_acquire(&gpu.texture_pool);
+	Gpu_Texture_Data* texture_view_data = gpu_texture_pool_resolve(&gpu.texture_pool, texture_view);
+	texture_view_data->layout = Gpu_Texture_Layout_Undefined;
+	texture_view_data->desc = *desc;
+	texture_view_data->image = texture_data->image;
+	texture_view_data->owned_image = false;
+
+	VkImageViewCreateInfo view_create_info = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.image = texture_data->image,
+		.format = gpu_format_to_vk_format(desc->format),
+		.viewType = gpu_texture_kind_to_vk_image_view_type(desc->kind),
+		.components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+		.components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+		.components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+		.components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.subresourceRange.baseMipLevel = 0,
+		.subresourceRange.levelCount = desc->mip_levels,
+		.subresourceRange.baseArrayLayer = 0,
+		.subresourceRange.layerCount = desc->array_layers,
+	};
+
+	VkResult create_view_result = vkCreateImageView(gpu.device, &view_create_info, NULL, &texture_view_data->image_view);
+	if (create_view_result != VK_SUCCESS) {
+		gpu_texture_pool_release(&gpu.texture_pool, texture_view);
+		return SL_HANDLE_NULL;
+	}
+
+	return texture_view;
+}
+
 const Gpu_Texture_Desc* gpu_get_texture_desc(Gpu_Texture texture) {
 	Gpu_Texture_Data* data = gpu_texture_pool_resolve(&gpu.texture_pool, texture);
 	if (data) {
@@ -1524,18 +1583,6 @@ Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type) {
 	Gpu_Heap heap_handle = gpu_heap_pool_acquire(&gpu.heap_pool);
 	Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, heap_handle);
 
-	VkMemoryAllocateInfo allocate_info = {
-		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-		.allocationSize = bytes,
-		.memoryTypeIndex = gpu.memory_type_indices.index[memory_type],
-	};
-
-	VkResult allocate_result = vkAllocateMemory(gpu.device, &allocate_info, NULL, &heap_data->device_memory);
-	sl_assert(allocate_result == VK_SUCCESS, "Failed to allocate memory.");
-
-	heap_data->memory_type = memory_type;
-	heap_data->size = bytes;
-
 	VkBufferCreateInfo buffer_create_info = {
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 		.size = bytes,
@@ -1547,6 +1594,24 @@ Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type) {
 	};
 	VkResult create_buffer_result = vkCreateBuffer(gpu.device, &buffer_create_info, NULL, &heap_data->buffer);
 	sl_assert(create_buffer_result == VK_SUCCESS, "Failed to create buffer.");
+
+	VkMemoryRequirements buffer_memory_requirements;
+	vkGetBufferMemoryRequirements(gpu.device, heap_data->buffer, &buffer_memory_requirements);
+
+	// Device may require a larger heap.
+	const u64 required_size = buffer_memory_requirements.size;
+
+	VkMemoryAllocateInfo allocate_info = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.allocationSize = required_size,
+		.memoryTypeIndex = gpu.memory_type_indices.index[memory_type],
+	};
+
+	VkResult allocate_result = vkAllocateMemory(gpu.device, &allocate_info, NULL, &heap_data->device_memory);
+	sl_assert(allocate_result == VK_SUCCESS, "Failed to allocate memory.");
+
+	heap_data->memory_type = memory_type;
+	heap_data->size = required_size;
 
 	VkResult bind_buffer_result = vkBindBufferMemory(gpu.device, heap_data->buffer, heap_data->device_memory, 0);
 	sl_assert(bind_buffer_result == VK_SUCCESS, "Failed to bind buffer to heap allocation.");
@@ -1830,7 +1895,8 @@ sl_inline VkDescriptorType gpu_binding_kind_to_vk_descriptor_type(Gpu_Binding_Ki
 		case Gpu_Binding_Kind_Storage_Texture: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 		case Gpu_Binding_Kind_Sampled_Texture: return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
 		case Gpu_Binding_Kind_Sampler: return VK_DESCRIPTOR_TYPE_SAMPLER;
-		case Gpu_Binding_Kind_Slice: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		case Gpu_Binding_Kind_Storage_Slice: return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		case Gpu_Binding_Kind_Uniform_Slice: return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	}
 }
 
@@ -1891,6 +1957,10 @@ sl_inline void gpu_execute_transition_textures_to_layout(SL_Arena_Allocator* are
 	sl_arena_allocator_reset(arena, reset_position);
 }
 
+u64 gpu_get_minimum_uniform_slice_alignment(void) {
+	return gpu.device_limits.minUniformBufferOffsetAlignment;
+}
+
 sl_inline void gpu_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer vk_cb, VkPipelineLayout pipeline_layout, VkPipelineBindPoint bind_point, const Gpu_Binding* bindings, u32 binding_count) {
 	if (binding_count == 0) {
 		return;
@@ -1947,7 +2017,8 @@ sl_inline void gpu_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer vk_
 				};
 			} break;
 
-			case Gpu_Binding_Kind_Slice: {
+			case Gpu_Binding_Kind_Storage_Slice:
+			case Gpu_Binding_Kind_Uniform_Slice: {
 				Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, binding.slice.heap);
 
 				VkDescriptorBufferInfo* buffer_info;

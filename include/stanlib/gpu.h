@@ -41,6 +41,7 @@ typedef struct Gpu_Size_And_Align {
 	u64 align;
 } Gpu_Size_And_Align;
 #define gpu_size_and_align_of_type(x, count) ((Gpu_Size_And_Align) { .size = sizeof(x) * count, .align = sl_align_of(x) })
+#define gpu_size_and_align_of_uniform(x, count) ((Gpu_Size_And_Align) { .size = sizeof(x) * count, .align = sl_max(sl_align_of(x), gpu_get_minimum_uniform_slice_alignment()) })
 
 typedef enum Gpu_Primitive_Kind {
 	Gpu_Primitive_Kind_Triangle,
@@ -57,6 +58,8 @@ typedef enum Gpu_Texture_Kind {
 	Gpu_Texture_Kind_1D,
 	Gpu_Texture_Kind_2D,
 	Gpu_Texture_Kind_3D,
+	Gpu_Texture_Kind_2D_Array,
+	Gpu_Texture_Kind_Cube,
 } Gpu_Texture_Kind;
 
 typedef enum Gpu_Texture_Usage {
@@ -193,11 +196,15 @@ void gpu_flush_slice_to_gpu(Gpu_Slice slice);
 
 void gpu_flush_slice_from_gpu(Gpu_Slice slice);
 
+// Get the minimum alignment for slices bound as `Gpu_Binding_Kind_Uniform_Slice`.
+u64 gpu_get_minimum_uniform_slice_alignment(void);
+
 typedef enum Gpu_Binding_Kind {
 	Gpu_Binding_Kind_Storage_Texture,
 	Gpu_Binding_Kind_Sampled_Texture,
 	Gpu_Binding_Kind_Sampler,
-	Gpu_Binding_Kind_Slice,
+	Gpu_Binding_Kind_Storage_Slice,
+	Gpu_Binding_Kind_Uniform_Slice,
 } Gpu_Binding_Kind;
 
 typedef struct Gpu_Binding {
@@ -303,6 +310,7 @@ typedef struct Gpu_Texture_Desc {
 } Gpu_Texture_Desc;
 Gpu_Size_And_Align gpu_size_and_align_for_texture(const Gpu_Texture_Desc* desc);
 Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice);
+Gpu_Texture gpu_new_texture_view(Gpu_Texture texture, const Gpu_Texture_Desc* desc);
 Gpu_Texture gpu_new_texture_from_image(SL_Image* image, Gpu_Slice* inout_staging_allocator, Gpu_Slice* inout_texture_allocator, Gpu_Command_Buffer command_buffer);
 void gpu_destroy_texture(Gpu_Texture texture);
 const Gpu_Texture_Desc* gpu_get_texture_desc(Gpu_Texture texture);
