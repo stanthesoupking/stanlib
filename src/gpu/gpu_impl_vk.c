@@ -912,6 +912,7 @@ sl_inline VkImageType gpu_texture_kind_to_vk_image_type(Gpu_Texture_Kind kind) {
 			return VK_IMAGE_TYPE_1D;
 
 		case Gpu_Texture_Kind_2D:
+		case Gpu_Texture_Kind_2D_Array:
 		case Gpu_Texture_Kind_Cube:
 			return VK_IMAGE_TYPE_2D;
 
@@ -1112,41 +1113,6 @@ Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice) {
 	}
 
 	return texture;
-}
-
-Gpu_Texture gpu_new_texture_view(Gpu_Texture texture, const Gpu_Texture_Desc* desc) {
-	Gpu_Texture_Data* texture_data = gpu_texture_pool_resolve(&gpu.texture_pool, texture);
-
-	Gpu_Texture texture_view = gpu_texture_pool_acquire(&gpu.texture_pool);
-	Gpu_Texture_Data* texture_view_data = gpu_texture_pool_resolve(&gpu.texture_pool, texture_view);
-	texture_view_data->layout = Gpu_Texture_Layout_Undefined;
-	texture_view_data->desc = *desc;
-	texture_view_data->image = texture_data->image;
-	texture_view_data->owned_image = false;
-
-	VkImageViewCreateInfo view_create_info = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-		.image = texture_data->image,
-		.format = gpu_format_to_vk_format(desc->format),
-		.viewType = gpu_texture_kind_to_vk_image_view_type(desc->kind),
-		.components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
-		.components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
-		.components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
-		.components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
-		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.subresourceRange.baseMipLevel = 0,
-		.subresourceRange.levelCount = desc->mip_levels,
-		.subresourceRange.baseArrayLayer = 0,
-		.subresourceRange.layerCount = desc->array_layers,
-	};
-
-	VkResult create_view_result = vkCreateImageView(gpu.device, &view_create_info, NULL, &texture_view_data->image_view);
-	if (create_view_result != VK_SUCCESS) {
-		gpu_texture_pool_release(&gpu.texture_pool, texture_view);
-		return SL_HANDLE_NULL;
-	}
-
-	return texture_view;
 }
 
 const Gpu_Texture_Desc* gpu_get_texture_desc(Gpu_Texture texture) {
@@ -2315,8 +2281,8 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 					.srcSubresource = {
 						.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
 						.mipLevel       = copy->src_mip_level,
-						.baseArrayLayer = copy->src_array_layer,
-						.layerCount     = 1,
+						.baseArrayLayer = copy->src_array_layers.start,
+						.layerCount     = copy->src_array_layers.end - copy->src_array_layers.start,
 					},
 					.srcOffsets = {
 						{ copy->src_start.x, copy->src_start.y, copy->src_start.z },
@@ -2325,8 +2291,8 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 					.dstSubresource = {
 						.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
 						.mipLevel       = copy->dst_mip_level,
-						.baseArrayLayer = copy->dst_array_layer,
-						.layerCount     = 1,
+						.baseArrayLayer = copy->dst_array_layers.start,
+						.layerCount     = copy->dst_array_layers.end - copy->dst_array_layers.start,
 					},
 					.dstOffsets = {
 					  { copy->dst_start.x, copy->dst_start.y, copy->dst_start.z },
