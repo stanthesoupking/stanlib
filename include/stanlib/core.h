@@ -2115,6 +2115,15 @@ sl_inline vec3_f32 rotate_y_vec3_f32(vec3_f32 v, f32 a) {
 		.z = v.x * sin_a + v.z * cos_a,
 	};
 }
+sl_inline vec3_f32 rotate_z_vec3_f32(vec3_f32 v, f32 a) {
+    f32 cos_a = cosf(a);
+    f32 sin_a = sinf(a);
+    return (vec3_f32) {
+        .x = v.x * cos_a - v.y * sin_a,
+        .y = v.x * sin_a + v.y * cos_a,
+        .z = v.z,
+    };
+}
 
 sl_inline f32 len_vec2_f32(vec2_f32 v) {
 	return sqrtf((v.x * v.x) + (v.y * v.y));
@@ -2188,10 +2197,10 @@ sl_inline vec3_f32 step_vec3_f32(vec3_f32 edge, vec3_f32 x) {
 
 sl_inline f32 extract_y_rotation_mat4x4_f32(mat4x4_f32 m) {
 	vec3_f32 forward = xyz_vec4_f32(m.z);
-	
+
 	forward.y = 0.0f;
 	forward = normalize_vec3_f32(forward);
-	
+
 	const f32 yaw = atan2f(forward.x, forward.z);
 	return yaw;
 }
@@ -2792,10 +2801,10 @@ typedef struct SL_Arena_Allocator {
 
 static void* sl_arena_allocator_new_fn(void* ctx, u64 size, u64 alignment) {
 	SL_Arena_Allocator* arena = ctx;
-	
+
 	u8* aligned_offset = (u8*)sl_round_up_u64((u64)arena->next_position, alignment);
 	sl_assert((aligned_offset + size) < (arena->buffer + arena->size), "Arena capacity exceeded.");
-	
+
 	arena->next_position = aligned_offset + size;
 
 	return aligned_offset;
@@ -3538,7 +3547,7 @@ typedef struct SL_Solve_Desc {
 	u32 parameter_count;
 	u32 residual_count;
 	u32 iterations;
-	
+
 	void* ctx;
 	SL_Solve_Compute_Residuals_Fn compute_residuals_fn;
 } SL_Solve_Desc;
@@ -3547,14 +3556,14 @@ sl_inline void _sl_solve_compute_jacobian(const SL_Solve_Desc* desc, f32* out_j)
 	f32* base_r = sl_alloca(sizeof(f32) * desc->residual_count);
 	f32* perturbed_r = sl_alloca(sizeof(f32) * desc->residual_count);
 	f32* perturbed_parameters = sl_alloca(sizeof(f32) * desc->parameter_count);
-	
+
 	desc->compute_residuals_fn(desc->ctx, desc->parameter_count, desc->residual_count, desc->parameters, base_r);
 	for (u32 param_idx = 0; param_idx < desc->parameter_count; param_idx++) {
 		sl_memcpy(perturbed_parameters, desc->parameters, sizeof(f32) * desc->parameter_count);
 		perturbed_parameters[param_idx] += desc->parameter_epsilon[param_idx];
-		
+
 		desc->compute_residuals_fn(desc->ctx, desc->parameter_count, desc->residual_count, perturbed_parameters, perturbed_r);
-		
+
 		for (u32 residual_idx = 0; residual_idx < desc->residual_count; residual_idx++) {
 			out_j[(residual_idx * desc->parameter_count) + param_idx] = (perturbed_r[residual_idx] - base_r[residual_idx]) / desc->parameter_epsilon[param_idx];
 		}
@@ -3569,7 +3578,7 @@ sl_inline void _sl_solve_build_normal_equations(const SL_Solve_Desc* desc, const
 			out_a[(i * desc->parameter_count) + j] = 0.0f;
 		}
 	}
-	
+
 	for (u32 residual_idx = 0; residual_idx < desc->residual_count; residual_idx++) {
 		for (u32 i = 0; i < desc->parameter_count; i++) {
 			out_b[i] += jacobian[(residual_idx * desc->parameter_count) + i] * r[residual_idx];
@@ -3578,11 +3587,11 @@ sl_inline void _sl_solve_build_normal_equations(const SL_Solve_Desc* desc, const
 			}
 		}
 	}
-	
+
 	for (u32 i = 0; i < desc->parameter_count; i++) {
 		out_b[i] = -out_b[i];
 	}
-	
+
 	// Dampening
 	for (u32 i = 0; i < desc->parameter_count; i++) {
 		out_a[i * desc->parameter_count + i] += 1e-3f;
@@ -3595,21 +3604,21 @@ sl_inline bool _sl_solve_linear_system(u32 n, f32* a, f32* b, f32* out_delta) {
 		// Find pivot
 		u32 pivot = col;
 		f32 max_abs = fabsf(a[col * n + col]);
-		
+
 		for (u32 row = col + 1; row < n; row++) {
 			f32 v = fabsf(a[row * n + col]);
-			
+
 			if (v > max_abs) {
 				max_abs = v;
 				pivot = row;
 			}
 		}
-		
+
 		// Matrix is singular
 		if (max_abs < 1e-8f) {
 			return false;
 		}
-		
+
 		// Swap rows
 		if (pivot != col) {
 			for (u32 j = col; j < n; j++) {
@@ -3617,55 +3626,55 @@ sl_inline bool _sl_solve_linear_system(u32 n, f32* a, f32* b, f32* out_delta) {
 				a[col * n + j] = a[pivot * n + j];
 				a[pivot * n + j] = tmp;
 			}
-			
+
 			f32 tmp = b[col];
 			b[col] = b[pivot];
 			b[pivot] = tmp;
 		}
-		
+
 		// Eliminate below pivot
 		for (u32 row = col + 1; row < n; row++) {
 			f32 factor = a[row * n + col] / a[col * n + col];
-			
+
 			a[row * n + col] = 0.0f;
-			
+
 			for (u32 j = col + 1; j < n; j++) {
 				a[row * n + j] -= factor * a[col * n + j];
 			}
-			
+
 			b[row] -= factor * b[col];
 		}
 	}
-	
+
 	// Back substitution
 	for (s32 row = n - 1; row >= 0; row--) {
 		f32 sum = b[row];
 		for (u32 j = row + 1; j < n; j++) {
 			sum -= a[row * n + j] * out_delta[j];
 		}
-		
+
 		out_delta[row] = sum / a[row * n + row];
 	}
-	
+
 	return true;
 }
 
 sl_inline void sl_solve(const SL_Solve_Desc* desc) {
 	// Residuals
 	f32* r = sl_alloca(sizeof(f32) * desc->residual_count);
-	
+
 	// Jacobian
 	f32* j = sl_alloca(sizeof(f32) * desc->parameter_count * desc->residual_count);
-	
+
 	f32* norm_a = sl_alloca(sizeof(f32) * desc->parameter_count * desc->parameter_count);
 	f32* norm_b = sl_alloca(sizeof(f32) * desc->parameter_count);
 	f32* deltas = sl_alloca(sizeof(f32) * desc->parameter_count);
-	
+
 	for (u32 iteration = 0; iteration < desc->iterations; iteration++) {
 		desc->compute_residuals_fn(desc->ctx, desc->parameter_count, desc->residual_count, desc->parameters, r);
 		_sl_solve_compute_jacobian(desc, j);
 		_sl_solve_build_normal_equations(desc, j, r, norm_a, norm_b);
-		
+
 		if (_sl_solve_linear_system(desc->parameter_count, norm_a, norm_b, deltas)) {
 			for (u32 i = 0; i < desc->parameter_count; i++) {
 				desc->parameters[i] += deltas[i];
