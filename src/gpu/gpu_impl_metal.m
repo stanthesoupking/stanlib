@@ -218,6 +218,8 @@ sl_inline MTLTextureType gpu_texture_kind_to_mtl_texture_type(Gpu_Texture_Kind k
 		case Gpu_Texture_Kind_1D: return MTLTextureType1D;
 		case Gpu_Texture_Kind_2D: return MTLTextureType2D;
 		case Gpu_Texture_Kind_3D: return MTLTextureType3D;
+		case Gpu_Texture_Kind_Cube: return MTLTextureTypeCube;
+		case Gpu_Texture_Kind_2D_Array: return MTLTextureType2DArray;
 	}
 }
 sl_inline MTLTextureUsage gpu_texture_usage_to_mtl_texture_usage(Gpu_Texture_Usage usage) {
@@ -589,6 +591,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 							[encoder setFragmentSamplerState:sampler_data->sampler atIndex:i];
 						} break;
 
+						case Gpu_Binding_Kind_Uniform_Slice:
 						case Gpu_Binding_Kind_Storage_Slice: {
 							Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, binding.slice.heap);
 							[encoder setVertexBuffer:heap_data->buffer offset:binding.slice.offset atIndex:i];
@@ -629,6 +632,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 							[encoder setSamplerState:sampler_data->sampler atIndex:i];
 						} break;
 
+						case Gpu_Binding_Kind_Uniform_Slice:
 						case Gpu_Binding_Kind_Storage_Slice: {
 							Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, binding.slice.heap);
 							[encoder setBuffer:heap_data->buffer offset:binding.slice.offset atIndex:i];
@@ -653,15 +657,18 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 														copy->src_end.y - copy->src_start.y,
 														copy->src_end.z - copy->src_start.z);
 
-				[encoder_state.blit_encoder copyFromTexture:src_data->texture
-												sourceSlice:copy->src_array_layer
-												sourceLevel:copy->src_mip_level
-											   sourceOrigin:MTLOriginMake(copy->src_start.x, copy->src_start.y, copy->src_start.z)
-												 sourceSize:src_size
-												  toTexture:dst_data->texture
-										   destinationSlice:copy->dst_array_layer
-										   destinationLevel:copy->dst_mip_level
-										  destinationOrigin:MTLOriginMake(copy->dst_start.x, copy->dst_start.y, copy->dst_start.z)];
+				const u32 layer_count = copy->src_array_layers.end - copy->src_array_layers.start;
+				for (u32 layer_offset = 0; layer_offset < layer_count; layer_offset++) {
+					[encoder_state.blit_encoder copyFromTexture:src_data->texture
+													sourceSlice:copy->src_array_layers.start + layer_offset
+													sourceLevel:copy->src_mip_level
+												   sourceOrigin:MTLOriginMake(copy->src_start.x, copy->src_start.y, copy->src_start.z)
+													 sourceSize:src_size
+													  toTexture:dst_data->texture
+											   destinationSlice:copy->dst_array_layers.start + layer_offset
+											   destinationLevel:copy->dst_mip_level
+											  destinationOrigin:MTLOriginMake(copy->dst_start.x, copy->dst_start.y, copy->dst_start.z)];
+				}
 			} break;
 
 			case Gpu_Command_Kind_Copy_Slice: {
@@ -872,7 +879,7 @@ MTLTextureDescriptor* gpu_texture_desc_to_mtl_texture_descriptor(const Gpu_Textu
 	result.height = desc->size.y;
 	result.depth = desc->size.z;
 	result.mipmapLevelCount = desc->mip_levels;
-	result.arrayLength = desc->array_layers;
+	result.arrayLength = (desc->kind == Gpu_Texture_Kind_Cube) ? 1 : desc->array_layers;
 	result.pixelFormat = gpu_format_to_mtl_pixel_format(desc->format);
 	result.textureType = gpu_texture_kind_to_mtl_texture_type(desc->kind);
 	result.usage = gpu_texture_usage_to_mtl_texture_usage(desc->usage);
