@@ -98,6 +98,16 @@ typedef vector<int32_t, 3> vec3_s32;
 typedef vector<int64_t, 3> vec3_s64;
 typedef vector<float, 3> vec3_f32;
 
+typedef vector<uint8_t, 3> vec3_u8_packed;
+typedef vector<uint16_t, 3> vec3_u16_packed;
+typedef vector<uint32_t, 3> vec3_u32_packed;
+typedef vector<uint64_t, 3> vec3_u64_packed;
+typedef vector<int8_t, 3> vec3_s8_packed;
+typedef vector<int16_t, 3> vec3_s16_packed;
+typedef vector<int32_t, 3> vec3_s32_packed;
+typedef vector<int64_t, 3> vec3_s64_packed;
+typedef vector<float, 3> vec3_f32_packed;
+
 typedef vector<uint8_t, 4> vec4_u8;
 typedef vector<uint16_t, 4> vec4_u16;
 typedef vector<uint32_t, 4> vec4_u32;
@@ -147,6 +157,17 @@ typedef short3 vec3_s16;
 typedef int3 vec3_s32;
 typedef long3 vec3_s64;
 typedef float3 vec3_f32;
+
+// vec3 (packed)
+typedef uchar3_packed vec3_u8_packed;
+typedef ushort3_packed vec3_u16_packed;
+typedef uint3_packed vec3_u32_packed;
+typedef ulong3_packed vec3_u64_packed;
+typedef char3_packed vec3_s8_packed;
+typedef short3_packed vec3_s16_packed;
+typedef int3_packed vec3_s32_packed;
+typedef long3_packed vec3_s64_packed;
+typedef float3_packed vec3_f32_packed;
 
 // vec4
 typedef uchar4 vec4_u8;
@@ -238,6 +259,20 @@ sl_inline u64 sl_round_up_u64(u64 x, u64 multiple) {
 	return ((x + (multiple - 1)) / multiple) * multiple;
 }
 
+sl_inline f32 sl_degrees_to_radians_f32(f32 degrees) {
+	return (degrees / 360.0f) * 2.0f * SL_PI;
+}
+sl_inline f64 sl_degrees_to_radians_f64(f64 degrees) {
+	return (degrees / 360.0) * 2.0 * SL_PI;
+}
+
+sl_inline f32 sl_radians_to_degrees_f32(f32 radians) {
+	return (radians / (2.0f * SL_PI)) * 360.0f;
+}
+sl_inline f64 sl_radians_to_degrees_f64(f64 radians) {
+	return (radians / (2.0 * SL_PI)) * 360.0;
+}
+
 sl_inline u32 sl_next_pow2_exp_u32(u32 x) {
 	if (x <= 1) return 0;
 #if defined(_MSC_VER)
@@ -326,6 +361,38 @@ typedef sl_aligned_struct(16) vec3_f32 {
 typedef sl_aligned_struct(32) vec3_f64 {
 	f64 x, y, z, _padding;
 } vec3_f64;
+
+// vec3(packed)
+typedef sl_aligned_struct(4) vec3_u8_packed {
+	u8 x, y, z;
+} vec3_u8_packed;
+typedef sl_aligned_struct(8) vec3_u16_packed {
+	u16 x, y, z;
+} vec3_u16_packed;
+typedef sl_aligned_struct(16) vec3_u32_packed {
+	u32 x, y, z;
+} vec3_u32_packed;
+typedef sl_aligned_struct(32) vec3_u64_packed {
+	u64 x, y, z;
+} vec3_u64_packed;
+typedef sl_aligned_struct(4) vec3_s8_packed {
+	s8 x, y, z;
+} vec3_s8_packed;
+typedef sl_aligned_struct(8) vec3_s16_packed {
+	s16 x, y, z;
+} vec3_s16_packed;
+typedef sl_aligned_struct(16) vec3_s32_packed {
+	s32 x, y, z;
+} vec3_s32_packed;
+typedef sl_aligned_struct(32) vec3_s64_packed {
+	s64 x, y, z;
+} vec3_s64_packed;
+typedef sl_aligned_struct(16) vec3_f32_packed {
+	f32 x, y, z;
+} vec3_f32_packed;
+typedef sl_aligned_struct(32) vec3_f64_packed {
+	f64 x, y, z;
+} vec3_f64_packed;
 
 // vec4
 typedef sl_aligned_struct(4) vec4_u8 {
@@ -2066,6 +2133,13 @@ sl_inline vec3_f32 cvt_vec3_u32_f32(vec3_u32 v) {
 }
 sl_inline vec3_u32 cvt_vec3_f32_u32(vec3_f32 v) {
 	return (vec3_u32) { (u32)v.x, (u32)v.y, (u32)v.z };
+}
+
+sl_inline vec3_f32_packed cvt_vec3_f32_f32_packed(vec3_f32 v) {
+	return (vec3_f32_packed) { v.x, v.y, v.z };
+}
+sl_inline vec3_f32 cvt_vec3_f32_packed_f32(vec3_f32_packed v) {
+	return (vec3_f32) { v.x, v.y, v.z };
 }
 
 sl_inline vec3_f32 xyz_vec4_f32(vec4_f32 v) {
