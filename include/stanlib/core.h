@@ -63,6 +63,7 @@
 #define sl_max_align sl_align_of(max_align_t)
 
 #define SL_PI 3.14159265359f
+#define SL_INV_PI 0.318309886f
 
 #if defined(__SLANG__)
 #define sl_shared_struct(name) struct name
