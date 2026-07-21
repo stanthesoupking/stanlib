@@ -19,8 +19,7 @@ typedef struct SL_Blitter_Resources {
 	Allocator* allocator;
 	Gpu_Render_Pipeline normal_pipeline;
 	Gpu_Render_Pipeline swizzle_rrrr_pipeline;
-	Gpu_Sampler nearest_sampler;
-	Gpu_Sampler linear_sampler;
+	Gpu_Sampler samplers[SL_Blitter_Sampler_Count];
 } SL_Blitter_Resources;
 
 Gpu_Render_Pipeline sl_blitter_new_render_pipeline(bool swizzle_rrrr) {
@@ -93,8 +92,10 @@ SL_Blitter_Resources* sl_blitter_resources_new(Allocator* allocator) {
 		.allocator = allocator,
 		.normal_pipeline = sl_blitter_new_render_pipeline(false),
 		.swizzle_rrrr_pipeline = sl_blitter_new_render_pipeline(true),
-		.linear_sampler = linear_sampler,
-		.nearest_sampler = nearest_sampler,
+		.samplers = {
+			[SL_Blitter_Sampler_Nearest] = nearest_sampler,
+			[SL_Blitter_Sampler_Linear] = linear_sampler,
+		},
 	};
 	return result;
 }
@@ -116,6 +117,7 @@ sl_seq(Textured_Quad_f32, Textured_Quad_f32_Seq, textured_quad_f32_seq);
 
 typedef struct SL_Blitter_Draw {
 	SL_Blitter_Draw_Kind kind;
+	SL_Blitter_Sampler sampler;
 	Gpu_Texture texture;
 	Range_u32 range;
 } SL_Blitter_Draw;
@@ -154,7 +156,7 @@ void sl_blitter_begin(SL_Blitter** blitter_ptr, const SL_Blitter_Desc* desc) {
 		.draws = sl_blitter_draw_seq_new(desc->allocator, 256),
 	};
 }
-void sl_blitter_draw_textured_quads_raw(SL_Blitter* blitter, Gpu_Texture texture, const Textured_Quad_f32* quads, u32 quad_count, SL_Blitter_Draw_Kind kind) {
+void sl_blitter_draw_textured_quads_raw(SL_Blitter* blitter, Gpu_Texture texture, const Textured_Quad_f32* quads, u32 quad_count, SL_Blitter_Draw_Kind kind, SL_Blitter_Sampler sampler) {
 	const Range_u32 quad_range = {
 		.start = (u32)textured_quad_f32_seq_get_count(&blitter->quads),
 		.end = (u32)textured_quad_f32_seq_get_count(&blitter->quads) + quad_count,
@@ -173,12 +175,13 @@ void sl_blitter_draw_textured_quads_raw(SL_Blitter* blitter, Gpu_Texture texture
 	// adjust or push draw
 	const u32 draw_count = (u32)sl_blitter_draw_seq_get_count(&blitter->draws);
 	SL_Blitter_Draw* last_draw = (draw_count > 0) ? sl_blitter_draw_seq_get_ptr(&blitter->draws, draw_count - 1) : NULL;
-	if (last_draw && sl_handle_equals(last_draw->texture, texture) && (last_draw->kind == kind)) {
+	if (last_draw && sl_handle_equals(last_draw->texture, texture) && (last_draw->kind == kind) && (last_draw->sampler == sampler)) {
 		last_draw->range.end = quad_range.end;
 	} else {
 		sl_blitter_draw_seq_push(&blitter->draws, (SL_Blitter_Draw) {
 			.kind = kind,
 			.texture = texture,
+			.sampler = sampler,
 			.range = quad_range,
 		});
 	}
@@ -191,10 +194,10 @@ void sl_blitter_draw_text(SL_Blitter* blitter, SL_Font* font, Gpu_Texture textur
 	allocator_new(blitter->allocator, quads, quad_count);
 	sl_font_generate_geometry_for_string(font, texture, string, position, color, quads, NULL);
 
-	sl_blitter_draw_textured_quads_raw(blitter, texture, quads, quad_count, SL_Blitter_Draw_Kind_Normal);
+	sl_blitter_draw_textured_quads_raw(blitter, texture, quads, quad_count, SL_Blitter_Draw_Kind_Normal, SL_Blitter_Sampler_Nearest);
 	allocator_free(blitter->allocator, quads, quad_count);
 }
-void sl_blitter_draw_texture(SL_Blitter* blitter, Gpu_Texture texture, vec2_f32 position, vec4_f32 color) {
+void sl_blitter_draw_texture(SL_Blitter* blitter, Gpu_Texture texture, vec2_f32 position, vec4_f32 color, SL_Blitter_Sampler sampler) {
 	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
 
 	const vec2_f32 p_start = position;
@@ -221,28 +224,12 @@ void sl_blitter_draw_texture(SL_Blitter* blitter, Gpu_Texture texture, vec2_f32 
 		},
 	};
 
-	sl_blitter_draw_textured_quads(blitter, texture, &quad, 1);
+	sl_blitter_draw_textured_quads(blitter, texture, &quad, 1, sampler);
 }
 
-void sl_blitter_draw_textured_quads(SL_Blitter* blitter, Gpu_Texture texture, const Textured_Quad_f32* quads, u32 quad_count) {
-	sl_blitter_draw_textured_quads_raw(blitter, texture, quads, quad_count, SL_Blitter_Draw_Kind_Normal);
+void sl_blitter_draw_textured_quads(SL_Blitter* blitter, Gpu_Texture texture, const Textured_Quad_f32* quads, u32 quad_count, SL_Blitter_Sampler sampler) {
+	sl_blitter_draw_textured_quads_raw(blitter, texture, quads, quad_count, SL_Blitter_Draw_Kind_Normal, sampler);
 }
-
-//void sl_blitter_execute_command(SL_Blitter* blitter, SL_Blitter_Command command) {
-//	switch (command.kind) {
-//		case SL_Blitter_Command_Kind_Draw_Text: {
-//			sl_blitter_draw_text(blitter, command.draw_text.font, command.draw_text.string, command.draw_text.position, command.draw_text.color);
-//		} break;
-//
-//		case SL_Blitter_Command_Kind_Draw_Texture: {
-//			sl_blitter_draw_texture(blitter, command.draw_texture.texture, command.draw_texture.position, command.draw_texture.color);
-//		} break;
-//
-//		case SL_Blitter_Command_Kind_Draw_Textured_Quads: {
-//			sl_blitter_draw_textured_quads(blitter, command.draw_textured_quads.texture, command.draw_textured_quads.quads, command.draw_textured_quads.quad_count);
-//		} break;
-//	}
-//}
 
 void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
 	SL_Blitter* blitter = *blitter_ptr;
@@ -286,7 +273,7 @@ void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
 			},
 			{
 				.kind = Gpu_Binding_Kind_Sampler,
-				.texture = blitter->resources->nearest_sampler,
+				.texture = blitter->resources->samplers[draw.sampler],
 				.index = 2,
 			},
 		};

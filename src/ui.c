@@ -382,7 +382,7 @@ void ui_draw_image(UI* ui, SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 re
 	const vec2_f32 texture_size = { (f32)texture_desc->size.x, (f32)texture_desc->size.y };
 
 	*quad = textured_quad_for_sub_region_f32(rect, div_rect_vec_f32(atlas_rect, texture_size), color);
-	sl_blitter_draw_textured_quads(blitter, texture, quad, 1);
+	sl_blitter_draw_textured_quads(blitter, texture, quad, 1, SL_Blitter_Sampler_Nearest);
 }
 
 void ui_pop(UI* ui) {
@@ -518,7 +518,7 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Gpu_Texture texture, Rect_f
 		quads[next_quad++] = textured_quad_for_sub_region_f32(patch_rect, div_rect_vec_f32(patch_uv_rect, texture_size), tint);
 	}
 
-	sl_blitter_draw_textured_quads(blitter, texture, quads, next_quad);
+	sl_blitter_draw_textured_quads(blitter, texture, quads, next_quad, SL_Blitter_Sampler_Nearest);
 }
 
 // MARK: Rect
