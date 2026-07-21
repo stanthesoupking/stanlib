@@ -948,6 +948,8 @@ UI_Extent ui_hstack_get_extent(UI* ui, UI_Element* self) {
 				children_extent.max_height = sl_max(children_extent.max_height, child_extent.max_height);
 			}
 		}
+
+		children_extent.min_height += hstack->spacing * (f32)(child_count - 1);
 		children_extent.max_width += hstack->spacing * (f32)(child_count - 1);
 	}
 
