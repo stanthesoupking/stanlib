@@ -849,7 +849,7 @@ const static UI_Gesture_VTable ui_tap_gesture_vtable = {
 
 void ui_tap_gesture(UI* ui, UI_ID id, const UI_Tap_Gesture_Desc* desc, UI_Element* element) {
 	UI_Gesture* gesture = ui_gesture_new(ui, id, &ui_tap_gesture_vtable, element);
-	
+
 	if (gesture->ctx == NULL) {
 		// Allocate state
 		UI_Tap_Gesture_State* state;
@@ -1100,6 +1100,7 @@ UI_Extent ui_vstack_get_extent(UI* ui, UI_Element* self) {
 				children_extent.max_width = sl_max(children_extent.max_width, child_extent.max_width);
 			}
 		}
+		children_extent.min_height += vstack->spacing * (f32)(child_count - 1);
 		children_extent.max_height += vstack->spacing * (f32)(child_count - 1);
 	}
 
@@ -1676,7 +1677,7 @@ Rect_f32 ui_slider_get_track_rect(UI_Element* self) {
 	const UI_Slider_Style* style = &slider->style;
 	const Rect_f32 rect = self->rect;
 	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
-	const vec2_f32 needle_image_size = cvt_vec2_u32_f32(rect_size_u32(style->needle_image));
+	const vec2_f32 needle_image_size = cvt_vec2_u32_f32(rect_size_u32(style->needle_texture_rect));
 	const f32 track_lr_padding = ceil(needle_image_size.x * 0.5);
 	const vec2_f32 track_rect_start = {
 		rect.start.x + track_lr_padding,
@@ -1694,7 +1695,7 @@ UI_Extent ui_slider_get_extent(UI* ui, UI_Element* self) {
 	UI_Slider* slider = self->data;
 
 	const UI_Slider_Style* style = &slider->style;
-	const vec2_f32 needle_image_size = cvt_vec2_u32_f32(rect_size_u32(style->needle_image));
+	const vec2_f32 needle_image_size = mul_vec2_f32(cvt_vec2_u32_f32(rect_size_u32(style->needle_texture_rect)), splat_vec2_f32(style->needle_scale));
 
 	const UI_Extent slider_extent = {
 		.min_width = needle_image_size.x,
@@ -1717,7 +1718,7 @@ void ui_slider_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 
 	const Rect_f32 rect = self->rect;
 	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
-	const vec2_f32 needle_image_size = cvt_vec2_u32_f32(rect_size_u32(style->needle_image));
+	const vec2_f32 needle_image_size = mul_vec2_f32(cvt_vec2_u32_f32(rect_size_u32(style->needle_texture_rect)), splat_vec2_f32(style->needle_scale));
 
 	// needle
 	const f32 progress = saturate_f32((*slider->value - slider->range.start) / (slider->range.end - slider->range.start));
@@ -1729,37 +1730,8 @@ void ui_slider_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 		.start = needle_offset,
 		.end = add_vec2_f32(needle_image_size, needle_offset),
 	};
-	ui_draw_image(ui, blitter, style->texture, needle_rect, cvt_rect_u32_f32(style->needle_image), style->needle_color);
+	ui_draw_image(ui, blitter, style->texture, needle_rect, cvt_rect_u32_f32(style->needle_texture_rect), style->needle_color);
 }
-//void ui_slider_handle_events(UI* ui, UI_Element* self) {
-//	UI_Slider* slider = self->data;
-//
-//	const bool mouse_over = !ui->mouse_obscured && rect_contains_f32(self->rect, ui->mouse_position);
-//	if (mouse_over) {
-//		ui->hot_item = slider->id;
-//		ui->mouse_obscured = true;
-//	}
-//
-//	if (ui_id_is_null(ui->active_item) && (ui->mouse_button_down || ui->mouse_button_pressed) && mouse_over) {
-//		ui->active_item = slider->id;
-//	}
-//
-//	const bool change_value = ui_id_equals(ui->active_item, slider->id) && ui->mouse_button_down;
-//	if (change_value) {
-//		ui->mouse_button_pressed = false;
-//
-//		const Rect_f32 track_rect = ui_slider_get_track_rect(self);
-//
-//		const f32 mouse_progress = saturate_f32((ui->mouse_position.x - track_rect.start.x) / (track_rect.end.x - track_rect.start.x));
-//		*slider->value = lerp_f32(slider->range.start, slider->range.end, mouse_progress);
-//
-//		ui_trigger_callback(slider->on_change);
-//	}
-//
-//	if (ui_id_equals(ui->active_item, slider->id) && !ui->mouse_button_down) {
-//		ui->active_item = UI_ID_NULL;
-//	}
-//}
 const static UI_Element_VTable ui_slider_vtable = {
 	.get_extent = ui_slider_get_extent,
 	.render = ui_slider_render,

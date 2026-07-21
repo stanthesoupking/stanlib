@@ -63,8 +63,11 @@ typedef struct UI_Button_Style {
 
 typedef struct UI_Slider_Style {
 	Gpu_Texture texture;
-	Rect_u32 needle_image;
+
+	Rect_u32 needle_texture_rect;
 	vec4_f32 needle_color;
+	u32 needle_scale;
+
 	vec4_f32 track_color;
 	f32 track_height;
 } UI_Slider_Style;
@@ -183,7 +186,7 @@ typedef struct UI_Tap_Gesture_Callback {
 typedef struct UI_Tap_Gesture_Desc {
 	// Default reccommended value is UI_TAP_GESTURE_MAXIMUM_MOVEMENT_DEFAULT.
 	f32 maximum_movement;
-	
+
 	UI_Tap_Gesture_Callback callback;
 } UI_Tap_Gesture_Desc;
 
