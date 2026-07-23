@@ -2,7 +2,7 @@
 #include <string.h>
 
 #define GPU_LOGGING 0
-#define GPU_VALIDATION 1
+#define GPU_VALIDATION 0
 
 #if GPU_LOGGING
 	#define gpu_log(fmt, ...) \

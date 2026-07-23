@@ -298,6 +298,12 @@ sl_inline u64 sl_next_pow2_exp_u64(u64 x) {
 sl_inline u64 sl_popcount_u64(u64 x) {
 	return (u64)__builtin_popcountll(x);
 }
+sl_inline u64 sl_ctz_u64(u64 x) {
+	return (x > 0) ? (u64)__builtin_ctzll(x) : 64ULL;
+}
+sl_inline u64 sl_clz_u64(u64 x) {
+	return (x > 0) ? (u64)__builtin_clzll(x) : 64ULL;
+}
 
 // vec2
 typedef sl_aligned_struct(2) vec2_u8 {
