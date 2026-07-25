@@ -2804,7 +2804,9 @@ sl_inline void sl_memset(void* dst, u8 value, u64 size) {
 		if (s->element_count == 0) {\
 			return false;\
 		}\
-		*out_e = *sl_concat(function_prefix, _get_ptr)(s, s->element_count - 1);\
+		if (out_e != NULL) {\
+			*out_e = *sl_concat(function_prefix, _get_ptr)(s, s->element_count - 1);\
+		}\
 		--s->element_count;\
 		return true;\
 	}\

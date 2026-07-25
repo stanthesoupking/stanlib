@@ -15,6 +15,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(STANLIB_SOURCES
     "src/blitter/shaders.c"
     "src/blitter/blitter.c"
+    "src/ds.c"
     "src/gpu/gpu_impl.c"
     "src/text.c"
     "src/ui.c"
