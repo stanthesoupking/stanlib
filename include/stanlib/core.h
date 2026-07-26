@@ -3766,4 +3766,12 @@ sl_inline void sl_solve(const SL_Solve_Desc* desc) {
 	}
 }
 
+// MARK: String
+
+typedef struct SL_String {
+	Allocator* allocator;
+	Mutable_Buffer buffer;
+	u64 length;
+} SL_String;
+
 #endif
