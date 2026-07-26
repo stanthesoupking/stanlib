@@ -738,7 +738,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 	for (u64 present_idx = 0; present_idx < present_count; present_idx++) {
 		Gpu_Swapchain_Present* present = gpu_swapchain_present_seq_get_ptr(&cb_data->swapchain_presents, present_idx);
 		id<CAMetalDrawable> drawable = (__bridge_transfer id<CAMetalDrawable>)present->drawable;
-		[drawable present];
+		[mtl_cb presentDrawable:drawable];
 	}
 	gpu_swapchain_present_seq_clear(&cb_data->swapchain_presents);
 
@@ -773,17 +773,18 @@ Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type) {
 	MTLResourceOptions resource_options;
 	switch (memory_type) {
 		case Gpu_Memory_Type_Device_Local: {
-			resource_options = MTLResourceStorageModePrivate;
+			resource_options = MTLResourceStorageModePrivate | MTLResourceHazardTrackingModeUntracked;
 		} break;
 
 		case Gpu_Memory_Type_Host_Visible: {
-			resource_options = MTLResourceStorageModeShared;
+			resource_options = MTLResourceStorageModeShared | MTLResourceHazardTrackingModeUntracked;
 		} break;
 	}
-
+	
+	MTLSizeAndAlign buffer_size_and_align = [gpu.device heapBufferSizeAndAlignWithLength:bytes options:resource_options];
+	
 	MTLHeapDescriptor* descriptor = [MTLHeapDescriptor new];
-	descriptor.size = bytes;
-	descriptor.hazardTrackingMode = MTLHazardTrackingModeUntracked;
+	descriptor.size = buffer_size_and_align.size;
 	descriptor.type = MTLHeapTypePlacement;
 	descriptor.resourceOptions = resource_options;
 
