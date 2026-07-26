@@ -140,6 +140,7 @@ typedef struct UI_Render_Callback {
 
 typedef struct UI_Touch UI_Touch;
 
+Input_Touch_Kind ui_touch_get_kind(UI_Touch* touch);
 vec2_f32 ui_touch_get_position(UI_Touch* touch);
 bool ui_touch_equals(UI_Touch* a, UI_Touch* b);
 
@@ -172,6 +173,7 @@ typedef struct UI_Pan_Gesture_Callback {
 } UI_Pan_Gesture_Callback;
 
 typedef struct UI_Pan_Gesture_Desc {
+	Input_Touch_Kind_Mask touch_mask;
 	u32 minimum_touches;
 	u32 maximum_touches;
 	UI_Pan_Gesture_Callback callback;

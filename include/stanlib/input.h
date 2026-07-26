@@ -23,6 +23,7 @@ typedef struct Input_Touch_ID {
 
 typedef struct Input_Touch_Event {
 	Input_Touch_ID id;
+	Input_Touch_Kind kind;
 	vec2_f32 position;
 	f64 timestamp;
 } Input_Touch_Event;

@@ -153,7 +153,7 @@ typedef enum UI_Touch_State : u8 {
 
 typedef struct UI_Touch {
 	Input_Touch_ID id;
-
+	
 	UI_Touch_State state;
 
 	vec2_f32 position;
@@ -180,6 +180,10 @@ bool input_touch_id_equals(Input_Touch_ID a, Input_Touch_ID b) {
 sl_seq(UI_Touch, UI_Touch_Seq, ui_touch_seq);
 sl_seq(UI_Touch*, UI_Touch_Ptr_Seq, ui_touch_ptr_seq);
 sl_hashmap(Input_Touch_ID, UI_Touch*, UI_Touch_Map, ui_touch_map, input_touch_id_hash, input_touch_id_equals);
+
+Input_Touch_Kind ui_touch_get_kind(UI_Touch* touch) {
+	return touch->id.kind;
+}
 
 vec2_f32 ui_touch_get_position(UI_Touch* touch) {
 	return touch->position;
@@ -715,6 +719,11 @@ UI_Pan_Gesture_Frame ui_pan_gesture_resolve_frame(UI_Pan_Gesture_State* pan, UI_
 }
 void ui_pan_gesture_touch_began(UI* ui, void* ctx, UI_Touch* touch) {
 	UI_Pan_Gesture_State* state = ctx;
+	
+	if ((state->desc.touch_mask & (1 << touch->id.kind)) == 0) {
+		return;
+	}
+	
 	if (state->active_touch == NULL) {
 		ui_touch_retain(ui, touch);
 		state->active_touch = touch;
@@ -729,6 +738,7 @@ void ui_pan_gesture_touch_began(UI* ui, void* ctx, UI_Touch* touch) {
 }
 void ui_pan_gesture_touch_changed(UI* ui, void* ctx, UI_Touch* touch) {
 	UI_Pan_Gesture_State* state = ctx;
+	
 	if (state->active_touch == touch) {
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Changed);
 		state->previous_position = touch->position;
@@ -738,6 +748,7 @@ void ui_pan_gesture_touch_changed(UI* ui, void* ctx, UI_Touch* touch) {
 }
 void ui_pan_gesture_touch_ended(UI* ui, void* ctx, UI_Touch* touch) {
 	UI_Pan_Gesture_State* state = ctx;
+	
 	if (state->active_touch == touch) {
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Ended);
 		state->desc.callback.func(state->desc.callback.ctx, &frame);
@@ -748,6 +759,7 @@ void ui_pan_gesture_touch_ended(UI* ui, void* ctx, UI_Touch* touch) {
 }
 void ui_pan_gesture_touch_cancelled(UI* ui, void* ctx, UI_Touch* touch) {
 	UI_Pan_Gesture_State* state = ctx;
+	
 	if (state->active_touch == touch) {
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Cancelled);
 		state->desc.callback.func(state->desc.callback.ctx, &frame);
@@ -1657,6 +1669,7 @@ UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style*
 
 	const UI_ID pan_gesture_id = ui_id_internal(id, 1, 0, true);
 	const UI_Pan_Gesture_Desc pan_desc = {
+		.touch_mask = Input_Touch_Kind_Mask_All,
 		.minimum_touches = 1,
 		.maximum_touches = 1,
 		.callback = {
@@ -1786,6 +1799,7 @@ UI_Element* ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_St
 
 	const UI_ID pan_gesture_id = ui_id_internal(id, 1, 0, true);
 	const UI_Pan_Gesture_Desc pan_desc = {
+		.touch_mask = Input_Touch_Kind_Mask_All,
 		.minimum_touches = 1,
 		.maximum_touches = 1,
 		.callback = {

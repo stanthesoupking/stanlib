@@ -5,8 +5,12 @@
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_keycode.h>
 
+sl_inline void input_apply_sdl_hints(void) {
+	SDL_SetHint(SDL_HINT_PEN_TOUCH_EVENTS, "0");
+	SDL_SetHint(SDL_HINT_PEN_MOUSE_EVENTS, "0");
+}
+
 sl_inline Input_Touch_Event input_touch_event_from_sdl_mouse_motion_event(SDL_Window* window, const SDL_MouseMotionEvent* event) {
-	// TODO: Report position in points
 	const f32 window_scale = SDL_GetWindowDisplayScale(window);
 
 	return (Input_Touch_Event) {
@@ -23,7 +27,6 @@ sl_inline Input_Touch_Event input_touch_event_from_sdl_mouse_motion_event(SDL_Wi
 }
 
 sl_inline Input_Touch_Event input_touch_event_from_sdl_mouse_button_event(SDL_Window* window, const SDL_MouseButtonEvent* event) {
-	// TODO: Report position in points
 	const f32 window_scale = SDL_GetWindowDisplayScale(window);
 
 	return (Input_Touch_Event) {
@@ -39,11 +42,26 @@ sl_inline Input_Touch_Event input_touch_event_from_sdl_mouse_button_event(SDL_Wi
 	};
 }
 
+sl_inline Input_Touch_Event input_touch_event_from_sdl_pen_event(SDL_Window* window, const SDL_PenTouchEvent* event) {
+	const f32 window_scale = SDL_GetWindowDisplayScale(window);
+
+	return (Input_Touch_Event) {
+		.id = {
+			.kind = Input_Touch_Kind_Pencil,
+			.external = 0,
+		},
+		.position = {
+			.x = event->x * window_scale,
+			.y = event->y * window_scale,
+		},
+		.timestamp = event->timestamp / 1000000000.0,
+	};
+}
+
 sl_inline Input_Touch_Event input_touch_event_from_sdl_touch_event(SDL_Window* window, const SDL_TouchFingerEvent* event) {
 	int window_w, window_h;
 	SDL_GetWindowSize(window, &window_w, &window_h);
 
-	// TODO: Report position in points
 	const f32 window_scale = SDL_GetWindowDisplayScale(window);
 
 	return (Input_Touch_Event) {
@@ -205,6 +223,30 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Cancelled,
 				.touch = input_touch_event_from_sdl_touch_event(window, &event->tfinger),
+			};
+			return true;
+		} break;
+			
+		case SDL_EVENT_PEN_DOWN: {
+			*out_event = (Input_Event) {
+				.kind = Input_Event_Kind_Touch_Began,
+				.touch = input_touch_event_from_sdl_pen_event(window, &event->ptouch),
+			};
+			return true;
+		} break;
+			
+		case SDL_EVENT_PEN_MOTION: {
+			*out_event = (Input_Event) {
+				.kind = Input_Event_Kind_Touch_Changed,
+				.touch = input_touch_event_from_sdl_pen_event(window, &event->ptouch),
+			};
+			return true;
+		} break;
+			
+		case SDL_EVENT_PEN_UP: {
+			*out_event = (Input_Event) {
+				.kind = Input_Event_Kind_Touch_Ended,
+				.touch = input_touch_event_from_sdl_pen_event(window, &event->ptouch),
 			};
 			return true;
 		} break;
