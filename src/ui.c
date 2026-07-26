@@ -280,6 +280,10 @@ void ui_destroy(UI* ui) {
 	allocator_free(allocator, ui, 1);
 }
 
+Allocator* ui_get_allocator(UI* ui) {
+	return ui->allocator;
+}
+
 // MARK: Gesture
 
 UI_Gesture* ui_persistent_state_handle_resolve_gesture(UI_Persistent_State_Handle handle) {
@@ -1853,11 +1857,18 @@ UI_Element* ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, cons
 
 typedef struct UI_Custom {
 	UI_Extent extent;
+	UI_Layout_Callback on_layout;
 	UI_Render_Callback on_render;
 } UI_Custom;
 UI_Extent ui_custom_get_extent(UI* ui, UI_Element* self) {
 	UI_Custom* custom = self->data;
 	return custom->extent;
+}
+void ui_custom_layout(UI* ui, UI_Element* self) {
+	UI_Custom* custom = self->data;
+	if (custom->on_layout.layout != NULL) {
+		custom->on_layout.layout(custom->on_layout.ctx, self->rect);
+	}
 }
 void ui_custom_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	UI_Custom* custom = self->data;
@@ -1867,14 +1878,16 @@ void ui_custom_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 }
 const static UI_Element_VTable ui_custom_vtable = {
 	.get_extent = ui_custom_get_extent,
+	.layout = ui_custom_layout,
 	.render = ui_custom_render,
 };
 
-UI_Element* ui_custom(UI* ui, UI_Extent extent, UI_Render_Callback on_render) {
+UI_Element* ui_custom(UI* ui, UI_Extent extent, UI_Layout_Callback on_layout, UI_Render_Callback on_render) {
 	UI_Custom* custom;
 	allocator_new(&ui->arena->allocator, custom, 1);
 	*custom = (UI_Custom) {
 		.extent = extent,
+		.on_layout = on_layout,
 		.on_render = on_render,
 	};
 	UI_Element* element = ui_add_leaf(ui);
@@ -2022,4 +2035,20 @@ void ui_render(UI* ui, SL_Blitter* blitter) {
 		UI_Frame* frame = ui_frame_seq_get_ptr(&ui->frames, i);
 		frame->zstack.vtable->render(ui, &frame->zstack, blitter);
 	}
+}
+
+// A mechanism for storing data and being able to retrieve it in the next frame.
+// When data is not accessed in a frame, it will be cleaned up.
+// So in order to retain data, `ui_get_data()` must be called once per frame.
+void* ui_get_data(UI* ui, UI_ID id) {
+	UI_Persistent_State* state = ui_persistent_store_acquire(&ui->persistent_store, id, ui->frame_index);
+	return state->data;
+}
+void ui_set_data(UI* ui, UI_ID id, void* data, void (*destroy)(void* data)) {
+	UI_Persistent_State* state = ui_persistent_store_acquire(&ui->persistent_store, id, ui->frame_index);
+	if (state->destroy) {
+		state->destroy(state->data);
+	}
+	state->data = data;
+	state->destroy = destroy;
 }

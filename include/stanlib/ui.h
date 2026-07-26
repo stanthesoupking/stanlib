@@ -126,6 +126,11 @@ typedef struct UI_Callback {
 } UI_Callback;
 #define UI_CALLBACK_NULL ((UI_Callback) {})
 
+typedef struct UI_Layout_Callback {
+	void* ctx;
+	void (*layout)(void* ctx, Rect_f32 rect);
+} UI_Layout_Callback;
+
 typedef struct UI_Render_Callback {
 	void* ctx;
 	void (*render)(void* ctx, Rect_f32 rect, SL_Blitter* blitter);
@@ -240,6 +245,9 @@ typedef struct UI_Element UI_Element;
 UI* ui_new(Allocator* allocator);
 void ui_destroy(UI* ui);
 
+// The allocator used internally by UI.
+Allocator* ui_get_allocator(UI* ui);
+
 void ui_begin(UI* ui);
 void ui_end(UI* ui, Input_Tracker* input_tracker);
 
@@ -264,7 +272,7 @@ UI_Element* ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_St
 UI_Element* ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label);
 
 // Custom element rendered using a callback.
-UI_Element* ui_custom(UI* ui, UI_Extent extent, UI_Render_Callback on_render);
+UI_Element* ui_custom(UI* ui, UI_Extent extent, UI_Layout_Callback on_layout, UI_Render_Callback on_render);
 
 // Get the rect after layout for the given element.
 //
@@ -272,9 +280,16 @@ UI_Element* ui_custom(UI* ui, UI_Extent extent, UI_Render_Callback on_render);
 // Note #2: When the element is culled, this function returns `false`.
 bool ui_element_get_layout_rect(UI* ui, UI_Element* element, Rect_f32* out_rect);
 
-
 void ui_custom_gesture(UI* ui, UI_ID id, const UI_Gesture_VTable* vtable, void* ctx, UI_Element* element);
 void ui_pan_gesture(UI* ui, UI_ID id, const UI_Pan_Gesture_Desc* desc, UI_Element* element);
 void ui_tap_gesture(UI* ui, UI_ID id, const UI_Tap_Gesture_Desc* desc, UI_Element* element);
 
 void ui_render(UI* ui, SL_Blitter* blitter);
+
+// A mechanism for storing data and being able to retrieve it in the next frame.
+// When data is not accessed in a frame, it will be cleaned up.
+// So in order to retain data, `ui_get_data()` must be called once per frame.
+//
+// The allocator used for `data` must be outlive UI. It is reccommended to either use libc (malloc/free) or UI's allocator via `ui_get_allocator()`.
+void* ui_get_data(UI* ui, UI_ID id);
+void ui_set_data(UI* ui, UI_ID id, void* data, void (*destroy)(void* data));
