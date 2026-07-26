@@ -1469,6 +1469,7 @@ typedef struct UI_Image {
 	UI_Extent extent;
 	Gpu_Texture texture;
 	Rect_u32 texture_rect;
+	u32 texture_scale;
 	vec4_f32 tint;
 } UI_Image;
 
@@ -1479,16 +1480,16 @@ UI_Extent ui_image_get_extent(UI* ui, UI_Element* self) {
 	const vec2_f32 texture_rect_size = cvt_vec2_u32_f32(rect_size_u32(image->texture_rect));
 
 	if (extent.min_width == UI_EXTENT_IMPLICIT) {
-		extent.min_width = texture_rect_size.x;
+		extent.min_width = texture_rect_size.x * image->texture_scale;
 	}
 	if (extent.max_width == UI_EXTENT_IMPLICIT) {
-		extent.max_width = texture_rect_size.x;
+		extent.max_width = texture_rect_size.x * image->texture_scale;
 	}
 	if (extent.min_height == UI_EXTENT_IMPLICIT) {
-		extent.min_height = texture_rect_size.y;
+		extent.min_height = texture_rect_size.y * image->texture_scale;
 	}
 	if (extent.max_height == UI_EXTENT_IMPLICIT) {
-		extent.max_height = texture_rect_size.y;
+		extent.max_height = texture_rect_size.y * image->texture_scale;
 	}
 
 	return extent;
@@ -1502,13 +1503,14 @@ const static UI_Element_VTable ui_image_vtable = {
 	.render = ui_image_render,
 };
 
-UI_Element* ui_image(UI* ui, UI_Extent extent, Gpu_Texture texture, Rect_u32 texture_rect, vec4_f32 tint) {
+UI_Element* ui_image(UI* ui, UI_Extent extent, Gpu_Texture texture, Rect_u32 texture_rect, u32 texture_scale, vec4_f32 tint) {
 	UI_Image* image_el;
 	allocator_new(&ui->arena->allocator, image_el, 1);
 	*image_el = (UI_Image) {
 		.extent = extent,
 		.texture = texture,
 		.texture_rect = texture_rect,
+		.texture_scale = texture_scale,
 		.tint = tint,
 	};
 	UI_Element* element = ui_add_leaf(ui);

@@ -266,7 +266,7 @@ UI_Element* ui_push_zstack(UI* ui, UI_Extent extent, UI_Padding padding);
 void ui_pop(UI* ui);
 
 UI_Element* ui_color(UI* ui, UI_Extent extent, Gpu_Texture texture, vec4_f32 color);
-UI_Element* ui_image(UI* ui, UI_Extent extent, Gpu_Texture texture, Rect_u32 texture_rect, vec4_f32 tint);
+UI_Element* ui_image(UI* ui, UI_Extent extent, Gpu_Texture texture, Rect_u32 texture_rect, u32 texture_scale, vec4_f32 tint);
 UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press);
 UI_Element* ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change);
 UI_Element* ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label);

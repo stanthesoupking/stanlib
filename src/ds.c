@@ -21,7 +21,7 @@ typedef struct DS_Writer {
 } DS_Writer;
 
 bool ds_read_buffer(FILE* file, Mutable_Buffer buffer) {
-	return fread_unlocked(buffer.data, buffer.size, 1, file) > 0;
+	return fread(buffer.data, buffer.size, 1, file) > 0;
 }
 bool ds_read_u64(FILE* file, u64* out_v) {
 	Mutable_Buffer buffer = {

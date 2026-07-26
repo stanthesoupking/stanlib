@@ -79,7 +79,7 @@ bool sl_atlas_packer_finalise(SL_Atlas_Packer* packer, u32 max_width, vec2_u32* 
 		row_end_y = sl_max(row_end_y, row_start_y + gutter + entry_size.y + gutter);
 	}
 	
-	packer->required_size = (vec2_u32) { row_max_x + 1, row_end_y };
+	packer->required_size = (vec2_u32) { max_width, row_end_y };
 	
 	packer->finalised = true;
 	*out_required_size = packer->required_size;

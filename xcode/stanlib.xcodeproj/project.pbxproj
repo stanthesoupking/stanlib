@@ -17,6 +17,7 @@
 				atlas_pack.c,
 				blitter/blitter.c,
 				blitter/shaders.c,
+				ds.c,
 				gpu/gpu_impl.c,
 				image.c,
 				input.c,
