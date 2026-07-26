@@ -17,6 +17,7 @@ set(STANLIB_SOURCES
     "src/blitter/blitter.c"
     "src/ds.c"
     "src/gpu/gpu_impl.c"
+    "src/string.c"
     "src/text.c"
     "src/ui.c"
     "src/input.c"
