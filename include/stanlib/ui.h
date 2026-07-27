@@ -33,6 +33,11 @@ sl_inline UI_Padding ui_padding_add(UI_Padding a, UI_Padding b) {
 	};
 }
 
+typedef enum UI_Horizontal_Alignment {
+	UI_Horizontal_Alignment_Center,
+	UI_Horizontal_Alignment_Left,
+	UI_Horizontal_Alignment_Right
+} UI_Horizontal_Alignment;
 
 typedef enum UI_Button_State {
 	UI_Button_State_Normal,
@@ -58,6 +63,7 @@ typedef struct UI_Button_Style {
 	SL_Font* font;
 	Gpu_Texture texture;
 	UI_Padding text_padding;
+	UI_Horizontal_Alignment text_alignment;
 	UI_Button_State_Style state[UI_BUTTON_STATE_COUNT];
 } UI_Button_Style;
 
@@ -91,12 +97,6 @@ typedef enum UI_Direction {
 	UI_Direction_Horizontal,
 	UI_Direction_Vertical,
 } UI_Direction;
-
-typedef enum UI_Horizontal_Alignment {
-	UI_Horizontal_Alignment_Center,
-	UI_Horizontal_Alignment_Left,
-	UI_Horizontal_Alignment_Right
-} UI_Horizontal_Alignment;
 
 typedef enum UI_Vertical_Alignment {
 	UI_Vertical_Alignment_Center,

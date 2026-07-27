@@ -153,7 +153,7 @@ typedef enum UI_Touch_State : u8 {
 
 typedef struct UI_Touch {
 	Input_Touch_ID id;
-	
+
 	UI_Touch_State state;
 
 	vec2_f32 position;
@@ -719,11 +719,11 @@ UI_Pan_Gesture_Frame ui_pan_gesture_resolve_frame(UI_Pan_Gesture_State* pan, UI_
 }
 void ui_pan_gesture_touch_began(UI* ui, void* ctx, UI_Touch* touch) {
 	UI_Pan_Gesture_State* state = ctx;
-	
+
 	if ((state->desc.touch_mask & (1 << touch->id.kind)) == 0) {
 		return;
 	}
-	
+
 	if (state->active_touch == NULL) {
 		ui_touch_retain(ui, touch);
 		state->active_touch = touch;
@@ -738,7 +738,7 @@ void ui_pan_gesture_touch_began(UI* ui, void* ctx, UI_Touch* touch) {
 }
 void ui_pan_gesture_touch_changed(UI* ui, void* ctx, UI_Touch* touch) {
 	UI_Pan_Gesture_State* state = ctx;
-	
+
 	if (state->active_touch == touch) {
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Changed);
 		state->previous_position = touch->position;
@@ -748,7 +748,7 @@ void ui_pan_gesture_touch_changed(UI* ui, void* ctx, UI_Touch* touch) {
 }
 void ui_pan_gesture_touch_ended(UI* ui, void* ctx, UI_Touch* touch) {
 	UI_Pan_Gesture_State* state = ctx;
-	
+
 	if (state->active_touch == touch) {
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Ended);
 		state->desc.callback.func(state->desc.callback.ctx, &frame);
@@ -759,7 +759,7 @@ void ui_pan_gesture_touch_ended(UI* ui, void* ctx, UI_Touch* touch) {
 }
 void ui_pan_gesture_touch_cancelled(UI* ui, void* ctx, UI_Touch* touch) {
 	UI_Pan_Gesture_State* state = ctx;
-	
+
 	if (state->active_touch == touch) {
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Cancelled);
 		state->desc.callback.func(state->desc.callback.ctx, &frame);
@@ -1571,6 +1571,9 @@ void ui_button_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 	const Rect_f32 rect = self->rect;
 	const vec2_f32 rect_size = rect_size_f32(rect);
 
+	const Rect_f32 padded_rect = ui_padded_rect(self->rect, button->style.text_padding);
+	const vec2_f32 padded_rect_size = rect_size_f32(padded_rect);
+
 	const UI_Button_State button_state = button->persistent_state->state;
 	const UI_Button_State_Style* state_style = &button->style.state[button_state];
 
@@ -1578,10 +1581,29 @@ void ui_button_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
 
 	const bool has_label = (button->label != NULL);
 	if (has_label) {
-		const vec2_f32 text_offset = {
-			.x = roundf(rect.start.x + (rect_size.x * 0.5f) - (button->label_measurements.size.x * 0.5f)),
-			.y = roundf(rect.start.y + (rect_size.y * 0.5f) + button->label_measurements.y_range.end),
-		};
+		vec2_f32 text_offset;
+		switch (button->style.text_alignment) {
+			case UI_Horizontal_Alignment_Left: {
+				text_offset = (vec2_f32) {
+					.x = roundf(padded_rect.start.x),
+					.y = roundf(padded_rect.start.y + (padded_rect_size.y * 0.5f) + button->label_measurements.y_range.end),
+				};
+			} break;
+
+			case UI_Horizontal_Alignment_Center: {
+				text_offset = (vec2_f32) {
+					.x = roundf(padded_rect.start.x + (padded_rect_size.x * 0.5f) - (button->label_measurements.size.x * 0.5f)),
+					.y = roundf(padded_rect.start.y + (padded_rect_size.y * 0.5f) + button->label_measurements.y_range.end),
+				};
+			} break;
+
+			case UI_Horizontal_Alignment_Right: {
+				text_offset = (vec2_f32) {
+					.x = roundf(padded_rect.end.x - button->label_measurements.size.x),
+					.y = roundf(padded_rect.start.y + (padded_rect_size.y * 0.5f) + button->label_measurements.y_range.end),
+				};
+			} break;
+		}
 		sl_blitter_draw_text(blitter, button->style.font, button->style.texture, button->label, add_vec2_f32(text_offset, state_style->label_offset), state_style->label_color);
 	} else if (state_style->has_icon) {
 		const vec2_f32 icon_size = mul_vec2_f32(cvt_vec2_u32_f32(rect_size_u32(state_style->icon_texture_rect)), splat_vec2_f32((f32)state_style->icon_scale));
