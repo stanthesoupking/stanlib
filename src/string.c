@@ -2,29 +2,34 @@
 #include "stanlib/core.h"
 #include <string.h>
 
-#define SL_STRING_INITIAL_CAPACITY 16
+#if SL_PLATFORM_WINDOWS
+#define SL_PATH_SEPARATOR '\\'
+#else
+#define SL_PATH_SEPARATOR '/'
+#endif
 
 typedef struct SL_String {
 	Allocator* allocator;
-
-	char* buffer_data;
-	u64 buffer_capacity;
-
-	u64 length;
-	u64 rc;
+	u32 length;
+	u32 rc;
+	char data[];
 } SL_String;
 
-SL_String* sl_string_new(Allocator* allocator) {
-	SL_String* string;
-	allocator_new(allocator, string, 1);
-	*string = (SL_String) {
-		.allocator = allocator,
-		.buffer_capacity = SL_STRING_INITIAL_CAPACITY,
-		.rc = 1,
+SL_String_View sl_string_view_c(const char* cstr) {
+	return (SL_String_View) {
+		.str = cstr,
+		.length = strlen(cstr),
 	};
-	allocator_new(allocator, string->buffer_data, SL_STRING_INITIAL_CAPACITY);
-	string->buffer_data[0] = 0;
-	return string;
+}
+SL_String_View sl_string_view(const SL_String* str) {
+	return (SL_String_View) {
+		.str = str->data,
+		.length = str->length,
+	};
+}
+
+sl_inline u64 sl_string_allocation_size_for_length(u64 length) {
+	return sizeof(SL_String) + length + 1;
 }
 
 void sl_string_retain(SL_String* string) {
@@ -35,57 +40,100 @@ void sl_string_release(SL_String* string) {
 	string->rc--;
 	if (string->rc == 0) {
 		Allocator* allocator = string->allocator;
-		allocator_free(allocator, string->buffer_data, string->buffer_capacity);
-		allocator_free(allocator, string, 1);
+		allocator->free(allocator->ctx, string, sl_string_allocation_size_for_length(string->length), sl_align_of(SL_String));
 	}
 }
 
-u64 sl_string_get_length(const SL_String* string) {
-	return string->length;
+SL_String* sl_string_new_uninit(Allocator* allocator, u64 length) {
+	SL_String* string = allocator->new(allocator->ctx, sl_string_allocation_size_for_length(length), sl_align_of(SL_String));
+	*string = (SL_String) {
+		.allocator = allocator,
+		.length = length,
+		.rc = 1,
+	};
+	return string;
 }
 
-void sl_string_ensure_capacity(SL_String* string, u64 capacity) {
-	if (string->buffer_capacity < capacity) {
-		allocator_resize(string->allocator, string->buffer_data, string->buffer_capacity, capacity);
+SL_String* sl_string_new(Allocator* allocator, SL_String_View view) {
+	SL_String* string = sl_string_new_uninit(allocator, view.length);
+	sl_memcpy(string->data, view.str, view.length + 1);
+	return string;
+}
+SL_String* sl_string_new_c(Allocator* allocator, const char* cstr) {
+	return sl_string_new(allocator, sl_string_view_c(cstr));
+}
+
+SL_String* sl_string_concat(Allocator* allocator, SL_String_View a, SL_String_View b) {
+	const u64 new_length = a.length + b.length;
+
+	SL_String* result = sl_string_new_uninit(allocator, new_length);
+	sl_memcpy(result->data, a.str, a.length);
+	sl_memcpy(result->data + a.length, b.str, b.length);
+	result->data[new_length] = 0;
+	return result;
+}
+
+SL_String* sl_string_append_path_component(Allocator* allocator, SL_String_View path, SL_String_View component) {
+	const bool has_seperator = (path.str[path.length - 1] == SL_PATH_SEPARATOR);
+	const u64 new_length = path.length + component.length + (has_seperator ? 0 : 1);
+
+	SL_String* result = sl_string_new_uninit(allocator, new_length);
+	char* next_offset = result->data;
+
+	sl_memcpy(next_offset, path.str, path.length);
+	next_offset += path.length;
+
+	if (!has_seperator) {
+		next_offset[0] = SL_PATH_SEPARATOR;
+		next_offset += 1;
 	}
+
+	sl_memcpy(next_offset, component.str, component.length);
+	next_offset += component.length;
+
+	sl_debug_assert(next_offset == (result->data + new_length), "Mismatch between length and offset.");
+
+	next_offset[0] = '\0';
+
+	return result;
 }
 
-SL_String* sl_string_copy(Allocator* allocator, const SL_String* basis) {
-	SL_String* string = sl_string_new(allocator);
-	const u64 basis_length = sl_string_get_length(basis);
-	sl_string_ensure_capacity(string, basis_length + 1);
-	sl_memcpy(string->buffer_data, basis->buffer_data, basis_length);
-	string->buffer_data[basis_length] = 0;
-	string->length = basis_length;
-	return string;
-}
+bool sl_string_equals(SL_String_View a, SL_String_View b) {
+	if (a.length != b.length) {
+		return false;
+	}
 
-SL_String* sl_string_new_from_c(Allocator* allocator, const char* cstring) {
-	const u64 cstring_length = strlen(cstring);
+	for (u32 i = 0; i < a.length; i++) {
+		if (a.str[i] != b.str[i]) {
+			return false;
+		}
+	}
 
-	SL_String* string = sl_string_new(allocator);
-	sl_string_ensure_capacity(string, cstring_length + 1);
-	sl_memcpy(string->buffer_data, cstring, cstring_length);
-	string->buffer_data[cstring_length] = 0;
-	string->length = cstring_length;
-	return string;
+	return true;
 }
-const char* sl_string_get_c(const SL_String* string) {
-	return string->buffer_data;
-}
+bool sl_string_starts_with(SL_String_View s, SL_String_View prefix) {
+	if (s.length < prefix.length) {
+		return false;
+	}
 
-void sl_string_append(SL_String* string, const SL_String* other) {
-	const u64 new_length = string->length + other->length;
-	sl_string_ensure_capacity(string, new_length + 1);
-	sl_memcpy(string->buffer_data + string->length, other->buffer_data, other->length);
-	string->buffer_data[new_length] = 0;
-	string->length = new_length;
+	for (u32 i = 0; i < prefix.length; i++) {
+		if (s.str[i] != prefix.str[i]) {
+			return false;
+		}
+	}
+
+	return true;
 }
-void sl_string_append_c(SL_String* string, const char* other) {
-	const u64 other_length = strlen(other);
-	const u64 new_length = string->length + other_length;
-	sl_string_ensure_capacity(string, new_length + 1);
-	sl_memcpy(string->buffer_data + string->length, other, other_length);
-	string->buffer_data[new_length] = 0;
-	string->length = new_length;
+bool sl_string_ends_with(SL_String_View s, SL_String_View suffix) {
+	if (s.length < suffix.length) {
+		return false;
+	}
+
+	for (u32 i = 0; i < suffix.length; i++) {
+		if (s.str[s.length - suffix.length + i] != suffix.str[i]) {
+			return false;
+		}
+	}
+
+	return true;
 }
