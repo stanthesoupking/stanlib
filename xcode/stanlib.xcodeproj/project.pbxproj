@@ -22,6 +22,7 @@
 				image.c,
 				input.c,
 				ray_intersection.c,
+				string.c,
 				text.c,
 				ui.c,
 				vendor/stb_impl.c,
