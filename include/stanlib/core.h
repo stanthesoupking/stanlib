@@ -10,8 +10,8 @@
 #define SL_PLATFORM_LINUX 1
 #endif
 
-#if SL_PLATFORM_APPLE
-#include <target_conditionals.h>
+#if defined(SL_PLATFORM_APPLE)
+#include <TargetConditionals.h>
 #if TARGET_OS_IOS
 #define SL_PLATFORM_APPLE_IOS 1
 #elif TARGET_OS_TV
