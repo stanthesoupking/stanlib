@@ -22,6 +22,8 @@ SL_String* sl_string_new_c(Allocator* allocator, const char* cstr); // convenien
 void sl_string_retain(SL_String* string);
 void sl_string_release(SL_String* string);
 
+SL_String* sl_string_format(Allocator* allocator, const char* format, ...);
+
 SL_String* sl_string_concat(Allocator* allocator, SL_String_View a, SL_String_View b);
 
 SL_String* sl_string_append_path_component(Allocator* allocator, SL_String_View path, SL_String_View component);

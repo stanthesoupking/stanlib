@@ -1,6 +1,7 @@
 #include "stanlib/string.h"
 #include "stanlib/core.h"
 #include <string.h>
+#include <stdarg.h>
 
 #if SL_PLATFORM_WINDOWS
 #define SL_PATH_SEPARATOR '\\'
@@ -33,10 +34,18 @@ sl_inline u64 sl_string_allocation_size_for_length(u64 length) {
 }
 
 void sl_string_retain(SL_String* string) {
+	if (string == NULL) {
+		return;
+	}
+
 	string->rc++;
 }
 
 void sl_string_release(SL_String* string) {
+	if (string == NULL) {
+		return;
+	}
+
 	string->rc--;
 	if (string->rc == 0) {
 		Allocator* allocator = string->allocator;
@@ -61,6 +70,25 @@ SL_String* sl_string_new(Allocator* allocator, SL_String_View view) {
 }
 SL_String* sl_string_new_c(Allocator* allocator, const char* cstr) {
 	return sl_string_new(allocator, sl_string_view_c(cstr));
+}
+
+SL_String* sl_string_format(Allocator* allocator, const char* format, ...) {
+	va_list args;
+    va_start(args, format);
+    const s32 string_length = vsnprintf(NULL, 0, format, args);
+    va_end(args);
+
+    if (string_length < 0) {
+        return NULL;
+    }
+
+    SL_String* result = sl_string_new_uninit(allocator, (u64)string_length);
+
+    va_start(args, format);
+    vsnprintf(result->data, (size_t)string_length + 1, format, args);
+    va_end(args);
+
+    return result;
 }
 
 SL_String* sl_string_concat(Allocator* allocator, SL_String_View a, SL_String_View b) {

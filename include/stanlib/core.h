@@ -10,6 +10,23 @@
 #define SL_PLATFORM_LINUX 1
 #endif
 
+#if SL_PLATFORM_APPLE
+#include <target_conditionals.h>
+#if TARGET_OS_IOS
+#define SL_PLATFORM_APPLE_IOS 1
+#elif TARGET_OS_TV
+#define SL_PLATFORM_APPLE_TV 1
+#elif TARGET_OS_VISION
+#define SL_PLATFORM_APPLE_VISION 1
+#elif TARGET_OS_WATCH
+#define SL_PLATFORM_APPLE_WATCH 1
+#elif TARGET_OS_MACCATALYST
+#define SL_PLATFORM_APPLE_MAC 1
+#elif TARGET_OS_MAC
+#define SL_PLATFORM_APPLE_MAC 1
+#endif
+#endif
+
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
