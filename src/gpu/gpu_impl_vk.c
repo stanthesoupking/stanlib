@@ -1,3 +1,4 @@
+#include "stanlib/core.h"
 #include "stanlib/gpu.h"
 #include "vulkan/vulkan_core.h"
 #include <vulkan/vulkan.h>
@@ -352,6 +353,7 @@ typedef struct Gpu_Command_Buffer_Data {
 	Gpu_Swapchain_Present_Seq swapchain_presents;
 
 	Gpu_Callback_Seq on_complete_callbacks;
+	SL_Retained_Ref_Seq retained_refs;
 
 	SL_Arena_Allocator* arena;
 	Gpu_Command_Seq commands;
@@ -1703,6 +1705,7 @@ void gpu_init_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 		.command_buffers = gpu_command_buffer_seq_new(gpu.allocator, 1),
 		.swapchain_presents = gpu_swapchain_present_seq_new(gpu.allocator, 1),
 		.on_complete_callbacks = gpu_callback_seq_new(gpu.allocator, 1),
+		.retained_refs = sl_retained_ref_seq_new(gpu.allocator, 1),
 	};
 
 	VkCommandPoolCreateInfo command_pool_create_info = {
@@ -1729,6 +1732,7 @@ void gpu_deinit_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 	gpu_command_buffer_seq_destroy(&command_buffer->command_buffers);
 	gpu_swapchain_present_seq_destroy(&command_buffer->swapchain_presents);
 	gpu_callback_seq_destroy(&command_buffer->on_complete_callbacks);
+	sl_retained_ref_seq_destroy(&command_buffer->retained_refs);
 	sl_arena_allocator_destroy(command_buffer->arena);
 	*command_buffer = (Gpu_Command_Buffer_Data) {0};
 }
@@ -1795,6 +1799,7 @@ bool gpu_new_command_buffer(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* ou
 	gpu_command_seq_clear(&cb_data->commands);
 	gpu_swapchain_present_seq_clear(&cb_data->swapchain_presents);
 	gpu_callback_seq_clear(&cb_data->on_complete_callbacks);
+	sl_retained_ref_seq_clear(&cb_data->retained_refs);
 
 	pool_data->next_command_buffer = (pool_data->next_command_buffer + 1) % pool_data->command_buffer_count;
 
@@ -1810,12 +1815,21 @@ void gpu_on_complete_command_buffer_callback(void* ctx) {
 		const Gpu_Swapchain_Present present_info = gpu_swapchain_present_seq_get(&cb_data->swapchain_presents, present_idx);
 		gpu_release_swapchain_instance(present_info.swapchain_instance);
 	}
+	gpu_swapchain_present_seq_clear(&cb_data->swapchain_presents);
 
 	const u32 callback_count = gpu_callback_seq_get_count(&cb_data->on_complete_callbacks);
 	for (u32 callback_idx = 0; callback_idx < callback_count; callback_idx++) {
 		const Gpu_Callback callback = gpu_callback_seq_get(&cb_data->on_complete_callbacks, callback_idx);
 		callback.fn(callback.ctx);
 	}
+	gpu_callback_seq_clear(&cb_data->on_complete_callbacks);
+
+	const u32 retained_ref_count = sl_retained_ref_seq_get_count(&cb_data->retained_refs);
+	for (u32 retained_ref_idx = 0; retained_ref_idx < retained_ref_count; retained_ref_idx++) {
+		SL_Retained_Ref* ref = sl_retained_ref_seq_get_ptr(&cb_data->retained_refs, retained_ref_idx);
+		sl_retained_ref_deinit(ref);
+	}
+	sl_retained_ref_seq_clear(&cb_data->retained_refs);
 }
 
 VkSemaphore gpu_get_next_command_buffer_semaphore(Gpu_Command_Buffer cb) {
@@ -1986,6 +2000,7 @@ sl_inline void gpu_write_bindings(SL_Arena_Allocator* arena, VkCommandBuffer vk_
 			case Gpu_Binding_Kind_Storage_Slice:
 			case Gpu_Binding_Kind_Uniform_Slice: {
 				Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, binding.slice.heap);
+				gpu_validate(heap_data != NULL, "Failed to resolve heap for slice.");
 
 				VkDescriptorBufferInfo* buffer_info;
 				allocator_new(&arena->allocator, buffer_info, 1);
@@ -2454,6 +2469,12 @@ void gpu_add_on_complete_callback(Gpu_Command_Buffer cb, void* ctx, Gpu_Callback
 		.fn = fn,
 	};
 	gpu_callback_seq_push(&cb_data->on_complete_callbacks, callback);
+}
+
+void gpu_add_retained_ref(Gpu_Command_Buffer cb, SL_Retained_Ref ref) {
+	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
+	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+	sl_retained_ref_seq_push(&cb_data->retained_refs, ref);
 }
 
 void gpu_transition_texture_layouts(Gpu_Command_Buffer cb, const Gpu_Texture* textures, const Gpu_Texture_Layout* layouts, u32 count) {

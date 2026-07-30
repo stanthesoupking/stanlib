@@ -12,7 +12,7 @@
 typedef struct SL_String {
 	Allocator* allocator;
 	u32 length;
-	u32 rc;
+	SL_Ref_Count rc;
 	char data[];
 } SL_String;
 
@@ -38,7 +38,7 @@ void sl_string_retain(SL_String* string) {
 		return;
 	}
 
-	string->rc++;
+	sl_ref_count_retain(&string->rc);
 }
 
 void sl_string_release(SL_String* string) {
@@ -46,8 +46,7 @@ void sl_string_release(SL_String* string) {
 		return;
 	}
 
-	string->rc--;
-	if (string->rc == 0) {
+	if (sl_ref_count_release(&string->rc)) {
 		Allocator* allocator = string->allocator;
 		allocator->free(allocator->ctx, string, sl_string_allocation_size_for_length(string->length), sl_align_of(SL_String));
 	}
@@ -58,8 +57,8 @@ SL_String* sl_string_new_uninit(Allocator* allocator, u64 length) {
 	*string = (SL_String) {
 		.allocator = allocator,
 		.length = length,
-		.rc = 1,
 	};
+	sl_ref_count_init(&string->rc);
 	return string;
 }
 

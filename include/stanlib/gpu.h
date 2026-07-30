@@ -346,6 +346,9 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed);
 
 void gpu_add_on_complete_callback(Gpu_Command_Buffer cb, void* ctx, Gpu_Callback_Fn fn);
 
+// Add a retained reference to a command buffer, to be released when the GPU work is complete.
+void gpu_add_retained_ref(Gpu_Command_Buffer cb, SL_Retained_Ref ref);
+
 void gpu_transition_texture_layouts(Gpu_Command_Buffer cb, const Gpu_Texture* textures, const Gpu_Texture_Layout* layouts, u32 count);
 
 // Shader Blob

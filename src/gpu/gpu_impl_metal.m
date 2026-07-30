@@ -132,6 +132,7 @@ typedef struct Gpu_Command_Buffer_Data {
 	Gpu_Command_Buffer_State state;
 	Gpu_Swapchain_Present_Seq swapchain_presents;
 	Gpu_Callback_Seq on_complete_callbacks;
+	SL_Retained_Ref_Seq retained_refs;
 	Gpu_Texture_Seq cleanup_textures;
 	SL_Fence completion_fence;
 	SL_Arena_Allocator* arena;
@@ -346,6 +347,7 @@ void gpu_init_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 		.swapchain_presents = gpu_swapchain_present_seq_new(gpu.allocator, 1),
 		.cleanup_textures = gpu_texture_seq_new(gpu.allocator, 1),
 		.on_complete_callbacks = gpu_callback_seq_new(gpu.allocator, 1),
+		.retained_refs = sl_retained_ref_seq_new(gpu.allocator, 1),
 		.completion_fence = sl_fence_new(true),
 	};
 }
@@ -355,6 +357,7 @@ void gpu_deinit_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 	gpu_swapchain_present_seq_destroy(&command_buffer->swapchain_presents);
 	gpu_texture_seq_destroy(&command_buffer->cleanup_textures);
 	gpu_callback_seq_destroy(&command_buffer->on_complete_callbacks);
+	sl_retained_ref_seq_destroy(&command_buffer->retained_refs);
 	sl_fence_destroy(&command_buffer->completion_fence);
 	*command_buffer = (Gpu_Command_Buffer_Data) {0};
 }
@@ -432,6 +435,13 @@ void gpu_cleanup_command_buffer(Gpu_Command_Buffer cb) {
 		callback.fn(callback.ctx);
 	}
 	gpu_callback_seq_clear(&cb_data->on_complete_callbacks);
+
+	const u32 retained_ref_count = sl_retained_ref_seq_get_count(&cb_data->retained_refs);
+	for (u32 retained_ref_idx = 0; retained_ref_idx < retained_ref_count; retained_ref_idx++) {
+		SL_Retained_Ref* ref = sl_retained_ref_seq_get_ptr(&cb_data->retained_refs, retained_ref_idx);
+		sl_retained_ref_deinit(ref);
+	}
+	sl_retained_ref_seq_clear(&cb_data->retained_refs);
 
 	sl_fence_signal(&cb_data->completion_fence);
 }
@@ -764,6 +774,12 @@ void gpu_add_on_complete_callback(Gpu_Command_Buffer cb, void* ctx, Gpu_Callback
 	gpu_callback_seq_push(&cb_data->on_complete_callbacks, callback);
 }
 
+void gpu_add_retained_ref(Gpu_Command_Buffer cb, SL_Retained_Ref ref) {
+	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
+	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+	sl_retained_ref_seq_push(&cb_data->retained_refs, ref);
+}
+
 void gpu_transition_texture_layouts(Gpu_Command_Buffer cb, const Gpu_Texture* textures, const Gpu_Texture_Layout* layouts, u32 count) {
 	// Metal doesn't have the concept of texture layouts.
 }
@@ -780,9 +796,9 @@ Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type) {
 			resource_options = MTLResourceStorageModeShared | MTLResourceHazardTrackingModeUntracked;
 		} break;
 	}
-	
+
 	MTLSizeAndAlign buffer_size_and_align = [gpu.device heapBufferSizeAndAlignWithLength:bytes options:resource_options];
-	
+
 	MTLHeapDescriptor* descriptor = [MTLHeapDescriptor new];
 	descriptor.size = buffer_size_and_align.size;
 	descriptor.type = MTLHeapTypePlacement;

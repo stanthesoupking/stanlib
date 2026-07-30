@@ -3783,4 +3783,46 @@ sl_inline void sl_solve(const SL_Solve_Desc* desc) {
 	}
 }
 
+typedef struct SL_Ref_Count {
+	atomic_u32 value;
+} SL_Ref_Count;
+
+typedef void (*SL_Retained_Ref_On_Deinit_Fn)(void* ctx);
+
+typedef struct SL_Retained_Ref {
+	bool released;
+	void* ctx;
+	SL_Retained_Ref_On_Deinit_Fn on_deinit;
+} SL_Retained_Ref;
+sl_seq(SL_Retained_Ref, SL_Retained_Ref_Seq, sl_retained_ref_seq);
+
+sl_inline void sl_ref_count_init(SL_Ref_Count* rc) {
+	atomic_init(&rc->value, 1);
+}
+sl_inline void sl_ref_count_retain(SL_Ref_Count* rc) {
+	const u32 pre = atomic_fetch_add_explicit(&rc->value, 1, memory_order_relaxed);
+	sl_debug_assert(pre > 0, "Can't retain a release ref-count.");
+}
+sl_inline bool sl_ref_count_release(SL_Ref_Count* rc) {
+	const u32 pre = atomic_fetch_sub_explicit(&rc->value, 1, memory_order_acq_rel);
+	sl_debug_assert(pre > 0, "Underflow.");
+	return (pre <= 1);
+}
+
+sl_inline SL_Retained_Ref sl_ref_count_retain_with_ref(SL_Ref_Count* rc, void* ctx, SL_Retained_Ref_On_Deinit_Fn on_deinit) {
+	sl_ref_count_retain(rc);
+	return (SL_Retained_Ref) {
+		.released = false,
+		.ctx = ctx,
+		.on_deinit = on_deinit,
+	};
+}
+sl_inline void sl_retained_ref_deinit(SL_Retained_Ref* ref) {
+	sl_debug_assert(!ref->released, "Attempted to deinit retained reference twice.");
+	ref->on_deinit(ref->ctx);
+	*ref = (SL_Retained_Ref) {
+		.released = true,
+	};
+}
+
 #endif
