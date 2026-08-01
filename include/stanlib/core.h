@@ -77,8 +77,6 @@
 #define sl_align_of(x) alignof(typeof(x))
 #endif
 
-#define sl_max_align sl_align_of(max_align_t)
-
 #define SL_PI 3.14159265359f
 #define SL_INV_PI 0.318309886f
 
@@ -213,6 +211,9 @@ typedef float4x4 mat4x4_f32;
 #include <stdio.h>
 #include <time.h>
 #include <stdatomic.h>
+#include <stddef.h>
+
+#define sl_max_align sl_align_of(max_align_t)
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -2852,6 +2853,8 @@ sl_seq(s64, Seq_s64, seq_s64);
 sl_seq(f32, Seq_f32, seq_f32);
 sl_seq(f64, Seq_f64, seq_f64);
 
+sl_seq(u8*, Seq_u8_Ptr, seq_u8_ptr);
+
 sl_seq(vec2_u8, Seq_Vec2_u8, seq_vec2_u8);
 sl_seq(vec2_u16, Seq_Vec2_u16, seq_vec2_u16);
 sl_seq(vec2_u32, Seq_Vec2_u32, seq_vec2_u32);
@@ -2890,33 +2893,46 @@ sl_seq(mat4x4_f64, Seq_Mat4x4_f64, seq_mat4x4_f64);
 
 sl_seq(Mutable_Buffer, Seq_Mutable_Buffer, seq_mutable_buffer);
 
+#define SL_ARENA_ALLOCATOR_BLOCK_SIZE_EXP 16ULL
+#define SL_ARENA_ALLOCATOR_BLOCK_SIZE (1ULL << SL_ARENA_ALLOCATOR_BLOCK_SIZE_EXP)
+
 typedef struct SL_Arena_Allocator {
 	Allocator* basis_allocator;
 	Allocator allocator;
 
-	u8* buffer;
-	u8* next_position;
-	u64 size;
+	Seq_u8_Ptr blocks;
+	u64 next_position;
 } SL_Arena_Allocator;
 
 static void* sl_arena_allocator_new_fn(void* ctx, u64 size, u64 alignment) {
 	SL_Arena_Allocator* arena = ctx;
 
-	u8* aligned_offset = (u8*)sl_round_up_u64((u64)arena->next_position, alignment);
-	sl_assert((aligned_offset + size) < (arena->buffer + arena->size), "Arena capacity exceeded.");
+	sl_debug_assert(size <= SL_ARENA_ALLOCATOR_BLOCK_SIZE, "Allocation exceeded arena block size.");
 
-	arena->next_position = aligned_offset + size;
+	u64 aligned_position = sl_round_up_u64(arena->next_position, alignment);
 
-	return aligned_offset;
+	if (((aligned_position + size) >> SL_ARENA_ALLOCATOR_BLOCK_SIZE_EXP) != (aligned_position >> SL_ARENA_ALLOCATOR_BLOCK_SIZE_EXP)) {
+		// Allocation would straddle two blocks, must advance to next block.
+		aligned_position = sl_round_up_u64(arena->next_position, SL_ARENA_ALLOCATOR_BLOCK_SIZE);
+	}
+
+	const u64 block_index = aligned_position >> SL_ARENA_ALLOCATOR_BLOCK_SIZE_EXP;
+	const u64 block_offset = aligned_position & ((1ULL << SL_ARENA_ALLOCATOR_BLOCK_SIZE_EXP) - 1ULL);
+	while (seq_u8_ptr_get_count(&arena->blocks) < (block_index + 1)) {
+		u8* block = arena->basis_allocator->new(arena->basis_allocator->ctx, SL_ARENA_ALLOCATOR_BLOCK_SIZE, sl_max_align);
+		seq_u8_ptr_push(&arena->blocks, block);
+	}
+
+	arena->next_position = aligned_position + size;
+
+	u8* result = seq_u8_ptr_get(&arena->blocks, block_index) + block_offset;
+	return result;
 }
 static void* sl_arena_allocator_resize_fn(void* ctx, void* ptr, u64 old_size, u64 new_size, u64 alignment) {
 	return sl_arena_allocator_new_fn(ctx, new_size, alignment);
 }
 static void sl_arena_allocator_free_fn(void* ctx, void* ptr, u64 size, u64 alignment) {}
-sl_inline SL_Arena_Allocator* sl_arena_allocator_new(Allocator* allocator, u64 size) {
-	u8* buffer;
-	allocator_new(allocator, buffer, size);
-
+sl_inline SL_Arena_Allocator* sl_arena_allocator_new(Allocator* allocator) {
 	SL_Arena_Allocator* result;
 	allocator_new(allocator, result, 1);
 	*result = (SL_Arena_Allocator) {
@@ -2927,23 +2943,29 @@ sl_inline SL_Arena_Allocator* sl_arena_allocator_new(Allocator* allocator, u64 s
 			.resize = sl_arena_allocator_resize_fn,
 			.free = sl_arena_allocator_free_fn,
 		},
-		.buffer = buffer,
-		.size = size,
-		.next_position = buffer,
+		.blocks = seq_u8_ptr_new(allocator, 1),
+		.next_position = 0,
 	};
 	return result;
 }
 sl_inline void sl_arena_allocator_destroy(SL_Arena_Allocator* allocator) {
 	Allocator* basis = allocator->basis_allocator;
-	allocator_free(basis, allocator->buffer, allocator->size);
+
+	const u64 block_count = seq_u8_ptr_get_count(&allocator->blocks);
+	for (u64 block_index = 0; block_index < block_count; block_index++) {
+		u8* block = seq_u8_ptr_get(&allocator->blocks, block_index);
+		allocator->basis_allocator->free(allocator->basis_allocator->ctx, block, SL_ARENA_ALLOCATOR_BLOCK_SIZE, sl_max_align);
+	}
+
+	seq_u8_ptr_destroy(&allocator->blocks);
 	*allocator = (SL_Arena_Allocator) {0};
 	allocator_free(basis, allocator, 1);
 }
 sl_inline void sl_arena_allocator_reset(SL_Arena_Allocator* allocator, u64 position) {
-	allocator->next_position = allocator->buffer + position;
+	allocator->next_position = position;
 }
 sl_inline u64 sl_arena_allocator_get_position(SL_Arena_Allocator* allocator) {
-	return (u64)(allocator->next_position - allocator->buffer);
+	return allocator->next_position;
 }
 
 #define sl_hashmap(key_type, value_type, type, function_prefix, hash_func, equals_func) \

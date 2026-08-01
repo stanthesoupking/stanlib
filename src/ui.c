@@ -265,7 +265,7 @@ UI* ui_new(Allocator* allocator) {
 		.allocator = allocator,
 		.frame_index = 0ull,
 		.lifecycle_state = UI_Lifecycle_State_Ended,
-		.arena = sl_arena_allocator_new(allocator, 64ull * 1024ull),
+		.arena = sl_arena_allocator_new(allocator),
 		.frames = ui_frame_seq_new(allocator, 0),
 		.active_touch_map = ui_touch_map_new(allocator, 32),
 		.touches = ui_touch_seq_new(allocator, 32),

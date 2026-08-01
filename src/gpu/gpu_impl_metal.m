@@ -340,10 +340,9 @@ u64 gpu_get_minimum_uniform_slice_alignment(void) {
 }
 
 void gpu_init_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
-	printf("!!! FIXME: Allocating 8MB arena per command buffer !!!\n");
 	*command_buffer = (Gpu_Command_Buffer_Data) {
 		.state = Gpu_Command_Buffer_State_Idle,
-		.arena = sl_arena_allocator_new(gpu.allocator, 8 << 20),
+		.arena = sl_arena_allocator_new(gpu.allocator),
 		.commands = gpu_command_seq_new(gpu.allocator, 8),
 		.swapchain_presents = gpu_swapchain_present_seq_new(gpu.allocator, 1),
 		.cleanup_textures = gpu_texture_seq_new(gpu.allocator, 1),

@@ -1698,9 +1698,8 @@ void gpu_destroy_sampler(Gpu_Sampler sampler) {
 
 // Command Buffer
 void gpu_init_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
-	printf("!!! FIXME: Allocating 8MB arena per command buffer !!!\n");
 	*command_buffer = (Gpu_Command_Buffer_Data) {
-		.arena = sl_arena_allocator_new(gpu.allocator, 8 << 20),
+		.arena = sl_arena_allocator_new(gpu.allocator),
 		.commands = gpu_command_seq_new(gpu.allocator, 8),
 		.semaphores = gpu_semaphore_seq_new(gpu.allocator, 1),
 		.command_buffers = gpu_command_buffer_seq_new(gpu.allocator, 1),
