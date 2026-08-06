@@ -213,7 +213,11 @@ typedef float4x4 mat4x4_f32;
 #include <stdatomic.h>
 #include <stddef.h>
 
+#if defined(__TINYC__)
+#define sl_max_align 16
+#else
 #define sl_max_align sl_align_of(max_align_t)
+#endif
 
 typedef uint8_t u8;
 typedef uint16_t u16;
