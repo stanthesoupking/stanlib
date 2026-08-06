@@ -3847,4 +3847,49 @@ sl_inline void sl_retained_ref_deinit(SL_Retained_Ref* ref) {
 	};
 }
 
+typedef struct SL_Bit_Table {
+	Allocator* allocator;
+	u64* words;
+	u64 word_count;
+} SL_Bit_Table;
+
+sl_inline SL_Bit_Table sl_bit_table_new(Allocator* allocator, u64 size) {
+	const u64 word_count = (size + 63ULL) / 64ULL;
+	u64* words;
+	allocator_new(allocator, words, word_count);
+	return (SL_Bit_Table) {
+		.allocator = allocator,
+		.words = words,
+		.word_count = word_count,
+	};
+}
+sl_inline void sl_bit_table_destroy(SL_Bit_Table* table) {
+	allocator_free(table->allocator, table->words, table->word_count);
+	*table = (SL_Bit_Table) {0};
+}
+sl_inline bool sl_bit_table_contains(const SL_Bit_Table* table, u64 index) {
+	const u64 word_index = index >> 6ULL;
+	const u64 word_offset = index & 0x3FULL;
+	sl_debug_assert(word_index < table->word_count, "Out of bounds.");
+	return ((table->words[word_index] & (1ULL << word_offset)) > 0);
+}
+sl_inline void sl_bit_table_add(SL_Bit_Table* table, u64 index) {
+	const u64 word_index = index >> 6ULL;
+	const u64 word_offset = index & 0x3FULL;
+	sl_debug_assert(word_index < table->word_count, "Out of bounds.");
+	table->words[word_index] |= (1ULL << word_offset);
+}
+sl_inline void sl_bit_table_remove(SL_Bit_Table* table, u64 index) {
+	const u64 word_index = index >> 6ULL;
+	const u64 word_offset = index & 0x3FULL;
+	sl_debug_assert(word_index < table->word_count, "Out of bounds.");
+	table->words[word_index] &= ~(1ULL << word_offset);
+}
+sl_inline void sl_bit_table_add_all(SL_Bit_Table* table) {
+	sl_memset(table->words, 0xFF, sizeof(u64) * table->word_count);
+}
+sl_inline void sl_bit_table_remove_all(SL_Bit_Table* table) {
+	sl_memset(table->words, 0, sizeof(u64) * table->word_count);
+}
+
 #endif
