@@ -127,6 +127,7 @@ typedef struct SL_Blitter {
 	Allocator* allocator;
 	SL_Blitter_Resources* resources;
 	Gpu_Command_Buffer command_buffer;
+	Gpu_Slice* parameters_slice;
 
 	mat4x4_f32 to_ndc_from_viewport;
 
@@ -151,6 +152,7 @@ void sl_blitter_begin(SL_Blitter** blitter_ptr, const SL_Blitter_Desc* desc) {
 		.allocator = desc->allocator,
 		.resources = desc->resources,
 		.command_buffer = desc->command_buffer,
+		.parameters_slice = desc->parameters_slice,
 		.to_ndc_from_viewport = to_ndc_from_viewport,
 		.quads = textured_quad_f32_seq_new(desc->allocator, 256),
 		.draws = sl_blitter_draw_seq_new(desc->allocator, 256),
@@ -231,16 +233,31 @@ void sl_blitter_draw_textured_quads(SL_Blitter* blitter, Gpu_Texture texture, co
 	sl_blitter_draw_textured_quads_raw(blitter, texture, quads, quad_count, SL_Blitter_Draw_Kind_Normal, sampler);
 }
 
-void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
-	SL_Blitter* blitter = *blitter_ptr;
+void sl_blitter_transform_quads_to_ndc(SL_Blitter* blitter, Textured_Quad_f32* quads, u32 quad_count) {
+	for (u32 i = 0; i < quad_count; i++) {
+		for (u32 j = 0; j < 4; j++) {
+			quads[i].position[j] = mul_mat4x4_vec4_f32(blitter->to_ndc_from_viewport, quads[i].position[j]);
+		}
+	}
+}
 
+Gpu_Command_Buffer sl_blitter_get_command_buffer(SL_Blitter* blitter) {
+	return blitter->command_buffer;
+}
+
+Gpu_Slice* sl_blitter_get_parameters_allocator(SL_Blitter* blitter) {
+	return blitter->parameters_slice;
+}
+
+void sl_blitter_flush(SL_Blitter* blitter) {
 	const u32 quad_count = (u32)textured_quad_f32_seq_get_count(&blitter->quads);
 
 	Gpu_Slice quads_slice;
-	bool got_quads_slice = gpu_slice_suballocate(*parameters_slice, gpu_size_and_align_of_type(Textured_Quad_f32, quad_count), &quads_slice, parameters_slice);
+	bool got_quads_slice = gpu_slice_suballocate(*blitter->parameters_slice, gpu_size_and_align_of_type(Textured_Quad_f32, quad_count), &quads_slice, blitter->parameters_slice);
 	if (!got_quads_slice) {
 		// ran out of space
-		sl_blitter_cleanup(blitter_ptr);
+		textured_quad_f32_seq_clear(&blitter->quads);
+		sl_blitter_draw_seq_clear(&blitter->draws);
 		return;
 	}
 
@@ -248,7 +265,6 @@ void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
 	for (u32 quad_idx = 0; quad_idx < quad_count; quad_idx++) {
 		quads_slice_ptr[quad_idx] = textured_quad_f32_seq_get(&blitter->quads, quad_idx);
 	}
-	gpu_flush_slice_to_gpu(quads_slice);
 
 	const u32 draw_count = (u32)sl_blitter_draw_seq_get_count(&blitter->draws);
 	for (u32 draw_idx = 0; draw_idx < draw_count; draw_idx++) {
@@ -287,5 +303,12 @@ void sl_blitter_end(SL_Blitter** blitter_ptr, Gpu_Slice* parameters_slice) {
 		gpu_draw(blitter->command_buffer, &draw_desc);
 	}
 
+	textured_quad_f32_seq_clear(&blitter->quads);
+	sl_blitter_draw_seq_clear(&blitter->draws);
+}
+
+void sl_blitter_end(SL_Blitter** blitter_ptr) {
+	SL_Blitter* blitter = *blitter_ptr;
+	sl_blitter_flush(blitter);
 	sl_blitter_cleanup(blitter_ptr);
 }

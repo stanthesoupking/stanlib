@@ -26,6 +26,7 @@ typedef struct SL_Blitter_Desc {
 	SL_Blitter_Resources* resources;
 	Gpu_Command_Buffer command_buffer;
 	vec2_f32 viewport;
+	Gpu_Slice* parameters_slice;
 } SL_Blitter_Desc;
 
 typedef enum SL_Blitter_Command_Kind {
@@ -38,4 +39,10 @@ void sl_blitter_begin(SL_Blitter** blitter, const SL_Blitter_Desc* desc);
 void sl_blitter_draw_text(SL_Blitter* blitter, SL_Font* font, Gpu_Texture texture, const char* string, vec2_f32 position, vec4_f32 color);
 void sl_blitter_draw_texture(SL_Blitter* blitter, Gpu_Texture texture, vec2_f32 position, vec4_f32 color, SL_Blitter_Sampler sampler);
 void sl_blitter_draw_textured_quads(SL_Blitter* blitter, Gpu_Texture texture, const Textured_Quad_f32* quads, u32 quad_count, SL_Blitter_Sampler sampler);
-void sl_blitter_end(SL_Blitter** blitter, Gpu_Slice* parameters_slice);
+void sl_blitter_end(SL_Blitter** blitter);
+
+// For custom draws:
+void sl_blitter_transform_quads_to_ndc(SL_Blitter* blitter, Textured_Quad_f32* quads, u32 quad_count);
+Gpu_Command_Buffer sl_blitter_get_command_buffer(SL_Blitter* blitter);
+Gpu_Slice* sl_blitter_get_parameters_allocator(SL_Blitter* blitter);
+void sl_blitter_flush(SL_Blitter* blitter);
