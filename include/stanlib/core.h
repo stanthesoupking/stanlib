@@ -2070,6 +2070,18 @@ sl_inline vec3_f32 lerp_vec3_f32(vec3_f32 a, vec3_f32 b, f32 t) {
 	};
 }
 
+sl_inline vec2_f32 saturate_vec2_f32(vec2_f32 a) {
+	return (vec2_f32) {
+		.x = saturate_f32(a.x),
+		.y = saturate_f32(a.y),
+	};
+}
+sl_inline vec2_f64 saturate_vec2_f64(vec2_f64 a) {
+	return (vec2_f64) {
+		.x = saturate_f64(a.x),
+		.y = saturate_f64(a.y),
+	};
+}
 sl_inline vec3_f32 saturate_vec3_f32(vec3_f32 a) {
 	return (vec3_f32) {
 		.x = saturate_f32(a.x),
