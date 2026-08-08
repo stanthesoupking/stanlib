@@ -213,6 +213,11 @@ typedef float4x4 mat4x4_f32;
 #include <stdatomic.h>
 #include <stddef.h>
 
+// glibc headers define __attribute__ to do nothing, for TCC.
+#if defined(__TINYC__)
+#undef __attribute__
+#endif
+
 #if defined(__TINYC__)
 #define sl_max_align 16
 #else
