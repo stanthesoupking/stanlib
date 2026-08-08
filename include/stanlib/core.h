@@ -2271,6 +2271,14 @@ sl_inline f64 dist_vec4_f64(vec4_f64 a, vec4_f64 b) {
 	return len_vec4_f64(sub_vec4_f64(b, a));
 }
 
+// For a given linear color, get the luminance value.
+sl_inline f32 luminance_vec3_f32(vec3_f32 v) {
+	return (v.x * 0.2126f) + (v.y * 0.7152f) + (v.z * 0.0722f);
+}
+sl_inline f64 luminance_vec3_f64(vec3_f64 v) {
+	return (v.x * 0.2126) + (v.y * 0.7152) + (v.z * 0.0722);
+}
+
 sl_inline vec3_f32 normalize_vec3_f32(vec3_f32 v) {
 	const f32 v_len = len_vec3_f32(v);
 	return (vec3_f32) {
