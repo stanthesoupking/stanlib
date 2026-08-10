@@ -3624,7 +3624,7 @@ sl_inline void sl_profile_end(SL_Profile* profile) {
 
 	char buf[64];
 	sl_format_time(duration, mutable_buffer_for(buf));
-	printf("'%s' took %s.\n", profile->label, buf);
+	printf("\033[2m%s\033[0m took \033[32m%s\033[0m\n", profile->label, buf);
 
 	*profile = (SL_Profile) {
 		.began = false,
