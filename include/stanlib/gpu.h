@@ -311,6 +311,7 @@ typedef struct Gpu_Texture_Desc {
 Gpu_Size_And_Align gpu_size_and_align_for_texture(const Gpu_Texture_Desc* desc);
 Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice);
 Gpu_Texture gpu_new_texture_from_image(SL_Image* image, Gpu_Slice* inout_staging_allocator, Gpu_Slice* inout_texture_allocator, Gpu_Command_Buffer command_buffer);
+SL_Image* gpu_new_image_from_texture(Gpu_Texture texture, Allocator* allocator, Gpu_Slice* inout_staging_allocator, Gpu_Command_Buffer_Pool command_buffer_pool);
 void gpu_destroy_texture(Gpu_Texture texture);
 const Gpu_Texture_Desc* gpu_get_texture_desc(Gpu_Texture texture);
 
@@ -442,6 +443,18 @@ typedef struct Gpu_Copy_Slice_To_Texture_Desc {
 	u32 dst_mip_level;
 } Gpu_Copy_Slice_To_Texture_Desc;
 void gpu_copy_slice_to_texture(Gpu_Command_Buffer cb, const Gpu_Copy_Slice_To_Texture_Desc* desc);
+
+typedef struct Gpu_Copy_Texture_To_Slice_Desc {
+	Gpu_Texture src;
+	vec3_u32 src_start;
+	vec3_u32 src_end;
+	u32 src_array_layer;
+	u32 src_mip_level;
+
+	Gpu_Slice dst;
+	u32 dst_row_length; // in pixels
+} Gpu_Copy_Texture_To_Slice_Desc;
+void gpu_copy_texture_to_slice(Gpu_Command_Buffer cb, const Gpu_Copy_Texture_To_Slice_Desc* desc);
 
 void gpu_barrier(Gpu_Command_Buffer cb);
 

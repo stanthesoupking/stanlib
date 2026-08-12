@@ -29,6 +29,10 @@ SL_String_View sl_string_view(const SL_String* str) {
 	};
 }
 
+bool sl_string_view_is_null(SL_String_View view) {
+	return view.str == NULL;
+}
+
 sl_inline u64 sl_string_allocation_size_for_length(u64 length) {
 	return sizeof(SL_String) + length + 1;
 }

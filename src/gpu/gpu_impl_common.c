@@ -1,3 +1,5 @@
+#include "stanlib/core.h"
+#include "stanlib/image.h"
 #include <stanlib/gpu.h>
 #include <string.h>
 
@@ -106,4 +108,61 @@ Gpu_Texture gpu_new_texture_from_image(SL_Image* image, Gpu_Slice* inout_staging
 	gpu_transition_texture_layouts(command_buffer, &texture, &read_layout, 1);
 
 	return texture;
+}
+
+SL_Image* gpu_new_image_from_texture(Gpu_Texture texture, Allocator* allocator, Gpu_Slice* inout_staging_allocator, Gpu_Command_Buffer_Pool command_buffer_pool) {
+	if (sl_handle_is_null(texture)) {
+		return NULL;
+	}
+
+	// For reverting:
+	const Gpu_Slice staging_allocator_initial = *inout_staging_allocator;
+
+	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
+
+	switch (texture_desc->format) {
+		case Gpu_Format_RGBA8_Unorm:
+		case Gpu_Format_RGBA8_sRGB:
+		case Gpu_Format_BGRA8_Unorm:
+		case Gpu_Format_BGRA8_sRGB:
+			break;
+
+		default:
+			// Format not supported.
+			return NULL;
+	}
+
+	const u64 staging_size = (u64)texture_desc->size.x * (u64)texture_desc->size.y * 4ULL;
+
+	Gpu_Slice staging_slice;
+	if (!gpu_slice_suballocate(*inout_staging_allocator, (Gpu_Size_And_Align) { .size = staging_size, .align = 1 }, &staging_slice, inout_staging_allocator)) {
+		*inout_staging_allocator = staging_allocator_initial;
+		return NULL;
+	}
+
+	Gpu_Command_Buffer command_buffer;
+	if (!gpu_new_command_buffer(command_buffer_pool, &command_buffer)) {
+		*inout_staging_allocator = staging_allocator_initial;
+		return NULL;
+	}
+
+	const Gpu_Copy_Texture_To_Slice_Desc copy_desc = {
+		.src = texture,
+		.src_start = { 0, 0, 0 },
+		.src_end = { texture_desc->size.x, texture_desc->size.y, 1 },
+		.src_mip_level = 0,
+		.src_array_layer = 0,
+		.dst = staging_slice,
+		.dst_row_length = (u32)texture_desc->size.x,
+	};
+	gpu_copy_texture_to_slice(command_buffer, &copy_desc);
+
+	gpu_enqueue(command_buffer, true);
+
+	const u64 row_length = (u64)texture_desc->size.x * 4ULL;
+	SL_Image* result = sl_image_new(allocator, (vec2_u32) { texture_desc->size.x, texture_desc->size.y }, row_length);
+
+	sl_memcpy(result->buffer.data, gpu_get_slice_host_ptr(staging_slice), result->buffer.size);
+
+	return result;
 }

@@ -258,6 +258,7 @@ typedef enum Gpu_Command_Kind {
 	Gpu_Command_Kind_Copy_Texture,
 	Gpu_Command_Kind_Copy_Slice,
 	Gpu_Command_Kind_Copy_Slice_To_Texture,
+	Gpu_Command_Kind_Copy_Texture_To_Slice,
 	Gpu_Command_Kind_Barrier,
 	Gpu_Command_Kind_Wait,
 	Gpu_Command_Kind_Signal,
@@ -298,6 +299,10 @@ typedef struct Gpu_Command_Copy_Slice_To_Texture {
 	Gpu_Copy_Slice_To_Texture_Desc desc;
 } Gpu_Command_Copy_Slice_To_Texture;
 
+typedef struct Gpu_Command_Copy_Texture_To_Slice {
+	Gpu_Copy_Texture_To_Slice_Desc desc;
+} Gpu_Command_Copy_Texture_To_Slice;
+
 typedef struct Gpu_Command_Wait {
 	VkSemaphore semaphore;
 	u64 value;
@@ -319,6 +324,7 @@ typedef struct Gpu_Command {
 		Gpu_Command_Copy_Texture* copy_texture;
 		Gpu_Command_Copy_Slice* copy_slice;
 		Gpu_Command_Copy_Slice_To_Texture* copy_slice_to_texture;
+		Gpu_Command_Copy_Texture_To_Slice* copy_texture_to_slice;
 		Gpu_Command_Wait* wait;
 		Gpu_Command_Signal* signal;
 	} data;
@@ -2360,6 +2366,32 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 				vkCmdCopyBufferToImage(vk_cb, heap_data->buffer, texture_data->image, gpu_texture_layout_to_vk_image_layout(texture_data->layout), 1, &region);
 			} break;
 
+			case Gpu_Command_Kind_Copy_Texture_To_Slice: {
+				VkCommandBuffer vk_cb = gpu_fetch_command_buffer_emitter(&cb_emitter);
+
+				const Gpu_Copy_Texture_To_Slice_Desc* copy = &command.data.copy_texture_to_slice->desc;
+				Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, copy->dst.heap);
+
+				Gpu_Texture_Data* texture_data = gpu_texture_pool_resolve(&gpu.texture_pool, copy->src);
+				const vec3_u32 texture_size = texture_data->desc.size;
+
+				const VkBufferImageCopy region = {
+					.bufferOffset = copy->dst.offset,
+					.bufferRowLength = copy->dst_row_length,
+					.bufferImageHeight = copy->src_end.y - copy->src_start.y,
+					.imageOffset = { copy->src_start.x, copy->src_start.y, copy->src_start.z },
+					.imageExtent = { copy->src_end.x, copy->src_end.y, copy->src_end.z },
+					.imageSubresource = {
+						.mipLevel = copy->src_mip_level,
+						.baseArrayLayer = copy->src_array_layer,
+						.layerCount = 1,
+						.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					},
+				};
+
+				vkCmdCopyImageToBuffer(vk_cb, texture_data->image, gpu_texture_layout_to_vk_image_layout(texture_data->layout), heap_data->buffer, 1, &region);
+			} break;
+
 			case Gpu_Command_Kind_Barrier: {
 				VkCommandBuffer vk_cb = gpu_fetch_command_buffer_emitter(&cb_emitter);
 
@@ -3026,6 +3058,23 @@ void gpu_copy_slice_to_texture(Gpu_Command_Buffer cb, const Gpu_Copy_Slice_To_Te
 	gpu_command_seq_push(&cb_data->commands, (Gpu_Command) {
 		.kind = Gpu_Command_Kind_Copy_Slice_To_Texture,
 		.data.copy_slice_to_texture = copy,
+	});
+}
+
+void gpu_copy_texture_to_slice(Gpu_Command_Buffer cb, const Gpu_Copy_Texture_To_Slice_Desc* desc) {
+	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
+	gpu_validate(cb_data, "Invalid command buffer.");
+	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+
+	Gpu_Command_Copy_Texture_To_Slice* copy;
+	allocator_new(&cb_data->arena->allocator, copy, 1);
+	*copy = (Gpu_Command_Copy_Texture_To_Slice) {
+		.desc = *desc,
+	};
+
+	gpu_command_seq_push(&cb_data->commands, (Gpu_Command) {
+		.kind = Gpu_Command_Kind_Copy_Texture_To_Slice,
+		.data.copy_texture_to_slice = copy,
 	});
 }
 

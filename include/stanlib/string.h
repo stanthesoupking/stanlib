@@ -16,6 +16,10 @@ sl_seq(SL_String*, SL_String_Seq, sl_string_seq);
 SL_String_View sl_string_view(const SL_String* str);
 SL_String_View sl_string_view_c(const char* cstr);
 
+#define SL_STRING_VIEW_NULL ((SL_String_View) { .str = NULL })
+
+bool sl_string_view_is_null(SL_String_View view);
+
 SL_String* sl_string_new(Allocator* allocator, SL_String_View view);
 SL_String* sl_string_new_c(Allocator* allocator, const char* cstr); // convenience
 

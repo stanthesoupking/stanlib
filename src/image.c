@@ -2,12 +2,13 @@
 #include <string.h>
 
 #include "vendor/stb_image.h"
+#include "vendor/stb_image_write.h"
 
 SL_Image* sl_image_new(Allocator* allocator, vec2_u32 size, u32 row_length) {
 	SL_Image* image;
 	allocator_new(allocator, image, 1);
 
-	const u64 buffer_size = row_length * size.y;
+	const u64 buffer_size = (u64)row_length * (u64)size.y;
 	u8* buffer_data;
 	allocator_new(allocator, buffer_data, buffer_size);
 	memset(buffer_data, 0, buffer_size);
@@ -30,9 +31,9 @@ void sl_image_destroy(SL_Image* image) {
 	allocator_free(allocator, image, 1);
 }
 
-SL_Image* sl_image_load(Allocator* allocator, const char* path) {
+SL_Image* sl_image_load(Allocator* allocator, SL_String_View path) {
 	int img_w, img_h, img_channels;
-	u8* img_bytes = stbi_load(path, &img_w, &img_h, &img_channels, 4);
+	u8* img_bytes = stbi_load(path.str, &img_w, &img_h, &img_channels, 4);
 	if (img_bytes == NULL) {
 		return NULL;
 	}
@@ -42,6 +43,10 @@ SL_Image* sl_image_load(Allocator* allocator, const char* path) {
 	stbi_image_free(img_bytes);
 
 	return result;
+}
+
+void sl_image_write(SL_Image* image, SL_String_View path) {
+	stbi_write_png(path.str, image->size.x, image->size.y, 4, image->buffer.data, image->row_length);
 }
 
 void sl_image_blit(SL_Image* dst, SL_Image* src, vec2_u32 offset) {
