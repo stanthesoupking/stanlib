@@ -104,6 +104,17 @@ SL_String* sl_string_concat(Allocator* allocator, SL_String_View a, SL_String_Vi
 	return result;
 }
 
+SL_String* sl_substring(Allocator* allocator, SL_String_View s, Range_u64 range) {
+	range.start = sl_min(range.start, s.length);
+	range.end = sl_min(range.end, s.length);
+	const u64 new_length = range.end - range.start;
+
+	SL_String* result = sl_string_new_uninit(allocator, new_length);
+	sl_memcpy(result->data, s.str + range.start, new_length);
+	result->data[new_length] = 0;
+	return result;
+}
+
 SL_String* sl_string_append_path_component(Allocator* allocator, SL_String_View path, SL_String_View component) {
 	const bool has_seperator = (path.str[path.length - 1] == SL_PATH_SEPARATOR);
 	const u64 new_length = path.length + component.length + (has_seperator ? 0 : 1);
@@ -127,6 +138,62 @@ SL_String* sl_string_append_path_component(Allocator* allocator, SL_String_View 
 	next_offset[0] = '\0';
 
 	return result;
+}
+
+SL_String* sl_string_get_path_component(Allocator* allocator, SL_String_View s) {
+	for (s64 i = (s.length - 1); i >= 0; i--) {
+		if (s.str[i] == SL_PATH_SEPARATOR) {
+			const Range_u64 range = {
+				.start = (u64)i + 1,
+				.end = s.length,
+			};
+			return sl_substring(allocator, s, range);
+		}
+	}
+	return sl_string_new(allocator, s);
+}
+
+SL_String* sl_string_pop_path_component(Allocator* allocator, SL_String_View s) {
+	for (s64 i = (s.length - 1); i >= 0; i--) {
+		if (s.str[i] == SL_PATH_SEPARATOR) {
+			const Range_u64 range = {
+				.start = 0,
+				.end = (u64)i,
+			};
+			return sl_substring(allocator, s, range);
+		}
+	}
+	return sl_string_new(allocator, s);
+}
+
+SL_String* sl_string_get_path_extension(Allocator* allocator, SL_String_View s) {
+	for (s64 i = (s.length - 1); i >= 0; i--) {
+		if (s.str[i] == '.') {
+			const Range_u64 range = {
+				.start = (u64)i + 1,
+				.end = s.length,
+			};
+			return sl_substring(allocator, s, range);
+		} else if (s.str[i] == SL_PATH_SEPARATOR) {
+			return NULL;
+		}
+	}
+	return NULL;
+}
+
+SL_String* sl_string_pop_path_extension(Allocator* allocator, SL_String_View s) {
+	for (s64 i = (s.length - 1); i >= 0; i--) {
+		if (s.str[i] == '.') {
+			const Range_u64 range = {
+				.start = 0,
+				.end = (u64)i + 1,
+			};
+			return sl_substring(allocator, s, range);
+		} else if (s.str[i] == SL_PATH_SEPARATOR) {
+			return sl_string_new(allocator, s);
+		}
+	}
+	return sl_string_new(allocator, s);
 }
 
 bool sl_string_equals(SL_String_View a, SL_String_View b) {

@@ -13,3 +13,4 @@
 #include "ray_intersection.h"
 #include "ds.h"
 #include "string.h"
+#include "platform.h"

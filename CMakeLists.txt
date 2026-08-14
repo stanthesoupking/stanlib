@@ -25,6 +25,7 @@ set(STANLIB_SOURCES
 	"src/image.c"
 	"src/ray_intersection.c"
 	"src/vendor/stb_impl.c"
+    "src/platform.c"
 )
 
 add_library(stanlib "${STANLIB_SOURCES}")

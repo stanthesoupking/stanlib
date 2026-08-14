@@ -3524,75 +3524,6 @@ sl_inline bool sl_read_file(Allocator* allocator, const char* path, Mutable_Buff
 	return true;
 }
 
-typedef struct SL_Path_Components {
-	const char* subdirectory;
-	const char* name;
-	const char* ext;
-} SL_Path_Components;
-
-#if defined(SL_PLATFORM_APPLE)
-#include <CoreFoundation/CoreFoundation.h>
-sl_inline bool sl_get_application_path(SL_Path_Components components, u32 out_path_length, char* out_path) {
-    CFBundleRef main_bundle = CFBundleGetMainBundle();
-
-	CFStringRef cf_subdirectory = components.subdirectory ? CFStringCreateWithCString(NULL, components.subdirectory, kCFStringEncodingUTF8) : NULL;
-	CFStringRef cf_name = CFStringCreateWithCString(NULL, components.name, kCFStringEncodingUTF8);
-	CFStringRef cf_ext = CFStringCreateWithCString(NULL, components.ext, kCFStringEncodingUTF8);
-
-	CFURLRef url = CFBundleCopyResourceURL(main_bundle, cf_name, cf_ext, cf_subdirectory);
-
-	if (cf_subdirectory != NULL) {
-		CFRelease(cf_subdirectory);
-	}
-
-	CFRelease(cf_name);
-	CFRelease(cf_ext);
-
-	if (url == NULL) {
-		return false;
-	}
-
-	CFStringRef cf_path = CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle);
-	CFRelease(url);
-
-	if (CFStringGetCString(cf_path, out_path, out_path_length, kCFStringEncodingUTF8)) {
-		return true;
-	} else {
-		return false;
-	}
-}
-#elif defined(SL_PLATFORM_LINUX)
-#include <unistd.h>
-#include <libgen.h>
-sl_inline bool sl_get_application_path(SL_Path_Components components, u32 out_path_length, char* out_path) {
-	char application_path[256];
-	ssize_t len = readlink("/proc/self/exe", application_path, sl_array_count(application_path) - 1);
-    if (len == -1) {
-    	return false;
-    };
-    application_path[len] = '\0';
-
-    char* application_dir = dirname(application_path);
-
-	s32 written_length;
-	if (components.subdirectory) {
-		written_length = snprintf(out_path, out_path_length, "%s/%s/%s.%s", application_dir, components.subdirectory, components.name, components.ext);
-	} else {
-		written_length = snprintf(out_path, out_path_length, "%s/%s.%s", application_dir, components.name, components.ext);
-	}
-    if (written_length > out_path_length - 1) {
-    	return false;
-    }
-
-    return true;
-}
-#else
-sl_inline bool sl_get_application_path(SL_Path_Components components, u32 out_path_length, char* out_path) {
-	// Not yet implemented
-	return false;
-}
-#endif
-
 sl_inline void sl_format_time(f64 time, Mutable_Buffer out_buf) {
 	if (time >= 1.0) {
 		snprintf(out_buf.data, out_buf.size, "%.2fs", time);
@@ -3675,6 +3606,16 @@ sl_shared_struct(Range_s32) {
 sl_shared_struct(Range_f32) {
 	f32 start;
 	f32 end;
+};
+
+sl_shared_struct(Range_u64) {
+	u64 start;
+	u64 end;
+};
+
+sl_shared_struct(Range_s64) {
+	s64 start;
+	s64 end;
 };
 
 sl_shared_struct(Rect_u32) {

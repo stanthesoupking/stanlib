@@ -27,10 +27,15 @@ void sl_string_retain(SL_String* string);
 void sl_string_release(SL_String* string);
 
 SL_String* sl_string_format(Allocator* allocator, const char* format, ...);
-
 SL_String* sl_string_concat(Allocator* allocator, SL_String_View a, SL_String_View b);
+SL_String* sl_substring(Allocator* allocator, SL_String_View s, Range_u64 range);
 
 SL_String* sl_string_append_path_component(Allocator* allocator, SL_String_View path, SL_String_View component);
+SL_String* sl_string_get_path_component(Allocator* allocator, SL_String_View path);
+SL_String* sl_string_pop_path_component(Allocator* allocator, SL_String_View path);
+
+SL_String* sl_string_get_path_extension(Allocator* allocator, SL_String_View path);
+SL_String* sl_string_pop_path_extension(Allocator* allocator, SL_String_View path);
 
 bool sl_string_equals(SL_String_View a, SL_String_View b);
 bool sl_string_starts_with(SL_String_View s, SL_String_View prefix);
