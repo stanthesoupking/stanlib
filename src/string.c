@@ -186,7 +186,7 @@ SL_String* sl_string_pop_path_extension(Allocator* allocator, SL_String_View s) 
 		if (s.str[i] == '.') {
 			const Range_u64 range = {
 				.start = 0,
-				.end = (u64)i + 1,
+				.end = (u64)i,
 			};
 			return sl_substring(allocator, s, range);
 		} else if (s.str[i] == SL_PATH_SEPARATOR) {

@@ -11,9 +11,9 @@ SL_String* sl_get_application_path(Allocator* allocator, SL_String_View path) {
     SL_String* str_name = sl_string_get_path_component(allocator, sl_string_view(path0));
     SL_String* str_subdirectory = sl_string_pop_path_component(allocator, path);
 
-	CFStringRef cf_subdirectory = CFStringCreateWithCString(NULL, sl_string_view(str_subdirectory), kCFStringEncodingUTF8);
-	CFStringRef cf_name = CFStringCreateWithCString(NULL, sl_string_view(str_name), kCFStringEncodingUTF8);
-	CFStringRef cf_ext = CFStringCreateWithCString(NULL, sl_string_view(str_ext), kCFStringEncodingUTF8);
+	CFStringRef cf_subdirectory = CFStringCreateWithCString(NULL, sl_string_view(str_subdirectory).str, kCFStringEncodingUTF8);
+	CFStringRef cf_name = CFStringCreateWithCString(NULL, sl_string_view(str_name).str, kCFStringEncodingUTF8);
+	CFStringRef cf_ext = CFStringCreateWithCString(NULL, sl_string_view(str_ext).str, kCFStringEncodingUTF8);
 
 	sl_string_release(str_ext);
 	sl_string_release(path0);
@@ -36,10 +36,11 @@ SL_String* sl_get_application_path(Allocator* allocator, SL_String_View path) {
 	CFStringRef cf_path = CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle);
 	CFRelease(url);
 
-	if (sl_string_new_c(allocator, CFStringGetCString(cf_path, out_path, out_path_length, kCFStringEncodingUTF8))) {
-		return true;
+	char tmp[256];
+	if (CFStringGetCString(cf_path, tmp, sl_array_count(tmp), kCFStringEncodingUTF8)) {
+		return sl_string_new_c(allocator, tmp);
 	} else {
-		return false;
+		return NULL;
 	}
 }
 #elif defined(SL_PLATFORM_LINUX)

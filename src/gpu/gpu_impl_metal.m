@@ -56,6 +56,7 @@ typedef enum Gpu_Command_Kind {
 	Gpu_Command_Kind_Copy_Texture,
 	Gpu_Command_Kind_Copy_Slice,
 	Gpu_Command_Kind_Copy_Slice_To_Texture,
+	Gpu_Command_Kind_Copy_Texture_To_Slice,
 	Gpu_Command_Kind_Barrier,
 	Gpu_Command_Kind_Wait,
 	Gpu_Command_Kind_Signal,
@@ -96,6 +97,10 @@ typedef struct Gpu_Command_Copy_Slice_To_Texture {
 	Gpu_Copy_Slice_To_Texture_Desc desc;
 } Gpu_Command_Copy_Slice_To_Texture;
 
+typedef struct Gpu_Command_Copy_Texture_To_Slice {
+	Gpu_Copy_Texture_To_Slice_Desc desc;
+} Gpu_Command_Copy_Texture_To_Slice;
+
 typedef struct Gpu_Command_Wait {
 	Gpu_Semaphore semaphore;
 	u64 value;
@@ -117,6 +122,7 @@ typedef struct Gpu_Command {
 		Gpu_Command_Copy_Texture* copy_texture;
 		Gpu_Command_Copy_Slice* copy_slice;
 		Gpu_Command_Copy_Slice_To_Texture* copy_slice_to_texture;
+		Gpu_Command_Copy_Texture_To_Slice* copy_texture_to_slice;
 		Gpu_Command_Wait* wait;
 		Gpu_Command_Signal* signal;
 	} data;
@@ -720,6 +726,32 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 										  destinationLevel:copy->dst_mip_level
 										 destinationOrigin:MTLOriginMake(copy->dst_start.x, copy->dst_start.y, copy->dst_start.z)];
 			} break;
+				
+			case Gpu_Command_Kind_Copy_Texture_To_Slice: {
+				sl_assert(encoder_state.current != Gpu_Encoder_Kind_Render, "Must end render before copy.");
+				gpu_start_blit_encoder(&encoder_state);
+
+				const Gpu_Copy_Texture_To_Slice_Desc* copy = &command.data.copy_texture_to_slice->desc;
+				Gpu_Heap_Data* dst_heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, copy->dst.heap);
+				Gpu_Texture_Data* src_data = gpu_texture_pool_resolve(&gpu.texture_pool, copy->src);
+
+				const MTLSize src_size = MTLSizeMake(copy->src_end.x - copy->src_start.x,
+												 copy->src_end.y - copy->src_start.y,
+												 copy->src_end.z - copy->src_start.z);
+
+				const u64 dst_bytes_per_row = copy->dst_row_length * gpu_bytes_per_pixel_for_format(src_data->desc.format);
+				const u64 dst_bytes_per_image = dst_bytes_per_row * src_size.height;
+
+				[encoder_state.blit_encoder copyFromTexture:src_data->texture
+												sourceSlice:copy->src_array_layer
+												sourceLevel:copy->src_mip_level
+											   sourceOrigin:MTLOriginMake(copy->src_start.x, copy->src_start.y, copy->src_start.z)
+												 sourceSize:src_size
+												   toBuffer:dst_heap_data->buffer
+										  destinationOffset:copy->dst.offset
+									 destinationBytesPerRow:dst_bytes_per_row
+								   destinationBytesPerImage:dst_bytes_per_image];
+			} break;
 
 			case Gpu_Command_Kind_Barrier: {
 				if (encoder_state.current == Gpu_Encoder_Kind_Compute) {
@@ -1218,6 +1250,23 @@ void gpu_copy_slice_to_texture(Gpu_Command_Buffer cb, const Gpu_Copy_Slice_To_Te
 	gpu_command_seq_push(&cb_data->commands, (Gpu_Command) {
 		.kind = Gpu_Command_Kind_Copy_Slice_To_Texture,
 		.data.copy_slice_to_texture = copy,
+	});
+}
+
+void gpu_copy_texture_to_slice(Gpu_Command_Buffer cb, const Gpu_Copy_Texture_To_Slice_Desc* desc) {
+	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
+	gpu_validate(cb_data, "Invalid command buffer.");
+	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
+
+	Gpu_Command_Copy_Texture_To_Slice* copy;
+	allocator_new(&cb_data->arena->allocator, copy, 1);
+	*copy = (Gpu_Command_Copy_Texture_To_Slice) {
+		.desc = *desc,
+	};
+
+	gpu_command_seq_push(&cb_data->commands, (Gpu_Command) {
+		.kind = Gpu_Command_Kind_Copy_Texture_To_Slice,
+		.data.copy_texture_to_slice = copy,
 	});
 }
 

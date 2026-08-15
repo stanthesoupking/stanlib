@@ -21,6 +21,7 @@
 				gpu/gpu_impl.c,
 				image.c,
 				input.c,
+				platform.c,
 				ray_intersection.c,
 				string.c,
 				text.c,
