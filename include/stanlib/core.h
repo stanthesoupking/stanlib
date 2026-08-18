@@ -2086,6 +2086,20 @@ sl_inline vec2_f64 round_vec2_f64(vec2_f64 a) {
 		.y = round(a.y),
 	};
 }
+sl_inline vec3_f32 round_vec3_f32(vec3_f32 a) {
+	return (vec3_f32) {
+		.x = roundf(a.x),
+		.y = roundf(a.y),
+		.z = roundf(a.z),
+	};
+}
+sl_inline vec3_f64 round_vec3_f64(vec3_f64 a) {
+	return (vec3_f64) {
+		.x = round(a.x),
+		.y = round(a.y),
+		.z = round(a.z),
+	};
+}
 
 sl_inline f32 saturate_f32(f32 a) {
 	return sl_clamp(a, 0.0f, 1.0f);

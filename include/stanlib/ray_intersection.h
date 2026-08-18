@@ -20,3 +20,4 @@ typedef struct SL_Ray_Intersection {
 } SL_Ray_Intersection;
 
 SL_Ray_Intersection sl_ray_intersect_box(SL_Ray ray, Box_f32 box);
+SL_Ray_Intersection sl_ray_intersect_y_plane(SL_Ray ray, f32 y);

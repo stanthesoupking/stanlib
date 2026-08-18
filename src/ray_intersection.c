@@ -94,3 +94,20 @@ SL_Ray_Intersection sl_ray_intersect_box(SL_Ray ray, Box_f32 box) {
 		.normal = normal,
 	};
 }
+
+SL_Ray_Intersection sl_ray_intersect_y_plane(SL_Ray ray, f32 y) {
+	f32 distance = (y - ray.origin.y) * ray.direction_recip.y;
+
+	if (distance < 0.0f) {
+		return (SL_Ray_Intersection) {
+			.hit = false,
+		};
+	}
+
+	return (SL_Ray_Intersection) {
+		.hit = true,
+		.near = distance,
+		.far = distance,
+		.normal = { 0, -sign_f32(ray.direction.y), 0 },
+	};
+}
