@@ -1,11 +1,9 @@
-#include "stanlib/gpu.h"
+#include "stanlib/blitter.h"
+#include "stanlib/core.h"
 #include "stanlib/input.h"
-#include <stanlib/core.h>
+#include "stanlib/string.h"
+#include "stanlib/text.h"
 #include <stanlib/ui.h>
-#include <stanlib/blitter.h>
-#include <stanlib/text.h>
-
-#include <string.h>
 
 // MARK: ID
 
@@ -34,114 +32,87 @@ bool ui_id_is_null(UI_ID a) {
 	return a.hash == 0;
 }
 
-// MARK: Gesture
+sl_seq(UI_View, UI_View_Seq, ui_view_seq);
+sl_seq(UI_Window, UI_Window_Seq, ui_window_seq);
+sl_seq(UI_Gesture, UI_Gesture_Seq, ui_gesture_seq);
 
-typedef struct UI_Gesture {
-	Allocator* allocator;
+sl_hashmap(UI_ID, UI_Window, UI_Window_Map, ui_window_map, ui_id_get_hash, ui_id_equals);
 
-	const UI_Gesture_VTable* vtable;
+typedef enum UI_View_Flags {
+	UI_View_Flags_None,
+	UI_View_Flags_Fill_Available_Space = 1 << 0,
+} UI_View_Flags;
 
-	void* ctx;
-
-	UI_Element* element;
-
-	// The frame index, at the time the gesture was created.
-	u64 init_frame_index;
-} UI_Gesture;
-
-typedef struct UI_Persistent_State {
-	bool exists;
+typedef struct UI_View_Data {
 	UI_ID id;
-	u64 last_access_frame;
-	u64 generation;
+	UI_View_Flags flags;
+
+	bool needs_layout;
+
+	UI_View_Callbacks callbacks;
+	Rect_s32 frame;
+
+	// In z-order; bottom to top.
+	UI_View_Seq children;
+
+	UI_Gesture_Seq gestures;
+} UI_View_Data;
+sl_seq(UI_View_Data, UI_View_Data_Seq, ui_view_data_seq);
+
+typedef enum UI_Window_ID {
+	UI_Window_ID_Root,
+	UI_Window_ID_Label,
+	UI_Window_ID_Top_Background,
+	UI_Window_ID_Content_Background,
+	UI_Window_ID_Pan_Gesture,
+} UI_Window_ID;
+
+typedef struct UI_Window_Data {
+	UI_ID id;
+	bool accessed;
+	bool appearing;
+	Rect_s32 frame;
+
+	UI_Window_Style style;
+
+	// Root view.
+	// Contains label, buttons and menu bar.
+	UI_View root;
+
+	vec2_f32 pan_initial_location;
+	Rect_s32 pan_initial_frame;
+
+	UI_View heading_background;
+	UI_View heading_label;
+
+	UI_View content_background;
+	UI_View content;
+} UI_Window_Data;
+
+typedef struct UI_Storage_Data {
+	u32 generation;
 	void* data;
 	void (*destroy)(void* data);
-} UI_Persistent_State;
+} UI_Storage_Data;
+sl_seq(UI_Storage_Data, UI_Storage_Data_Seq, ui_storage_data_seq);
 
-typedef struct UI_Persistent_State_Handle {
-	UI_Persistent_State* state;
-	u64 generation;
-} UI_Persistent_State_Handle;
+typedef struct UI_Storage_Handle {
+	u32 index;
+	u32 generation;
+} UI_Storage_Handle;
+sl_seq(UI_Storage_Handle, UI_Storage_Handle_Seq, ui_storage_handle_seq);
 
-sl_seq(UI_Persistent_State, UI_Persistent_State_Seq, ui_persistent_state_seq);
-sl_seq(UI_Persistent_State*, UI_Persistent_State_Ptr_Seq, ui_persistent_state_ptr_seq);
-sl_seq(UI_Persistent_State_Handle, UI_Persistent_State_Handle_Seq, ui_persistent_state_handle_seq);
-sl_hashmap(UI_ID, UI_Persistent_State*, UI_Persistent_State_Map, ui_persistent_state_map, ui_id_get_hash, ui_id_equals);
+sl_hashmap(UI_ID, UI_Storage_Handle, UI_Storage_Map, ui_storage_map, ui_id_get_hash, ui_id_equals);
 
-typedef struct UI_Persistent_Store {
-	Allocator* allocator;
-	UI_Persistent_State_Seq states;
-	UI_Persistent_State_Ptr_Seq freelist;
-	UI_Persistent_State_Map map;
-} UI_Persistent_Store;
+typedef struct UI_Gesture_Storage_Handle {
+	UI_Storage_Handle storage_handle;
+} UI_Gesture_Storage_Handle;
+sl_seq(UI_Gesture_Storage_Handle, UI_Gesture_Storage_Handle_Seq, ui_gesture_storage_handle_seq);
 
-void ui_persistent_store_init(UI_Persistent_Store* store, Allocator* allocator) {
-	*store = (UI_Persistent_Store) {
-		.allocator = allocator,
-		.states = ui_persistent_state_seq_new(allocator, 64),
-		.freelist = ui_persistent_state_ptr_seq_new(allocator, 64),
-		.map = ui_persistent_state_map_new(allocator, 64),
-	};
-}
-void ui_persistent_store_deinit(UI_Persistent_Store* store) {
-	ui_persistent_state_seq_destroy(&store->states);
-	ui_persistent_state_ptr_seq_destroy(&store->freelist);
-	ui_persistent_state_map_destroy(&store->map);
-	*store = (UI_Persistent_Store) {0};
-}
-UI_Persistent_State* ui_persistent_store_acquire(UI_Persistent_Store* store, UI_ID id, u64 frame) {
-	UI_Persistent_State* value;
-	if (ui_persistent_state_map_get(&store->map, id, &value)) {
-		value->last_access_frame = frame;
-		return value;
-	} else {
-		if (ui_persistent_state_ptr_seq_pop(&store->freelist, &value)) {
-			const u64 new_generation = value->generation + 1;
-			*value = (UI_Persistent_State) {
-				.exists = true,
-				.id = id,
-				.last_access_frame = frame,
-				.generation = new_generation,
-			};
-		} else {
-			value = ui_persistent_state_seq_push_reserve(&store->states);
-			*value = (UI_Persistent_State) {
-				.exists = true,
-				.id = id,
-				.last_access_frame = frame,
-				.generation = 0,
-			};
-		}
-		ui_persistent_state_map_insert(&store->map, id, value);
-		return value;
-	}
-}
-void ui_persistent_store_purge(UI_Persistent_Store* store, u64 min_frame) {
-	const u64 state_count = ui_persistent_state_seq_get_count(&store->states);
-	for (u64 i = 0; i < state_count; i++) {
-		UI_Persistent_State* state = ui_persistent_state_seq_get_ptr(&store->states, i);
-		if (state->exists && (state->last_access_frame < min_frame)) {
-			if (state->destroy) {
-				state->destroy(state->data);
-			}
-
-			const u64 new_generation = state->generation + 1;
-			*state = (UI_Persistent_State) {
-				.exists = false,
-				.generation = new_generation,
-			};
-		}
-	}
-}
-UI_Persistent_State_Handle ui_persistent_state_get_handle(UI_Persistent_State* state) {
-	return (UI_Persistent_State_Handle) {
-		.state = state,
-		.generation = state->generation,
-	};
-}
-UI_Persistent_State* ui_persistent_state_handle_resolve(UI_Persistent_State_Handle handle) {
-	return (handle.state->generation == handle.generation) ? handle.state : NULL;
-}
+typedef struct UI_Gesture_Storage {
+	void* ctx;
+	const UI_Gesture_VTable* vtable;
+} UI_Gesture_Storage;
 
 // MARK: Touch
 
@@ -153,18 +124,14 @@ typedef enum UI_Touch_State : u8 {
 
 typedef struct UI_Touch {
 	Input_Touch_ID id;
-
 	UI_Touch_State state;
-
 	vec2_f32 position;
-
 	f64 timestamp;
-
 	u32 rc;
 
 	// Gestures that receive updates relating to the touch.
 	// Note: receivers could become null if the gesture no longer exists.
-	UI_Persistent_State_Handle_Seq receivers;
+	UI_Gesture_Storage_Handle_Seq receivers;
 } UI_Touch;
 
 u64 input_touch_id_hash(Input_Touch_ID id) {
@@ -193,116 +160,146 @@ bool ui_touch_equals(UI_Touch* a, UI_Touch* b) {
 	return input_touch_id_equals(a->id, b->id);
 }
 
-// MARK: Element
+typedef struct UI_Lifecycle {
+	Gpu_Texture texture;
 
-typedef struct UI_Element UI_Element;
+	// In z-order; bottom to top.
+	UI_Window_Seq windows;
 
-typedef struct UI_Element_Seq UI_Element_Seq;
-
-typedef struct UI_Element_VTable {
-	UI_Element* (*add_child)(UI* ui, UI_Element* self);
-	UI_Extent (*get_extent)(UI* ui, UI_Element* self);
-	UI_Element_Seq* (*get_children)(UI* ui, UI_Element* self);
-	void (*layout)(UI* ui, UI_Element* self);
-	void (*render)(UI* ui, UI_Element* self, SL_Blitter* blitter);
-} UI_Element_VTable;
-
-typedef struct UI_Element {
-	void* data;
-	const UI_Element_VTable* vtable;
-
-	bool culled;
-
-	// Derived during layout
-	Rect_f32 rect;
-
-	UI_Persistent_State_Ptr_Seq gestures;
-} UI_Element;
-
-sl_seq(UI_Element, UI_Element_Seq, ui_element_seq);
-
-#define UI_STACK_SIZE 32
-
-typedef struct UI_Frame {
-	Rect_f32 rect;
-	UI_Element zstack;
-} UI_Frame;
-sl_seq(UI_Frame, UI_Frame_Seq, ui_frame_seq);
-
-typedef enum UI_Lifecycle_State {
-	UI_Lifecycle_State_Began,
-	UI_Lifecycle_State_Ended,
-} UI_Lifecycle_State;
-
-#define UI_MAX_DEPTH 64
+	Rect_s32 frame;
+} UI_Lifecycle;
 
 typedef struct UI {
 	Allocator* allocator;
+	u32 lifecycle_index;
 
-	u64 frame_index;
-
-	UI_Lifecycle_State lifecycle_state;
-
-	UI_Frame_Seq frames;
-
-	UI_Element* stack[UI_MAX_DEPTH];
-	u32 stack_length;
-
-	SL_Arena_Allocator* arena;
+	UI_Storage_Data_Seq storage_data;
+	Seq_u32 storage_data_freelist;
+	UI_Storage_Map storage_map;
 
 	// Touch tracking
 	UI_Touch_Map active_touch_map;
 	UI_Touch_Seq touches;
 	UI_Touch_Ptr_Seq touch_freelist;
 
-	UI_Persistent_Store persistent_store;
+	SL_Arena_Allocator* arena[2];
+	SL_Arena_Allocator* scratch_arena;
+
+	UI_Lifecycle* prev_lifecycle;
+	UI_Lifecycle* current_lifecycle;
 } UI;
 
-UI* ui_new(Allocator* allocator) {
-	UI* ui;
-	allocator_new(allocator, ui, 1);
-	*ui = (UI) {
-		.allocator = allocator,
-		.frame_index = 0ull,
-		.lifecycle_state = UI_Lifecycle_State_Ended,
-		.arena = sl_arena_allocator_new(allocator),
-		.frames = ui_frame_seq_new(allocator, 0),
-		.active_touch_map = ui_touch_map_new(allocator, 32),
-		.touches = ui_touch_seq_new(allocator, 32),
-		.touch_freelist = ui_touch_ptr_seq_new(allocator, 32),
+static UI ui;
+
+void ui_init(const UI_Desc* desc) {
+	ui = (UI) {
+		.allocator = desc->allocator,
+		.storage_data = ui_storage_data_seq_new(desc->allocator, 64),
+		.storage_data_freelist = seq_u32_new(desc->allocator, 64),
+		.storage_map = ui_storage_map_new(desc->allocator, 512),
+		.active_touch_map = ui_touch_map_new(desc->allocator, 32),
+		.touches = ui_touch_seq_new(desc->allocator, 32),
+		.touch_freelist = ui_touch_ptr_seq_new(desc->allocator, 32),
+		.arena = {
+			sl_arena_allocator_new(desc->allocator),
+			sl_arena_allocator_new(desc->allocator),
+		},
+		.scratch_arena = sl_arena_allocator_new(desc->allocator),
 	};
-	ui_persistent_store_init(&ui->persistent_store, allocator);
-	return ui;
 }
-void ui_destroy(UI* ui) {
-	Allocator* allocator = ui->allocator;
-	ui_touch_map_destroy(&ui->active_touch_map);
-	ui_touch_seq_destroy(&ui->touches);
-	ui_touch_ptr_seq_destroy(&ui->touch_freelist);
-	ui_persistent_store_deinit(&ui->persistent_store);
-	*ui = (UI) {0};
-	allocator_free(allocator, ui, 1);
+void ui_deinit() {
+
 }
 
-Allocator* ui_get_allocator(UI* ui) {
-	return ui->allocator;
+Rect_s32 ui_padded_rect(Rect_s32 rect, UI_Padding padding) {
+	return (Rect_s32) {
+		.start = {
+			rect.start.x + padding.left,
+			rect.start.y + padding.top,
+		},
+		.end = {
+			rect.end.x - padding.right,
+			rect.end.y - padding.bottom,
+		},
+	};
 }
 
-// MARK: Gesture
+// MARK: Storage
 
-UI_Gesture* ui_persistent_state_handle_resolve_gesture(UI_Persistent_State_Handle handle) {
-	UI_Persistent_State* state = ui_persistent_state_handle_resolve(handle);
-	return state ? state->data : state;
+UI_Storage_Data* ui_storage_handle_resolve(UI_Storage_Handle handle) {
+	UI_Storage_Data* data = ui_storage_data_seq_get_ptr(&ui.storage_data, handle.index);
+	if (data->generation == handle.generation) {
+		return data;
+	} else {
+		return NULL;
+	}
+}
+
+bool ui_storage_get_handle(UI_ID id, UI_Storage_Handle* out_handle) {
+	return ui_storage_map_get(&ui.storage_map, id, out_handle);
+}
+
+void* ui_storage_get(UI_ID id) {
+	UI_Storage_Handle handle;
+	if (ui_storage_map_get(&ui.storage_map, id, &handle)) {
+		UI_Storage_Data* data = ui_storage_handle_resolve(handle);
+		return data ? data->data : NULL;
+	} else {
+		return NULL;
+	}
+}
+
+UI_Storage_Handle ui_storage_set_and_return_handle(UI_ID id, void* data, void (*destroy)(void* data)) {
+	// Acquire storage data
+	u32 storage_data_index;
+	if (!seq_u32_pop(&ui.storage_data_freelist, &storage_data_index)) {
+		storage_data_index = ui_storage_data_seq_get_count(&ui.storage_data);
+		ui_storage_data_seq_push(&ui.storage_data, (UI_Storage_Data) {0});
+	}
+
+	UI_Storage_Data* storage_data = ui_storage_data_seq_get_ptr(&ui.storage_data, storage_data_index);
+	storage_data->generation++;
+	storage_data->data = data;
+	storage_data->destroy = destroy;
+
+	const UI_Storage_Handle storage_handle = {
+		.generation = storage_data->generation,
+		.index = storage_data_index,
+	};
+
+	UI_Storage_Handle* existing_handle;
+	if (ui_storage_map_get_ptr(&ui.storage_map, id, &existing_handle)) {
+		UI_Storage_Data* existing_data = ui_storage_data_seq_get_ptr(&ui.storage_data, existing_handle->index);
+		existing_data->destroy(existing_data->data);
+		const u32 new_generation = existing_data->generation++;
+		*existing_data = (UI_Storage_Data) {
+			.generation = new_generation,
+		};
+		*existing_handle = storage_handle;
+	} else {
+		ui_storage_map_insert(&ui.storage_map, id, storage_handle);
+	}
+
+	return storage_handle;
+}
+
+void ui_storage_set(UI_ID id, void* data, void (*destroy)(void* data)) {
+	ui_storage_set_and_return_handle(id, data, destroy);
+}
+
+UI_Gesture_Storage* ui_gesture_storage_handle_resolve(UI_Gesture_Storage_Handle handle) {
+	UI_Storage_Data* storage_data = ui_storage_handle_resolve(handle.storage_handle);
+	return storage_data ? storage_data->data : NULL;
 }
 
 // MARK: Touch
 
-UI_Touch* ui_touch_new(UI* ui, Input_Touch_ID id) {
+UI_Touch* ui_touch_new(Input_Touch_ID id) {
 	UI_Touch* touch;
-	if (!ui_touch_ptr_seq_pop(&ui->touch_freelist, &touch)) {
-		touch = ui_touch_seq_push_reserve(&ui->touches);
+	if (!ui_touch_ptr_seq_pop(&ui.touch_freelist, &touch)) {
+		touch = ui_touch_seq_push_reserve(&ui.touches);
 		*touch = (UI_Touch) {
-			.receivers = ui_persistent_state_handle_seq_new(ui->allocator, 8),
+			.receivers = ui_gesture_storage_handle_seq_new(ui.allocator, 8),
 		};
 	}
 
@@ -311,98 +308,303 @@ UI_Touch* ui_touch_new(UI* ui, Input_Touch_ID id) {
 	touch->id = id;
 	touch->rc = 1;
 
-	ui_touch_map_insert(&ui->active_touch_map, id, touch);
+	ui_touch_map_insert(&ui.active_touch_map, id, touch);
 
 	return touch;
 }
-void ui_touch_retain(UI* ui, UI_Touch* touch) {
+void ui_touch_retain(UI_Touch* touch) {
 	sl_debug_assert(touch->rc > 0, "RC must be > 0 to retain.");
 	touch->rc++;
 }
-void ui_touch_release(UI* ui, UI_Touch* touch) {
+void ui_touch_release(UI_Touch* touch) {
 	sl_debug_assert(touch->rc > 0, "RC must be > 0 to release.");
 	touch->rc--;
 
 	if (touch->rc == 0) {
 		touch->id = (Input_Touch_ID) {0};
-		ui_persistent_state_handle_seq_clear(&touch->receivers);
-		ui_touch_ptr_seq_push(&ui->touch_freelist, touch);
+		ui_gesture_storage_handle_seq_clear(&touch->receivers);
+		ui_touch_ptr_seq_push(&ui.touch_freelist, touch);
 	}
 }
-void ui_touch_began(UI* ui, UI_Touch* touch) {
+void ui_touch_began(UI_Touch* touch) {
 	sl_debug_assert(touch->state == UI_Touch_State_Alive, "Only alive touches can begin.");
-	for (u32 receiver_idx = 0; receiver_idx < ui_persistent_state_handle_seq_get_count(&touch->receivers); receiver_idx++) {
-		const UI_Persistent_State_Handle gesture_handle = ui_persistent_state_handle_seq_get(&touch->receivers, receiver_idx);
-		UI_Gesture* gesture = ui_persistent_state_handle_resolve_gesture(gesture_handle);
-		if (gesture != NULL) {
-			gesture->vtable->touch_began(ui, gesture->ctx, touch);
+	for (u32 receiver_idx = 0; receiver_idx < ui_gesture_storage_handle_seq_get_count(&touch->receivers); receiver_idx++) {
+		const UI_Gesture_Storage_Handle gesture_handle = ui_gesture_storage_handle_seq_get(&touch->receivers, receiver_idx);
+		UI_Gesture_Storage* gesture_storage = ui_gesture_storage_handle_resolve(gesture_handle);
+		if (gesture_storage) {
+			gesture_storage->vtable->touch_began(gesture_storage->ctx, touch);
 		}
 	}
 }
-void ui_touch_changed(UI* ui, UI_Touch* touch) {
+void ui_touch_changed(UI_Touch* touch) {
 	sl_debug_assert(touch->state == UI_Touch_State_Alive, "Only alive touches can change.");
-	for (u32 receiver_idx = 0; receiver_idx < ui_persistent_state_handle_seq_get_count(&touch->receivers); receiver_idx++) {
-		const UI_Persistent_State_Handle gesture_handle = ui_persistent_state_handle_seq_get(&touch->receivers, receiver_idx);
-		UI_Gesture* gesture = ui_persistent_state_handle_resolve_gesture(gesture_handle);
-		if (gesture != NULL) {
-			gesture->vtable->touch_changed(ui, gesture->ctx, touch);
+	for (u32 receiver_idx = 0; receiver_idx < ui_gesture_storage_handle_seq_get_count(&touch->receivers); receiver_idx++) {
+		const UI_Gesture_Storage_Handle gesture_handle = ui_gesture_storage_handle_seq_get(&touch->receivers, receiver_idx);
+		UI_Gesture_Storage* gesture_storage = ui_gesture_storage_handle_resolve(gesture_handle);
+		if (gesture_storage) {
+			gesture_storage->vtable->touch_changed(gesture_storage->ctx, touch);
 		}
 	}
 }
-void ui_touch_ended(UI* ui, UI_Touch* touch) {
+void ui_touch_ended(UI_Touch* touch) {
 	sl_debug_assert(touch->state == UI_Touch_State_Alive, "Can only end an alive touch.");
 	touch->state = UI_Touch_State_Ended;
-	for (u32 receiver_idx = 0; receiver_idx < ui_persistent_state_handle_seq_get_count(&touch->receivers); receiver_idx++) {
-		const UI_Persistent_State_Handle gesture_handle = ui_persistent_state_handle_seq_get(&touch->receivers, receiver_idx);
-		UI_Gesture* gesture = ui_persistent_state_handle_resolve_gesture(gesture_handle);
-		if (gesture != NULL) {
-			gesture->vtable->touch_ended(ui, gesture->ctx, touch);
+	for (u32 receiver_idx = 0; receiver_idx < ui_gesture_storage_handle_seq_get_count(&touch->receivers); receiver_idx++) {
+		const UI_Gesture_Storage_Handle gesture_handle = ui_gesture_storage_handle_seq_get(&touch->receivers, receiver_idx);
+		UI_Gesture_Storage* gesture_storage = ui_gesture_storage_handle_resolve(gesture_handle);
+		if (gesture_storage) {
+			gesture_storage->vtable->touch_ended(gesture_storage->ctx, touch);
 		}
 	}
 
-	sl_unused bool removed = ui_touch_map_remove(&ui->active_touch_map, touch->id);
+	sl_unused bool removed = ui_touch_map_remove(&ui.active_touch_map, touch->id);
 	sl_debug_assert(removed, "Should have removed touch from alive map.");
 
-	ui_touch_release(ui, touch);
+	ui_touch_release(touch);
 }
-void ui_touch_cancelled(UI* ui, UI_Touch* touch) {
+void ui_touch_cancelled(UI_Touch* touch) {
 	sl_debug_assert(touch->state == UI_Touch_State_Alive, "Can only end an alive touch.");
 	touch->state = UI_Touch_State_Cancelled;
-	for (u32 receiver_idx = 0; receiver_idx < ui_persistent_state_handle_seq_get_count(&touch->receivers); receiver_idx++) {
-		const UI_Persistent_State_Handle gesture_handle = ui_persistent_state_handle_seq_get(&touch->receivers, receiver_idx);
-		UI_Gesture* gesture = ui_persistent_state_handle_resolve_gesture(gesture_handle);
-		if (gesture != NULL) {
-			gesture->vtable->touch_cancelled(ui, gesture->ctx, touch);
+	for (u32 receiver_idx = 0; receiver_idx < ui_gesture_storage_handle_seq_get_count(&touch->receivers); receiver_idx++) {
+		const UI_Gesture_Storage_Handle gesture_handle = ui_gesture_storage_handle_seq_get(&touch->receivers, receiver_idx);
+		UI_Gesture_Storage* gesture_storage = ui_gesture_storage_handle_resolve(gesture_handle);
+		if (gesture_storage) {
+			gesture_storage->vtable->touch_cancelled(gesture_storage->ctx, touch);
 		}
 	}
 
-	sl_unused bool removed = ui_touch_map_remove(&ui->active_touch_map, touch->id);
+	sl_unused bool removed = ui_touch_map_remove(&ui.active_touch_map, touch->id);
 	sl_debug_assert(removed, "Should have removed touch from alive map.");
 
-	ui_touch_release(ui, touch);
+	ui_touch_release(touch);
 }
 
-void ui_draw_image(UI* ui, SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, Rect_f32 atlas_rect, vec4_f32 color) {
-	Textured_Quad_f32* quad;
-	allocator_new(&ui->arena->allocator, quad, 1);
+SL_Arena_Allocator* ui_current_arena() {
+	return ui.arena[ui.lifecycle_index % 2];
+}
 
+Allocator* ui_lifecycle_allocator() {
+	return &ui_current_arena()->allocator;
+}
+
+void ui_lifecycle_begin(Rect_s32 frame, Gpu_Texture texture) {
+	ui.lifecycle_index++;
+
+	SL_Arena_Allocator* arena = ui_current_arena();
+	sl_arena_allocator_reset(arena, 0);
+	allocator_new(&arena->allocator, ui.current_lifecycle, 1);
+	*ui.current_lifecycle = (UI_Lifecycle) {
+		.frame = frame,
+		.texture = texture,
+		.windows = ui_window_seq_new(&arena->allocator, 0),
+	};
+
+	// Copy across windows from the previous lifecycle.
+	if (ui.prev_lifecycle) {
+		for (u64 i = 0; i < ui_window_seq_get_count(&ui.prev_lifecycle->windows); i++) {
+			const UI_Window prev_handle = ui_window_seq_get(&ui.prev_lifecycle->windows, i);
+
+			UI_Window_Data* current_data;
+			allocator_new(&arena->allocator, current_data, 1);
+			*current_data = *prev_handle.data;
+			current_data->accessed = false;
+			current_data->appearing = false;
+
+			const UI_Window current_handle = {
+				.data = current_data,
+				.lifecycle_index = ui.lifecycle_index,
+			};
+			ui_window_seq_push(&ui.current_lifecycle->windows, current_handle);
+		}
+	}
+}
+
+typedef struct UI_Gesture_Data {
+	UI_Gesture_Storage_Handle storage_handle;
+} UI_Gesture_Data;
+
+bool ui_populate_receivers_recurse(UI_Touch* touch, UI_View view) {
+	const Rect_s32 frame = ui_view_get_frame(view);
+	if (rect_contains_f32(cvt_rect_s32_f32(frame), touch->position)) {
+		const s64 child_count = ui_view_seq_get_count(&view.data->children);
+		for (s64 child_idx = child_count - 1; child_idx >= 0; child_idx--) {
+			const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
+			if (ui_populate_receivers_recurse(touch, child)) {
+				return true;
+			}
+		}
+
+		const u64 gesture_count = ui_gesture_seq_get_count(&view.data->gestures);
+		for (u64 gesture_idx = 0; gesture_idx < gesture_count; gesture_idx++) {
+			UI_Gesture gesture = ui_gesture_seq_get(&view.data->gestures, gesture_idx);
+			ui_gesture_storage_handle_seq_push(&touch->receivers, gesture.data->storage_handle);
+		}
+		return true;
+	}
+
+	return false;
+}
+
+void ui_populate_receivers(UI_Touch* touch) {
+	const s64 window_count = ui_window_seq_get_count(&ui.current_lifecycle->windows);
+	for (s64 window_idx = window_count - 1; window_idx >= 0; window_idx--) {
+		const UI_Window window = ui_window_seq_get(&ui.current_lifecycle->windows, window_idx);
+		if (!window.data->accessed) {
+			continue;
+		}
+
+		ui_view_layout(window.data->root);
+		if (ui_populate_receivers_recurse(touch, window.data->root)) {
+			break;
+		}
+	}
+}
+
+void ui_layout_windows() {
+	const u64 window_count = ui_window_seq_get_count(&ui.current_lifecycle->windows);
+	for (u64 window_idx = 0; window_idx < window_count; window_idx++) {
+		const UI_Window window = ui_window_seq_get(&ui.current_lifecycle->windows, window_idx);
+		if (!window.data->accessed) {
+			continue;
+		}
+		ui_view_layout(window.data->root);
+	}
+}
+
+void ui_lifecycle_interact(Input_Tracker* input_tracker) {
+	if (!ui.current_lifecycle) {
+		return;
+	}
+
+	ui_layout_windows();
+
+	Input_Event_Iterator event_iterator = input_tracker_get_event_iterator(input_tracker);
+
+	Input_Event event;
+	while (input_event_iterator_get_next(&event_iterator, &event)) {
+		switch (event.kind) {
+			case Input_Event_Kind_Touch_Began: {
+				UI_Touch* touch;
+				if (ui_touch_map_get(&ui.active_touch_map, event.touch.id, &touch)) {
+					// Prior touch with same ID never received an ended/cancelled event.
+					// Ending it now for consistency; there can't be two live touches with the same external ID.
+					ui_touch_ended(touch);
+					touch = NULL;
+				}
+
+				touch = ui_touch_new(event.touch.id);
+				touch->position = event.touch.position;
+				touch->timestamp = event.touch.timestamp;
+				ui_populate_receivers(touch);
+				ui_touch_began(touch);
+			} break;
+
+			case Input_Event_Kind_Touch_Changed: {
+				UI_Touch* touch;
+				if (ui_touch_map_get(&ui.active_touch_map, event.touch.id, &touch)) {
+					touch->position = event.touch.position;
+					touch->timestamp = event.touch.timestamp;
+					ui_touch_changed(touch);
+				}
+			} break;
+
+			case Input_Event_Kind_Touch_Ended: {
+				UI_Touch* touch;
+				if (ui_touch_map_get(&ui.active_touch_map, event.touch.id, &touch)) {
+					touch->position = event.touch.position;
+					touch->timestamp = event.touch.timestamp;
+					ui_touch_ended(touch);
+				}
+			} break;
+
+			case Input_Event_Kind_Touch_Cancelled: {
+				UI_Touch* touch;
+				if (ui_touch_map_get(&ui.active_touch_map, event.touch.id, &touch)) {
+					touch->position = event.touch.position;
+					touch->timestamp = event.touch.timestamp;
+					ui_touch_cancelled(touch);
+				}
+			} break;
+
+			default:
+				break;
+		}
+	}
+}
+
+void ui_view_pre_render(UI_View view);
+void ui_pre_render_windows() {
+	const u64 window_count = ui_window_seq_get_count(&ui.current_lifecycle->windows);
+	for (u64 window_idx = 0; window_idx < window_count; window_idx++) {
+		const UI_Window window = ui_window_seq_get(&ui.current_lifecycle->windows, window_idx);
+		if (!window.data->accessed) {
+			continue;
+		}
+		ui_view_pre_render(window.data->root);
+	}
+}
+
+void ui_view_render(UI_View view, SL_Blitter* blitter);
+void ui_render_windows(SL_Blitter* blitter) {
+	const u64 window_count = ui_window_seq_get_count(&ui.current_lifecycle->windows);
+	for (u64 window_idx = 0; window_idx < window_count; window_idx++) {
+		const UI_Window window = ui_window_seq_get(&ui.current_lifecycle->windows, window_idx);
+		if (!window.data->accessed) {
+			continue;
+		}
+		ui_view_render(window.data->root, blitter);
+	}
+}
+
+void ui_lifecycle_pre_render(void) {
+	if (!ui.current_lifecycle) {
+		return;
+	}
+
+	ui_layout_windows();
+	ui_pre_render_windows();
+}
+
+void ui_lifecycle_render(SL_Blitter* blitter) {
+	if (!ui.current_lifecycle) {
+		return;
+	}
+
+	ui_layout_windows();
+	ui_render_windows(blitter);
+}
+
+void ui_cull_unused_windows() {
+	u64 i = 0;
+	while (i < ui_window_seq_get_count(&ui.current_lifecycle->windows)) {
+		const UI_Window window = ui_window_seq_get(&ui.current_lifecycle->windows, i);
+		if (!window.data->accessed) {
+			ui_window_seq_remove(&ui.current_lifecycle->windows, i);
+		} else {
+			i++;
+		}
+	}
+}
+
+void ui_lifecycle_end() {
+	ui_cull_unused_windows();
+
+	ui.prev_lifecycle = ui.current_lifecycle;
+	ui.current_lifecycle = NULL;
+}
+
+// MARK: Drawing
+
+void ui_draw_image(SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, Rect_f32 atlas_rect, vec4_f32 color) {
 	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
 	const vec2_f32 texture_size = { (f32)texture_desc->size.x, (f32)texture_desc->size.y };
 
-	*quad = textured_quad_for_sub_region_f32(rect, div_rect_vec_f32(atlas_rect, texture_size), color);
-	sl_blitter_draw_textured_quads(blitter, texture, quad, 1, SL_Blitter_Sampler_Nearest);
+	const Textured_Quad_f32 quad = textured_quad_for_sub_region_f32(rect, div_rect_vec_f32(atlas_rect, texture_size), color);
+	sl_blitter_draw_textured_quads(blitter, texture, &quad, 1, SL_Blitter_Sampler_Nearest);
 }
 
-void ui_pop(UI* ui) {
-	sl_debug_assert(ui->stack_length > 0, "Nothing to pop.");
-	if (ui->stack_length > 0) {
-		ui->stack_length--;
-	}
-}
-
-void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, UI_Nine_Patch nine_patch, vec4_f32 tint) {
-	Textured_Quad_f32* quads;
-	allocator_new(&ui->arena->allocator, quads, 9);
+void ui_draw_nine_patch(SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, UI_Nine_Patch nine_patch, vec4_f32 tint) {
+	Textured_Quad_f32 quads[9];
 
 	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
 	const vec2_f32 texture_size = { (f32)texture_desc->size.x, (f32)texture_desc->size.y };
@@ -529,27 +731,330 @@ void ui_draw_nine_patch(UI* ui, SL_Blitter* blitter, Gpu_Texture texture, Rect_f
 	sl_blitter_draw_textured_quads(blitter, texture, quads, next_quad, SL_Blitter_Sampler_Nearest);
 }
 
-// MARK: Rect
+// MARK: Window
 
-Rect_f32 ui_padded_rect(Rect_f32 rect, UI_Padding padding) {
-	return (Rect_f32) {
-		.start = {
-			rect.start.x + padding.left,
-			rect.start.y + padding.top,
+void ui_window_validate(UI_Window window) {
+	sl_debug_assert(window.lifecycle_index == ui.lifecycle_index, "Invalid window.");
+}
+
+void ui_window_root_layout_subviews(void* ctx, UI_View view) {
+	UI_Window_Data* window_data = ctx;
+
+	Rect_s32 root_frame = ui_view_get_frame(window_data->root);
+
+	Rect_s32 content_frame;
+	if (window_data->style.has_heading) {
+		Rect_s32 top_frame = {
+			.start = root_frame.start,
+			.end = {
+				root_frame.end.x,
+				root_frame.start.y + window_data->style.heading_style.height,
+			},
+		};
+		ui_view_set_frame(window_data->heading_background, top_frame);
+		ui_view_set_frame(window_data->heading_label, top_frame);
+
+		content_frame = (Rect_s32) {
+			.start = {
+				root_frame.start.x,
+				top_frame.end.y,
+			},
+			.end = root_frame.end,
+		};
+	} else {
+		content_frame = root_frame;
+	}
+
+	ui_view_set_frame(window_data->content_background, content_frame);
+
+	const Rect_s32 padded_content_frame = ui_padded_rect(content_frame, window_data->style.content_padding);
+	ui_view_set_frame(window_data->content, padded_content_frame);
+}
+
+void ui_window_pan(void* ctx, const UI_Pan_Gesture_Frame* frame) {
+	UI_Window* window = ctx;
+	ui_window_validate(*window);
+
+	ui_window_send_to_front(*window);
+
+	if (frame->state == UI_Gesture_State_Began) {
+		window->data->pan_initial_location = frame->position;
+		window->data->pan_initial_frame = window->data->frame;
+	}
+
+	const Rect_s32 new_frame = rect_offset_s32(window->data->pan_initial_frame, cvt_vec2_f32_s32(frame->translation));
+	ui_window_set_frame(*window, new_frame);
+}
+
+UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Window_Style* style) {
+	bool appearing = false;
+	UI_Window_Data* current_data = NULL;
+
+	// Find existing window.
+	{
+		const u64 window_count = ui_window_seq_get_count(&ui.current_lifecycle->windows);
+		for (u64 window_idx = 0; window_idx < window_count; window_idx++) {
+			const UI_Window window = ui_window_seq_get(&ui.current_lifecycle->windows, window_idx);
+			if (ui_id_equals(window.data->id, id)) {
+				sl_debug_assert(!window.data->accessed, "Window with the same ID already exists.");
+				current_data = window.data;
+			}
+		}
+	}
+
+	// Create new window.
+	if (!current_data) {
+		appearing = true;
+		allocator_new(ui_lifecycle_allocator(), current_data, 1);
+		*current_data = (UI_Window_Data) {0};
+	}
+
+	const UI_View_Callbacks root_callbacks = {
+		.ctx = current_data,
+		.layout_subviews = ui_window_root_layout_subviews,
+	};
+	UI_View root = ui_view(ui_id_internal(id, UI_Window_ID_Root, 0, true), &root_callbacks);
+	ui_view_set_frame(root, current_data->frame);
+
+	const UI_Window window = {
+		.data = current_data,
+		.lifecycle_index = ui.lifecycle_index,
+	};
+
+	UI_Window* pan_ctx;
+	allocator_new(ui_lifecycle_allocator(), pan_ctx, 1);
+	*pan_ctx = window;
+	const UI_Pan_Gesture_Desc pan_desc = {
+		.touch_mask = Input_Touch_Kind_Mask_All,
+		.minimum_touches = 1,
+		.maximum_touches = 1,
+		.callback = {
+			.ctx = pan_ctx,
+			.func = ui_window_pan,
 		},
-		.end = {
-			rect.end.x - padding.right,
-			rect.end.y - padding.bottom,
-		},
+	};
+	UI_Gesture pan_gesture = ui_pan_gesture(ui_id_internal(id, UI_Window_ID_Pan_Gesture, 0, true), &pan_desc);
+
+	UI_View content_background = ui_nine_patch(ui_id_internal(id, UI_Window_ID_Content_Background, 0, true), style->content_background_9p, style->content_background_tint);
+	ui_view_add_subview(root, content_background);
+
+	if (style->has_heading) {
+		current_data->heading_background = ui_nine_patch(ui_id_internal(id, UI_Window_ID_Top_Background, 0, true), style->heading_style.background_9p, style->heading_style.background_tint);
+		ui_view_add_subview(root, current_data->heading_background);
+		ui_view_add_gesture(current_data->heading_background, pan_gesture);
+
+		current_data->heading_label = ui_label(ui_id_internal(id, UI_Window_ID_Label, 0, true), title, &style->heading_style.label_style);
+		ui_view_add_subview(root, current_data->heading_label);
+		ui_view_add_gesture(current_data->heading_label, pan_gesture);
+	} else {
+		current_data->heading_background = (UI_View) {0};
+		current_data->heading_label = (UI_View) {0};
+	}
+
+	ui_view_add_subview(root, content);
+
+	current_data->id = id;
+	current_data->accessed = true;
+	current_data->root = root;
+	current_data->content = content;
+	current_data->content_background = content_background;
+	current_data->style = *style;
+	current_data->appearing = appearing;
+
+	if (appearing) {
+		ui_window_seq_push(&ui.current_lifecycle->windows, window);
+
+		// Apply default frame
+		const UI_Limits content_limits = ui_view_get_limits(content);
+		const vec2_s32 root_frame_centre = rect_centre_s32(ui.current_lifecycle->frame);
+		const vec2_s32 window_size = content_limits.min;
+		const vec2_s32 window_offset = sub_vec2_s32(root_frame_centre, div_vec2_s32(window_size, splat_vec2_s32(2)));
+		const Rect_s32 window_frame = {
+			.start = window_offset,
+			.end = add_vec2_s32(window_offset, window_size),
+		};
+		ui_window_set_frame(window, window_frame);
+	}
+
+	return window;
+}
+
+bool ui_window_is_appearing(UI_Window window) {
+	ui_window_validate(window);
+
+	return window.data->appearing;
+}
+
+Rect_s32 ui_window_get_frame(UI_Window window) {
+	ui_window_validate(window);
+
+	return window.data->frame;
+}
+
+void ui_window_set_frame(UI_Window window, Rect_s32 frame) {
+	ui_window_validate(window);
+
+	window.data->frame = frame;
+	ui_view_set_frame(window.data->root, frame);
+}
+
+void ui_window_send_to_front(UI_Window window) {
+	ui_window_validate(window);
+
+	// Find index in window array.
+	u64 current_idx;
+	const u64 window_count = ui_window_seq_get_count(&ui.current_lifecycle->windows);
+	for (current_idx = 0; current_idx < window_count; current_idx++) {
+		const UI_Window window_at_idx = ui_window_seq_get(&ui.current_lifecycle->windows, current_idx);
+		if (window_at_idx.data == window.data) {
+			break;
+		}
+	}
+
+	sl_debug_assert(current_idx < window_count, "Failed to find window in list.");
+	if (current_idx >= window_count) {
+		return;
+	}
+
+	ui_window_seq_remove(&ui.current_lifecycle->windows, current_idx);
+	ui_window_seq_push(&ui.current_lifecycle->windows, window);
+}
+
+UI_View ui_view(UI_ID id, const UI_View_Callbacks* callbacks) {
+	Allocator* allocator = ui_lifecycle_allocator();
+
+	UI_View_Data* current_data;
+	allocator_new(allocator, current_data, 1);
+	*current_data = (UI_View_Data) {
+		.id = id,
+		.callbacks = callbacks ? *callbacks : (UI_View_Callbacks) {},
+		.needs_layout = true,
+		.children = ui_view_seq_new(allocator, 0),
+		.gestures = ui_gesture_seq_new(allocator, 0),
+	};
+
+	return (UI_View) {
+		.data = current_data,
+		.lifecycle_index = ui.lifecycle_index,
 	};
 }
 
-Rect_f32 ui_rect_snap_to_pixels(Rect_f32 rect) {
-	return (Rect_f32) {
-		.start = { roundf(rect.start.x), roundf(rect.start.y) },
-		.end = { roundf(rect.end.x), roundf(rect.end.y) },
+void ui_view_validate(UI_View view) {
+	sl_debug_assert(view.lifecycle_index == ui.lifecycle_index, "Invalid view.");
+}
+
+Rect_s32 ui_view_get_frame(UI_View view) {
+	ui_view_validate(view);
+
+	return view.data->frame;
+}
+
+void ui_view_set_frame(UI_View view, Rect_s32 frame) {
+	ui_view_validate(view);
+
+	view.data->needs_layout |= !rect_s32_equals(view.data->frame, frame);
+	view.data->frame = frame;
+}
+
+void ui_view_layout(UI_View view) {
+	ui_view_validate(view);
+
+	if (!view.data->needs_layout) {
+		return;
+	}
+
+	if (view.data->callbacks.layout_subviews) {
+		view.data->callbacks.layout_subviews(view.data->callbacks.ctx, view);
+	}
+
+	const u64 child_count = ui_view_seq_get_count(&view.data->children);
+	for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
+		const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
+		ui_view_layout(child);
+	}
+}
+
+void ui_view_pre_render(UI_View view) {
+	ui_view_validate(view);
+
+	if (view.data->callbacks.pre_render) {
+		view.data->callbacks.pre_render(view.data->callbacks.ctx, view);
+	}
+
+	const u64 child_count = ui_view_seq_get_count(&view.data->children);
+	for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
+		const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
+		ui_view_pre_render(child);
+	}
+}
+
+void ui_view_render(UI_View view, SL_Blitter* blitter) {
+	ui_view_validate(view);
+
+	if (view.data->callbacks.render) {
+		view.data->callbacks.render(view.data->callbacks.ctx, view, blitter);
+	}
+
+	const u64 child_count = ui_view_seq_get_count(&view.data->children);
+	for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
+		const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
+		ui_view_render(child, blitter);
+	}
+}
+
+UI_Limits ui_view_get_limits(UI_View view) {
+	ui_view_validate(view);
+
+	if (view.data->callbacks.get_limits) {
+		return view.data->callbacks.get_limits(view.data->callbacks.ctx, view);
+	} else {
+		return (UI_Limits) {
+			.min = { 0, 0 },
+			.max = { s32_max, s32_max },
+		};
+	}
+}
+
+void ui_view_add_subview(UI_View parent, UI_View child) {
+	ui_view_validate(parent);
+	ui_view_validate(child);
+
+	parent.data->needs_layout = true;
+	ui_view_seq_push(&parent.data->children, child);
+}
+
+void ui_view_add_gesture(UI_View view, UI_Gesture gesture) {
+	ui_view_validate(view);
+
+	ui_gesture_seq_push(&view.data->gestures, gesture);
+}
+
+// MARK: Text Measurements
+
+typedef struct UI_Text_Measurements {
+	Range_s32 y_range;
+	vec2_s32 size;
+} UI_Text_Measurements;
+
+UI_Text_Measurements ui_text_measurements(SL_Font* font, SL_String_View string) {
+	const Range_s32 font_y_range = sl_font_get_y_range(font);
+
+	if (string.length == 0) {
+		return (UI_Text_Measurements) {
+			.size = {},
+			.y_range = font_y_range,
+		};
+	}
+
+	const Rect_s32 label_rect = sl_font_measure_string(font, string.str);
+	const vec2_s32 label_size = rect_size_s32(label_rect);
+	return (UI_Text_Measurements) {
+		.size = label_size,
+		.y_range = font_y_range,
 	};
 }
+
+// MARK: Distribute
 
 // MARK: Distribute
 
@@ -557,6 +1062,7 @@ typedef struct UI_Distribute_Item {
 	f32 value;
 	f32 min;
 	f32 max;
+	bool fill;
 } UI_Distribute_Item;
 
 void ui_distribute(f32 size, f32 spacing, UI_Distribute_Item* items, u64 item_count) {
@@ -575,7 +1081,7 @@ void ui_distribute(f32 size, f32 spacing, UI_Distribute_Item* items, u64 item_co
 		item->value = item->min;
 		remaining -= item->min;
 
-		if (item->max == UI_FILL) {
+		if (item->fill) {
 			fill_count++;
 		} else {
 			non_fill_remaining += item->max - item->min;
@@ -587,7 +1093,7 @@ void ui_distribute(f32 size, f32 spacing, UI_Distribute_Item* items, u64 item_co
 		const f32 amount_per_child = saturate_f32(remaining / non_fill_remaining);
 		for (u32 i = 0; i < item_count; i++) {
 			UI_Distribute_Item* item = &items[i];
-			if (item->max != UI_FILL) {
+			if (!item->fill) {
 				const f32 additional_width = (item->max - item->min) * amount_per_child;
 				item->value += additional_width;
 			}
@@ -600,93 +1106,651 @@ void ui_distribute(f32 size, f32 spacing, UI_Distribute_Item* items, u64 item_co
 		const f32 amount_per_child = sl_max(remaining / (f32)fill_count, 0.0f);
 		for (u64 i = 0; i < item_count; i++) {
 			UI_Distribute_Item* item = &items[i];
-			if (item->max == UI_FILL) {
+			if (item->fill) {
 				item->value += amount_per_child;
 			}
 		}
 	}
 }
 
-// MARK: Extent
+// MARK: Stack
 
-UI_Extent ui_extent_combine(UI_Extent parent, UI_Extent child) {
-	UI_Extent result = {
-		.min_width = sl_max(parent.min_width, child.min_width),
-		.min_height = sl_max(parent.min_height, child.min_height),
+typedef struct UI_Stack_Data {
+	UI_Padding padding;
+	UI_Axis axis;
+	UI_Alignment alignment;
+	s32 spacing;
+} UI_Stack_Data;
+
+UI_Limits ui_stack_get_limits(void* ctx, UI_View view) {
+	ui_view_validate(view);
+	UI_Stack_Data* stack_data = ctx;
+
+	UI_Limits limits = {0};
+
+	const u64 child_count = ui_view_seq_get_count(&view.data->children);
+	for (u64 i = 0; i < child_count; i++) {
+		const UI_View child = ui_view_seq_get(&view.data->children, i);
+		const UI_Limits child_limits = ui_view_get_limits(child);
+
+		switch (stack_data->axis) {
+			case UI_Axis_Vertical: {
+				limits.min.x = sl_max(limits.min.x, child_limits.min.x);
+				limits.max.x = sl_max(limits.max.x, child_limits.max.x);
+
+				limits.min.y += child_limits.min.y;
+				limits.max.y = (child_limits.max.y == s32_max) ? s32_max : (limits.max.y + child_limits.max.y);
+			} break;
+
+			case UI_Axis_Horizontal: {
+				limits.min.y = sl_max(limits.min.y, child_limits.min.y);
+				limits.max.y = sl_max(limits.max.y, child_limits.max.y);
+
+				limits.min.x += child_limits.min.x;
+				limits.max.x = (child_limits.max.x == s32_max) ? s32_max : (limits.max.x + child_limits.max.x);
+			} break;
+		}
+	}
+
+	const s32 spacing_total = (child_count > 0) ? ((s32)child_count - 1) : 0;
+	switch (stack_data->axis) {
+		case UI_Axis_Vertical: {
+			limits.min.y += spacing_total;
+			limits.max.y = (limits.max.y == s32_max) ? s32_max : spacing_total;
+		} break;
+
+		case UI_Axis_Horizontal: {
+			limits.min.x += spacing_total;
+			limits.max.x = (limits.max.x == s32_max) ? s32_max : spacing_total;
+		} break;
+	}
+
+	return limits;
+}
+
+void ui_stack_layout_subviews(void* ctx, UI_View view) {
+	ui_view_validate(view);
+	UI_Stack_Data* stack_data = ctx;
+
+	const u64 child_count = ui_view_seq_get_count(&view.data->children);
+
+	const u64 initial_arena_position = sl_arena_allocator_get_position(ui.scratch_arena);
+
+	UI_Distribute_Item* distribute_items;
+	allocator_new(&ui.scratch_arena->allocator, distribute_items, child_count);
+
+	for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
+		const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
+		const UI_Limits child_limits = ui_view_get_limits(child);
+
+		switch (stack_data->axis) {
+			case UI_Axis_Vertical: {
+				distribute_items[child_idx] = (UI_Distribute_Item) {
+					.value = 0.0f,
+					.min = child_limits.min.y,
+					.max = child_limits.max.y,
+					.fill = ((child.data->flags & UI_View_Flags_Fill_Available_Space) > 0),
+				};
+			} break;
+
+			case UI_Axis_Horizontal: {
+				distribute_items[child_idx] = (UI_Distribute_Item) {
+					.value = 0.0f,
+					.min = child_limits.min.x,
+					.max = child_limits.max.x,
+					.fill = ((child.data->flags & UI_View_Flags_Fill_Available_Space) > 0),
+				};
+			} break;
+		}
+	}
+
+	const Rect_s32 stack_frame = ui_view_get_frame(view);
+	const Rect_s32 stack_frame_padded = ui_padded_rect(stack_frame, stack_data->padding);
+	const vec2_s32 padded_rect_size = rect_size_s32(stack_frame_padded);
+
+	switch (stack_data->axis) {
+		case UI_Axis_Vertical: {
+			ui_distribute(padded_rect_size.y, stack_data->spacing, distribute_items, child_count);
+			f32 current_y = stack_frame_padded.start.y;
+			for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
+				const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
+				const UI_Limits child_limits = ui_view_get_limits(child);
+				const UI_Distribute_Item* distribute_item = &distribute_items[child_idx];
+				const s32 child_width = sl_clamp(padded_rect_size.x, child_limits.min.x, child_limits.max.x);
+
+				f32 offset_x;
+				switch (stack_data->alignment) {
+					case UI_Alignment_Left: {
+						offset_x = stack_frame_padded.start.x;
+					} break;
+
+					case UI_Alignment_Center: {
+						offset_x = stack_frame_padded.start.x + (padded_rect_size.x * 0.5f) - (child_width * 0.5f);
+					} break;
+
+					case UI_Alignment_Right: {
+						offset_x = stack_frame_padded.start.x + padded_rect_size.x - child_width;
+					} break;
+				}
+
+				const f32 child_height = distribute_item->value;
+
+				const Rect_s32 child_frame = {
+					.start = {
+						offset_x,
+						current_y,
+					},
+					.end = {
+						offset_x + child_width,
+						current_y + child_height,
+					},
+				};
+				ui_view_set_frame(child, child_frame);
+				current_y += child_height + stack_data->spacing;
+			}
+		} break;
+
+		case UI_Axis_Horizontal: {
+			ui_distribute(padded_rect_size.y, stack_data->spacing, distribute_items, child_count);
+			f32 current_x = stack_frame_padded.start.x;
+			for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
+				const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
+				const UI_Limits child_limits = ui_view_get_limits(child);
+				const UI_Distribute_Item* distribute_item = &distribute_items[child_idx];
+				const s32 child_height = sl_clamp(padded_rect_size.y, child_limits.min.y, child_limits.max.y);
+
+				f32 offset_y;
+				switch (stack_data->alignment) {
+					case UI_Alignment_Top: {
+						offset_y = stack_frame_padded.start.y;
+					} break;
+
+					case UI_Alignment_Center: {
+						offset_y = stack_frame_padded.start.y + (padded_rect_size.y * 0.5f) - (child_height * 0.5f);
+					} break;
+
+					case UI_Alignment_Bottom: {
+						offset_y = stack_frame_padded.start.y + padded_rect_size.y - child_height;
+					} break;
+				}
+
+				const f32 child_width = distribute_item->value;
+
+				const Rect_s32 child_frame = {
+					.start = {
+						current_x,
+						offset_y,
+					},
+					.end = {
+						current_x + child_width,
+						offset_y + child_height,
+					},
+				};
+				ui_view_set_frame(child, child_frame);
+				current_x += child_width + stack_data->spacing;
+			}
+		} break;
+	}
+
+	distribute_items = NULL;
+	sl_arena_allocator_reset(ui.scratch_arena, initial_arena_position);
+}
+
+UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing) {
+	UI_Stack_Data* stack_data;
+	allocator_new(ui_lifecycle_allocator(), stack_data, 1);
+	*stack_data = (UI_Stack_Data) {
+		.axis = axis,
+		.alignment = alignment,
+		.spacing = spacing,
 	};
 
-	if (parent.max_width == UI_FILL) {
-		result.max_width = UI_FILL;
-	} else if (child.max_width == UI_FILL) {
-		result.max_width = result.min_width;
-	} else {
-		result.max_width = sl_max(parent.max_width, child.max_width);
-	}
-
-	if (parent.max_height == UI_FILL) {
-		result.max_height = UI_FILL;
-	} else if (child.max_height == UI_FILL) {
-		result.max_height = result.min_height;
-	} else {
-		result.max_height = sl_max(parent.max_height, child.max_height);
-	}
-
-	return result;
+	const UI_View_Callbacks callbacks = {
+		.ctx = stack_data,
+		.get_limits = ui_stack_get_limits,
+		.layout_subviews = ui_stack_layout_subviews,
+	};
+	return ui_view(id, &callbacks);
 }
 
-UI_Extent ui_extent_add_padding(UI_Extent extent, UI_Padding padding) {
-	return (UI_Extent) {
-		.min_width = extent.min_width + padding.left + padding.right,
-		.min_height = extent.min_height + padding.top + padding.bottom,
-		.max_width = extent.max_width + padding.left + padding.right,
-		.max_height = extent.max_height + padding.top + padding.bottom,
+// MARK: Label
+
+typedef struct UI_Label_Data {
+	SL_String* text;
+	UI_Label_Style style;
+	UI_Text_Measurements measurements;
+} UI_Label_Data;
+
+UI_Limits ui_label_get_limits(void* ctx, UI_View view) {
+	UI_Label_Data* data = ctx;
+	return (UI_Limits) {
+		.min = data->measurements.size,
+		.max = data->measurements.size,
 	};
 }
 
-// MARK: Element Common
+void ui_label_render(void* ctx, UI_View view, SL_Blitter* blitter) {
+	UI_Label_Data* data = ctx;
 
-bool ui_element_get_layout_rect(UI* ui, UI_Element* element, Rect_f32* out_rect) {
-	if ((ui->lifecycle_state == UI_Lifecycle_State_Ended) && !element->culled) {
-		*out_rect = element->rect;
-		return true;
-	} else {
-		return false;
+	const Rect_f32 frame_f32 = cvt_rect_s32_f32(ui_view_get_frame(view));
+	const vec2_f32 frame_size = rect_size_f32(frame_f32);
+
+	const vec2_f32 text_offset = {
+		.x = roundf(frame_f32.start.x + (frame_size.x * 0.5f) - (data->measurements.size.x * 0.5f)),
+		.y = roundf(frame_f32.start.y + (frame_size.y * 0.5f) + data->measurements.y_range.end),
+	};
+
+	const UI_Label_Style* style = &data->style;
+	sl_blitter_draw_text(blitter, style->font, ui.current_lifecycle->texture, sl_string_view(data->text).str, text_offset, style->color);
+}
+
+UI_View ui_label(UI_ID id, SL_String_View text, const UI_Label_Style* style) {
+	UI_Label_Data* label_data;
+	allocator_new(ui_lifecycle_allocator(), label_data, 1);
+	*label_data = (UI_Label_Data) {
+		.text = sl_string_new(ui_lifecycle_allocator(), text),
+		.measurements = ui_text_measurements(style->font, text),
+		.style = *style,
+	};
+
+	const UI_View_Callbacks callbacks = {
+		.ctx = label_data,
+		.get_limits = ui_label_get_limits,
+		.render = ui_label_render,
+	};
+	return ui_view(id, &callbacks);
+}
+
+void ui_trigger_callback(UI_Callback callback) {
+	if (callback.func) {
+		callback.func(callback.ctx);
 	}
 }
 
-void ui_gesture_destroy(void* ctx) {
-	UI_Gesture* gesture = ctx;
-	Allocator* allocator = gesture->allocator;
-	allocator_free(allocator, gesture, 1);
+// MARK: Button
+
+typedef struct UI_Button_Storage {
+	UI_Button_State state;
+} UI_Button_Storage;
+
+void ui_button_storage_destroy(void* ctx) {
+	UI_Button_Storage* state = ctx;
+	allocator_free(ui.allocator, state, 1);
 }
-UI_Gesture* ui_gesture_new(UI* ui, UI_ID id, const UI_Gesture_VTable* vtable, UI_Element* element) {
-	UI_Persistent_State* persistent_state = ui_persistent_store_acquire(&ui->persistent_store, id, ui->frame_index);
-	if (persistent_state->data == NULL) {
-		UI_Gesture* gesture;
-		allocator_new(ui->allocator, gesture, 1);
-		*gesture = (UI_Gesture) {
-			.allocator = ui->allocator,
-			.ctx = NULL,
-			.element = element,
-			.vtable = vtable,
-			.init_frame_index = ui->frame_index
+
+typedef enum UI_Button_ID {
+	UI_Button_ID_Storage,
+	UI_Button_ID_Pan_Gesture,
+} UI_Button_ID;
+
+typedef struct UI_Button_Data {
+	SL_String* text;
+	UI_Text_Measurements text_measurements;
+	UI_Storage_Handle storage_handle;
+	UI_Button_Style style;
+	UI_Callback on_press;
+} UI_Button_Data;
+
+void ui_button_render(void* ctx, UI_View view, SL_Blitter* blitter) {
+	UI_Button_Data* data = ctx;
+	UI_Button_Storage* storage = ui_storage_handle_resolve(data->storage_handle)->data;
+
+	Rect_s32 button_frame = ui_view_get_frame(view);
+	Rect_s32 padded_frame = ui_padded_rect(button_frame, data->style.padding);
+	vec2_s32 padded_frame_size = rect_size_s32(padded_frame);
+
+	ui_draw_nine_patch(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(ui_view_get_frame(view)), data->style.state[storage->state].backing, data->style.state[storage->state].backing_tint);
+
+	if (data->style.has_text) {
+		vec2_f32 text_offset = (vec2_f32) {
+			.x = roundf(padded_frame.start.x + (padded_frame_size.x * 0.5f) - (data->text_measurements.size.x * 0.5f)),
+			.y = roundf(padded_frame.start.y + (padded_frame_size.y * 0.5f) + data->text_measurements.y_range.end),
 		};
-		persistent_state->data = gesture;
-		persistent_state->destroy = ui_gesture_destroy;
-	} else {
-		UI_Gesture* gesture = persistent_state->data;
-		gesture->vtable = vtable;
-		gesture->element = element;
+		sl_blitter_draw_text(blitter, data->style.font, ui.current_lifecycle->texture, sl_string_view(data->text).str, text_offset, data->style.state[storage->state].text_color);
+	}
+}
+
+typedef struct UI_Button_Pan_Data {
+	UI_View view;
+	UI_Button_Data* button;
+} UI_Button_Pan_Data;
+
+void ui_button_pan(void* ctx, const UI_Pan_Gesture_Frame* frame) {
+	UI_Button_Pan_Data* pan_data = ctx;
+	UI_Button_Data* button_data = pan_data->button;
+	UI_Button_Storage* button_storage = ui_storage_handle_resolve(button_data->storage_handle)->data;
+
+	switch (frame->state) {
+		case UI_Gesture_State_Began:
+		case UI_Gesture_State_Changed: {
+			button_storage->state = UI_Button_State_Active;
+		} break;
+
+		case UI_Gesture_State_Ended:
+		case UI_Gesture_State_Cancelled: {
+			button_storage->state = UI_Button_State_Normal;
+		} break;
 	}
 
-	ui_persistent_state_ptr_seq_push(&element->gestures, persistent_state);
+	const Rect_s32 view_frame = ui_view_get_frame(pan_data->view);
+	if (frame->state == UI_Gesture_State_Ended && rect_contains_f32(cvt_rect_s32_f32(view_frame), frame->position)) {
+		ui_trigger_callback(button_data->on_press);
+	}
+}
 
-	return persistent_state->data;
+UI_Limits ui_button_get_limits(void* ctx, UI_View view) {
+	UI_Button_Data* data = ctx;
+	const vec2_s32 padding_size = {
+		data->style.padding.left + data->style.padding.right,
+		data->style.padding.top + data->style.padding.bottom,
+	};
+	return (UI_Limits) {
+		.min = add_vec2_s32(data->text_measurements.size, padding_size),
+		.max = add_vec2_s32(data->text_measurements.size, padding_size),
+	};
+}
+
+UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, UI_Callback on_press) {
+	const UI_ID storage_id = ui_id_internal(id, UI_Button_ID_Storage, 0, true);
+	UI_Storage_Handle storage_handle;
+	if (!ui_storage_get_handle(storage_id, &storage_handle)) {
+		UI_Button_Storage* storage;
+		allocator_new(ui.allocator, storage, 1);
+		*storage = (UI_Button_Storage) {
+			.state = UI_Button_State_Normal,
+		};
+		storage_handle = ui_storage_set_and_return_handle(storage_id, storage, ui_button_storage_destroy);
+	}
+
+	UI_Button_Data* button_data;
+	allocator_new(ui_lifecycle_allocator(), button_data, 1);
+	*button_data = (UI_Button_Data) {
+		.text = style->has_text ? sl_string_new(ui_lifecycle_allocator(), text) : NULL,
+		.text_measurements = style->has_text ? ui_text_measurements(style->font, text) : (UI_Text_Measurements) {},
+		.storage_handle = storage_handle,
+		.style = *style,
+		.on_press = on_press,
+	};
+
+	const UI_View_Callbacks callbacks = {
+		.ctx = button_data,
+		.get_limits = ui_button_get_limits,
+		.render = ui_button_render,
+	};
+	UI_View view = ui_view(id, &callbacks);
+
+	UI_Button_Pan_Data* pan_data;
+	allocator_new(ui_lifecycle_allocator(), pan_data, 1);
+	*pan_data = (UI_Button_Pan_Data) {
+		.view = view,
+		.button = button_data,
+	};
+
+	const UI_ID pan_gesture_id = ui_id_internal(id, UI_Button_ID_Pan_Gesture, 0, true);
+	const UI_Pan_Gesture_Desc pan_desc = {
+		.touch_mask = Input_Touch_Kind_Mask_All,
+		.minimum_touches = 1,
+		.maximum_touches = 1,
+		.callback = {
+			.ctx = pan_data,
+			.func = ui_button_pan,
+		},
+	};
+	UI_Gesture pan_gesture = ui_pan_gesture(pan_gesture_id, &pan_desc);
+	ui_view_add_gesture(view, pan_gesture);
+
+	return view;
+}
+
+// MARK: Slider
+
+typedef enum UI_Slider_ID {
+	UI_Slider_ID_Pan_Gesture,
+} UI_Slider_ID;
+
+typedef struct UI_Slider_Data {
+	UI_Slider_Style style;
+	UI_Slider_Callbacks callbacks;
+	Range_f32 range;
+} UI_Slider_Data;
+
+typedef struct UI_Slider_Pan_Data {
+	UI_View view;
+	UI_Slider_Data* slider_data;
+} UI_Slider_Pan_Data;
+
+Rect_s32 ui_slider_get_track_rect(UI_View view, UI_Slider_Data* slider_data) {
+	const UI_Slider_Style* style = &slider_data->style;
+	const Rect_s32 rect = ui_view_get_frame(view);
+	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
+	const vec2_f32 needle_image_size = cvt_vec2_u32_f32(rect_size_u32(style->needle_rect));
+	const f32 track_lr_padding = ceil(needle_image_size.x * 0.5);
+	const vec2_s32 track_rect_start = {
+		rect.start.x + track_lr_padding,
+		round(center_y - (style->track_height * 0.5f)),
+	};
+	return (Rect_s32) {
+		.start = track_rect_start,
+		.end = {
+			rect.end.x - track_lr_padding,
+			.y = track_rect_start.y + style->track_height,
+		},
+	};
+}
+
+void ui_slider_pan(void* ctx, const UI_Pan_Gesture_Frame* frame) {
+	UI_Slider_Pan_Data* pan_data = ctx;
+	UI_Slider_Data* slider = pan_data->slider_data;
+
+	switch (frame->state) {
+		case UI_Gesture_State_Began: {
+			if (slider->callbacks.on_begin) {
+				slider->callbacks.on_begin(slider->callbacks.ctx);
+			}
+		} break;
+
+		case UI_Gesture_State_Changed: {
+
+		} break;
+
+		case UI_Gesture_State_Ended:
+		case UI_Gesture_State_Cancelled: {
+			if (slider->callbacks.on_end) {
+				slider->callbacks.on_end(slider->callbacks.ctx);
+			}
+		} break;
+	}
+
+	if (frame->state == UI_Gesture_State_Cancelled) {
+		// Restore original slider value?
+		return;
+	}
+
+	const Rect_s32 track_rect = ui_slider_get_track_rect(pan_data->view, slider);
+
+	const f32 mouse_progress = saturate_f32((frame->position.x - track_rect.start.x) / (track_rect.end.x - track_rect.start.x));
+	const f32 old_value = slider->callbacks.get_value(slider->callbacks.ctx);
+	const f32 new_value = lerp_f32(slider->range.start, slider->range.end, mouse_progress);
+	slider->callbacks.set_value(slider->callbacks.ctx, new_value);
+}
+
+void ui_slider_render(void* ctx, UI_View view, SL_Blitter* blitter) {
+	UI_Slider_Data* slider = ctx;
+
+	const UI_Slider_Style* style = &slider->style;
+
+	// track
+	const Rect_s32 track_rect = ui_slider_get_track_rect(view, slider);
+	ui_draw_image(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(track_rect), (Rect_f32) { .start = {} }, style->track_color);
+
+	const Rect_s32 rect = ui_view_get_frame(view);
+	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
+	const vec2_f32 needle_image_size = mul_vec2_f32(cvt_vec2_u32_f32(rect_size_u32(style->needle_rect)), splat_vec2_f32(style->needle_scale));
+
+	// needle
+	const f32 value = slider->callbacks.get_value(slider->callbacks.ctx);
+	const f32 progress = saturate_f32((value - slider->range.start) / (slider->range.end - slider->range.start));
+	const vec2_f32 needle_offset = {
+		.x = round(lerp_f32(track_rect.start.x, track_rect.end.x, progress) - (needle_image_size.x * 0.5f)),
+		.y = round(center_y - (needle_image_size.y * 0.5f)),
+	};
+	const Rect_f32 needle_rect = {
+		.start = needle_offset,
+		.end = add_vec2_f32(needle_image_size, needle_offset),
+	};
+	ui_draw_image(blitter, ui.current_lifecycle->texture, needle_rect, cvt_rect_u32_f32(style->needle_rect), style->needle_tint);
+}
+
+UI_Limits ui_slider_get_limits(void* ctx, UI_View view) {
+	UI_Slider_Data* slider_data = ctx;
+
+	const vec2_f32 needle_image_size = mul_vec2_f32(cvt_vec2_u32_f32(rect_size_u32(slider_data->style.needle_rect)), splat_vec2_f32(slider_data->style.needle_scale));
+
+	return (UI_Limits) {
+		.min = { needle_image_size.x, needle_image_size.y },
+		.max = { s32_max, needle_image_size.y }
+	};
+}
+
+UI_View ui_slider(UI_ID id, const UI_Slider_Style* style, Range_f32 range, UI_Slider_Callbacks callbacks) {
+	UI_Slider_Data* slider_data;
+	allocator_new(ui_lifecycle_allocator(), slider_data, 1);
+	*slider_data = (UI_Slider_Data) {
+		.style = *style,
+		.callbacks = callbacks,
+		.range = range,
+	};
+
+	const UI_View_Callbacks view_callbacks = {
+		.ctx = slider_data,
+		.get_limits = ui_slider_get_limits,
+		.render = ui_slider_render,
+	};
+	UI_View view = ui_view(id, &view_callbacks);
+
+	UI_Slider_Pan_Data* pan_data;
+	allocator_new(ui_lifecycle_allocator(), pan_data, 1);
+	*pan_data = (UI_Slider_Pan_Data) {
+		.view = view,
+		.slider_data = slider_data,
+	};
+
+	const UI_ID pan_gesture_id = ui_id_internal(id, UI_Slider_ID_Pan_Gesture, 0, true);
+	const UI_Pan_Gesture_Desc pan_desc = {
+		.touch_mask = Input_Touch_Kind_Mask_All,
+		.minimum_touches = 1,
+		.maximum_touches = 1,
+		.callback = {
+			.ctx = pan_data,
+			.func = ui_slider_pan,
+		},
+	};
+	UI_Gesture pan_gesture = ui_pan_gesture(pan_gesture_id, &pan_desc);
+	ui_view_add_gesture(view, pan_gesture);
+
+	return view;
+}
+
+// MARK: Color
+
+typedef struct UI_Color_Data {
+	vec4_f32 color;
+} UI_Color_Data;
+
+void ui_color_render(void* ctx, UI_View view, SL_Blitter* blitter) {
+	UI_Color_Data* data = ctx;
+	ui_draw_image(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(ui_view_get_frame(view)), (Rect_f32) {}, data->color);
+}
+
+UI_View ui_color(UI_ID id, vec4_f32 color) {
+	UI_Color_Data* color_data;
+	allocator_new(ui_lifecycle_allocator(), color_data, 1);
+	*color_data = (UI_Color_Data) {
+		.color = color,
+	};
+
+	const UI_View_Callbacks callbacks = {
+		.ctx = color_data,
+		.render = ui_color_render,
+	};
+	return ui_view(id, &callbacks);
+}
+
+// MARK: Nine patch
+
+typedef struct UI_Nine_Patch_Data {
+	UI_Nine_Patch nine_patch;
+	vec4_f32 tint;
+} UI_Nine_Patch_Data;
+
+void ui_nine_patch_render(void* ctx, UI_View view, SL_Blitter* blitter) {
+	UI_Nine_Patch_Data* data = ctx;
+	ui_draw_nine_patch(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(ui_view_get_frame(view)), data->nine_patch, data->tint);
+}
+
+UI_View ui_nine_patch(UI_ID id, UI_Nine_Patch nine_patch, vec4_f32 tint) {
+	UI_Nine_Patch_Data* nine_patch_data;
+	allocator_new(ui_lifecycle_allocator(), nine_patch_data, 1);
+	*nine_patch_data = (UI_Nine_Patch_Data) {
+		.nine_patch = nine_patch,
+		.tint = tint,
+	};
+
+	const UI_View_Callbacks callbacks = {
+		.ctx = nine_patch_data,
+		.render = ui_nine_patch_render,
+	};
+	return ui_view(id, &callbacks);
+}
+
+UI_View ui_spacer(UI_ID id) {
+	const UI_View_Callbacks callbacks = {0};
+	UI_View view = ui_view(id, &callbacks);
+	view.data->flags |= UI_View_Flags_Fill_Available_Space;
+	return view;
+}
+
+typedef enum UI_Gesture_ID {
+	UI_Gesture_ID_Storage,
+} UI_Gesture_ID;
+
+void ui_gesture_storage_destroy(void* data) {
+	UI_Gesture_Storage* data0 = data;
+	allocator_free(ui.allocator, data0, 1);
+}
+
+UI_Gesture ui_custom_gesture(UI_ID id, void* ctx, const UI_Gesture_VTable* vtable) {
+	const UI_ID storage_id = ui_id_internal(id, UI_Gesture_ID_Storage, 0, true);
+	UI_Storage_Handle storage_handle;
+	if (!ui_storage_get_handle(storage_id, &storage_handle)) {
+		UI_Gesture_Storage* storage;
+		allocator_new(ui.allocator, storage, 1);
+		storage_handle = ui_storage_set_and_return_handle(storage_id, storage, ui_gesture_storage_destroy);
+	}
+
+	UI_Gesture_Storage* storage = ui_storage_handle_resolve(storage_handle)->data;
+	*storage = (UI_Gesture_Storage) {
+		.ctx = ctx,
+		.vtable = vtable,
+	};
+
+	UI_Gesture_Data* gesture_data;
+	allocator_new(ui_lifecycle_allocator(), gesture_data, 1);
+	*gesture_data = (UI_Gesture_Data) {
+		.storage_handle = (UI_Gesture_Storage_Handle) {
+			.storage_handle = storage_handle,
+		},
+	};
+
+	return (UI_Gesture) {
+		.data = gesture_data,
+		.lifecycle_index = ui.lifecycle_index,
+	};
 }
 
 // MARK: Pan Gesture
 
-typedef struct UI_Pan_Gesture_State {
+typedef struct UI_Pan_Gesture_Data {
 	UI_Pan_Gesture_Desc desc;
 	UI_Touch* active_touch;
 	vec2_f32 initial_position;
@@ -694,9 +1758,9 @@ typedef struct UI_Pan_Gesture_State {
 	vec2_f32 smoothed_velocity;
 	f32 total_movement;
 	f64 previous_timestamp;
-} UI_Pan_Gesture_State;
+} UI_Pan_Gesture_Data;
 
-UI_Pan_Gesture_Frame ui_pan_gesture_resolve_frame(UI_Pan_Gesture_State* pan, UI_Gesture_State state) {
+UI_Pan_Gesture_Frame ui_pan_gesture_resolve_frame(UI_Pan_Gesture_Data* pan, UI_Gesture_State state) {
 	const f32 dt = (pan->active_touch->timestamp - pan->previous_timestamp);
 	if (dt > 0.0) {
 		const f32 tau = 0.03f;
@@ -717,15 +1781,15 @@ UI_Pan_Gesture_Frame ui_pan_gesture_resolve_frame(UI_Pan_Gesture_State* pan, UI_
 		.total_movement = pan->total_movement,
 	};
 }
-void ui_pan_gesture_touch_began(UI* ui, void* ctx, UI_Touch* touch) {
-	UI_Pan_Gesture_State* state = ctx;
+void ui_pan_gesture_touch_began(void* ctx, UI_Touch* touch) {
+	UI_Pan_Gesture_Data* state = ctx;
 
 	if ((state->desc.touch_mask & (1 << touch->id.kind)) == 0) {
 		return;
 	}
 
 	if (state->active_touch == NULL) {
-		ui_touch_retain(ui, touch);
+		ui_touch_retain(touch);
 		state->active_touch = touch;
 		state->initial_position = touch->position;
 		state->previous_position = touch->position;
@@ -736,8 +1800,8 @@ void ui_pan_gesture_touch_began(UI* ui, void* ctx, UI_Touch* touch) {
 		state->desc.callback.func(state->desc.callback.ctx, &frame);
 	}
 }
-void ui_pan_gesture_touch_changed(UI* ui, void* ctx, UI_Touch* touch) {
-	UI_Pan_Gesture_State* state = ctx;
+void ui_pan_gesture_touch_changed(void* ctx, UI_Touch* touch) {
+	UI_Pan_Gesture_Data* state = ctx;
 
 	if (state->active_touch == touch) {
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Changed);
@@ -746,35 +1810,35 @@ void ui_pan_gesture_touch_changed(UI* ui, void* ctx, UI_Touch* touch) {
 		state->desc.callback.func(state->desc.callback.ctx, &frame);
 	}
 }
-void ui_pan_gesture_touch_ended(UI* ui, void* ctx, UI_Touch* touch) {
-	UI_Pan_Gesture_State* state = ctx;
+void ui_pan_gesture_touch_ended(void* ctx, UI_Touch* touch) {
+	UI_Pan_Gesture_Data* state = ctx;
 
 	if (state->active_touch == touch) {
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Ended);
 		state->desc.callback.func(state->desc.callback.ctx, &frame);
 
-		ui_touch_release(ui, touch);
+		ui_touch_release(touch);
 		state->active_touch = NULL;
 	}
 }
-void ui_pan_gesture_touch_cancelled(UI* ui, void* ctx, UI_Touch* touch) {
-	UI_Pan_Gesture_State* state = ctx;
+void ui_pan_gesture_touch_cancelled(void* ctx, UI_Touch* touch) {
+	UI_Pan_Gesture_Data* state = ctx;
 
 	if (state->active_touch == touch) {
 		const UI_Pan_Gesture_Frame frame = ui_pan_gesture_resolve_frame(state, UI_Gesture_State_Cancelled);
 		state->desc.callback.func(state->desc.callback.ctx, &frame);
 
-		ui_touch_release(ui, touch);
+		ui_touch_release(touch);
 		state->active_touch = NULL;
 	}
 }
-void ui_pan_gesture_destroy(UI* ui, void* ctx) {
-	UI_Pan_Gesture_State* state = ctx;
+void ui_pan_gesture_destroy(void* ctx) {
+	UI_Pan_Gesture_Data* state = ctx;
 	if (state->active_touch != NULL) {
-		ui_touch_release(ui, state->active_touch);
+		ui_touch_release(state->active_touch);
 		state->active_touch = NULL;
 	}
-	allocator_free(ui->allocator, state, 1);
+	allocator_free(ui.allocator, state, 1);
 }
 const static UI_Gesture_VTable ui_pan_gesture_vtable = {
 	.touch_began = ui_pan_gesture_touch_began,
@@ -784,1309 +1848,14 @@ const static UI_Gesture_VTable ui_pan_gesture_vtable = {
 	.destroy = ui_pan_gesture_destroy,
 };
 
-void ui_pan_gesture(UI* ui, UI_ID id, const UI_Pan_Gesture_Desc* desc, UI_Element* element) {
-	UI_Gesture* gesture = ui_gesture_new(ui, id, &ui_pan_gesture_vtable, element);
-
-	if (gesture->ctx == NULL) {
-		// Allocate state
-		UI_Pan_Gesture_State* state;
-		allocator_new(ui->allocator, state, 1);
-		*state = (UI_Pan_Gesture_State) {0};
-		gesture->ctx = state;
+UI_Gesture ui_pan_gesture(UI_ID id, const UI_Pan_Gesture_Desc* desc) {
+	UI_Pan_Gesture_Data* gesture_data = ui_storage_get(id);
+	if (!gesture_data) {
+		allocator_new(ui.allocator, gesture_data, 1);
+		*gesture_data = (UI_Pan_Gesture_Data) {0};
+		ui_storage_set(id, gesture_data, ui_pan_gesture_destroy);
 	}
+	gesture_data->desc = *desc;
 
-	UI_Pan_Gesture_State* state = gesture->ctx;
-	state->desc = *desc;
-}
-
-// MARK: Tap Gesture
-
-typedef struct UI_Tap_Gesture_State {
-	UI_Tap_Gesture_Desc desc;
-	UI_Touch* active_touch;
-	vec2_f32 previous_position;
-	f32 total_movement;
-} UI_Tap_Gesture_State;
-
-void ui_tap_gesture_touch_began(UI* ui, void* ctx, UI_Touch* touch) {
-	UI_Tap_Gesture_State* state = ctx;
-	if (state->active_touch == NULL) {
-		ui_touch_retain(ui, touch);
-		state->active_touch = touch;
-		state->previous_position = touch->position;
-		state->total_movement = 0.0f;
-	}
-}
-void ui_tap_gesture_touch_changed(UI* ui, void* ctx, UI_Touch* touch) {
-	UI_Tap_Gesture_State* state = ctx;
-	if (state->active_touch == touch) {
-		state->total_movement += dist_vec2_f32(state->previous_position, state->active_touch->position);
-		state->previous_position = touch->position;
-	}
-}
-void ui_tap_gesture_touch_ended(UI* ui, void* ctx, UI_Touch* touch) {
-	UI_Tap_Gesture_State* state = ctx;
-	if (state->active_touch == touch) {
-		state->total_movement += dist_vec2_f32(state->previous_position, state->active_touch->position);
-
-		if (state->total_movement < state->desc.maximum_movement) {
-			const UI_Tap_Gesture_Frame frame = {
-				.position = state->active_touch->position,
-			};
-			state->desc.callback.func(state->desc.callback.ctx, &frame);
-		}
-
-		ui_touch_release(ui, touch);
-		state->active_touch = NULL;
-	}
-}
-void ui_tap_gesture_touch_cancelled(UI* ui, void* ctx, UI_Touch* touch) {
-	UI_Tap_Gesture_State* state = ctx;
-	if (state->active_touch == touch) {
-		ui_touch_release(ui, touch);
-		state->active_touch = NULL;
-	}
-}
-void ui_tap_gesture_destroy(UI* ui, void* ctx) {
-	UI_Tap_Gesture_State* state = ctx;
-	if (state->active_touch != NULL) {
-		ui_touch_release(ui, state->active_touch);
-		state->active_touch = NULL;
-	}
-	allocator_free(ui->allocator, state, 1);
-}
-const static UI_Gesture_VTable ui_tap_gesture_vtable = {
-	.touch_began = ui_tap_gesture_touch_began,
-	.touch_changed = ui_tap_gesture_touch_changed,
-	.touch_ended = ui_tap_gesture_touch_ended,
-	.touch_cancelled = ui_tap_gesture_touch_cancelled,
-	.destroy = ui_tap_gesture_destroy,
-};
-
-void ui_tap_gesture(UI* ui, UI_ID id, const UI_Tap_Gesture_Desc* desc, UI_Element* element) {
-	UI_Gesture* gesture = ui_gesture_new(ui, id, &ui_tap_gesture_vtable, element);
-
-	if (gesture->ctx == NULL) {
-		// Allocate state
-		UI_Tap_Gesture_State* state;
-		allocator_new(ui->allocator, state, 1);
-		*state = (UI_Tap_Gesture_State) {0};
-		gesture->ctx = state;
-	}
-
-	UI_Tap_Gesture_State* state = gesture->ctx;
-	state->desc = *desc;
-}
-
-void ui_custom_gesture(UI* ui, UI_ID id, const UI_Gesture_VTable* vtable, void* ctx, UI_Element* element) {
-	UI_Gesture* gesture = ui_gesture_new(ui, id, vtable, element);
-	gesture->ctx = ctx;
-}
-
-UI_Element* ui_add_leaf(UI* ui) {
-	sl_debug_assert(ui->stack_length > 0, "Stack can't be empty.");
-	UI_Element* parent = ui->stack[ui->stack_length - 1];
-	return parent->vtable->add_child(ui, parent);
-}
-
-void ui_trigger_callback(UI_Callback callback) {
-	if (callback.func) {
-		callback.func(callback.ctx);
-	}
-}
-
-// MARK: Text Measurements
-
-typedef struct UI_Text_Measurements {
-	Range_s32 y_range;
-	vec2_s32 size;
-} UI_Text_Measurements;
-
-UI_Text_Measurements ui_text_measurements(SL_Font* font, const char* string) {
-	const Range_s32 font_y_range = sl_font_get_y_range(font);
-
-	if (string == NULL) {
-		return (UI_Text_Measurements) {
-			.size = {},
-			.y_range = font_y_range,
-		};
-	}
-
-	const Rect_s32 label_rect = sl_font_measure_string(font, string);
-	const vec2_s32 label_size = rect_size_s32(label_rect);
-	return (UI_Text_Measurements) {
-		.size = label_size,
-		.y_range = font_y_range,
-	};
-}
-
-UI_Extent ui_text_measurements_get_extent(const UI_Text_Measurements* measurements) {
-	return (UI_Extent) {
-		.min_width = measurements->size.x,
-		.max_width = measurements->size.x,
-		.min_height = measurements->y_range.end - measurements->y_range.start,
-		.max_height = measurements->y_range.end - measurements->y_range.start,
-	};
-}
-
-// MARK: HStack
-
-typedef struct UI_HStack {
-	UI_Extent extent;
-	UI_Padding padding;
-	UI_Vertical_Alignment alignment;
-	f32 spacing;
-	UI_Element_Seq children;
-} UI_HStack;
-
-UI_Element* ui_hstack_add_child(UI* ui, UI_Element* self) {
-	UI_HStack* hstack = self->data;
-	return ui_element_seq_push_reserve(&hstack->children);
-}
-UI_Extent ui_hstack_get_extent(UI* ui, UI_Element* self) {
-	UI_HStack* hstack = self->data;
-
-	const u64 child_count = ui_element_seq_get_count(&hstack->children);
-
-	UI_Extent children_extent = {0};
-	if (child_count > 0) {
-		for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
-			UI_Element* child = ui_element_seq_get_ptr(&hstack->children, child_idx);
-			const UI_Extent child_extent = child->vtable->get_extent(ui, child);
-
-			children_extent.min_width += child_extent.min_width;
-			if (child_extent.max_width != UI_FILL) {
-				children_extent.max_width += child_extent.max_width;
-			}
-
-			children_extent.min_height = sl_max(children_extent.min_height, child_extent.min_height);
-			if (child_extent.max_height != UI_FILL) {
-				children_extent.max_height = sl_max(children_extent.max_height, child_extent.max_height);
-			}
-		}
-
-		children_extent.min_height += hstack->spacing * (f32)(child_count - 1);
-		children_extent.max_width += hstack->spacing * (f32)(child_count - 1);
-	}
-
-	children_extent = ui_extent_add_padding(children_extent, hstack->padding);
-
-	return ui_extent_combine(hstack->extent, children_extent);
-}
-void ui_hstack_layout(UI* ui, UI_Element* self) {
-	UI_HStack* hstack = self->data;
-	const u64 child_count = ui_element_seq_get_count(&hstack->children);
-
-	const u64 initial_arena_position = sl_arena_allocator_get_position(ui->arena);
-
-	UI_Distribute_Item* distribute_items;
-	allocator_new(&ui->arena->allocator, distribute_items, child_count);
-
-	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
-		UI_Element* child = ui_element_seq_get_ptr(&hstack->children, child_idx);
-		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
-		distribute_items[child_idx] = (UI_Distribute_Item) {
-			.value = 0.0f,
-			.min = child_extent.min_width,
-			.max = child_extent.max_width,
-		};
-	}
-
-	const Rect_f32 padded_rect = ui_padded_rect(self->rect, hstack->padding);
-	const vec2_f32 padded_rect_size = rect_size_f32(padded_rect);
-	ui_distribute(padded_rect_size.x, hstack->spacing, distribute_items, child_count);
-
-	f32 current_x = padded_rect.start.x;
-	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
-		UI_Element* child = ui_element_seq_get_ptr(&hstack->children, child_idx);
-		const UI_Distribute_Item* distribute_item = &distribute_items[child_idx];
-		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
-
-		const f32 child_height = sl_clamp(padded_rect_size.y, child_extent.min_height, (child_extent.max_height == UI_FILL) ? padded_rect_size.y : child_extent.max_height);
-
-		f32 offset_y;
-		switch (hstack->alignment) {
-			case UI_Vertical_Alignment_Top: {
-				offset_y = padded_rect.start.y;
-			} break;
-
-			case UI_Vertical_Alignment_Center: {
-				offset_y = padded_rect.start.y + (padded_rect_size.y * 0.5f) - (child_height * 0.5f);
-			} break;
-
-			case UI_Vertical_Alignment_Bottom: {
-				offset_y = padded_rect.start.y + padded_rect_size.y - child_height;
-			} break;
-		}
-
-		const f32 child_width = distribute_item->value;
-
-		child->rect = (Rect_f32) {
-			.start = { current_x, offset_y },
-			.end = { current_x + child_width, offset_y + child_height },
-		};
-		child->rect = ui_rect_snap_to_pixels(child->rect);
-
-		current_x += child_width + hstack->spacing;
-	}
-
-	sl_arena_allocator_reset(ui->arena, initial_arena_position);
-
-	// Now layout sub-children
-	for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
-		UI_Element* child = ui_element_seq_get_ptr(&hstack->children, child_idx);
-		if (child->vtable->layout) {
-			child->vtable->layout(ui, child);
-		}
-	}
-}
-void ui_hstack_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
-	UI_HStack* hstack = self->data;
-	const u64 child_count = ui_element_seq_get_count(&hstack->children);
-	for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
-		UI_Element* child = ui_element_seq_get_ptr(&hstack->children, child_idx);
-		if (child->vtable->render) {
-			child->vtable->render(ui, child, blitter);
-		}
-	}
-}
-UI_Element_Seq* ui_hstack_get_children(UI* ui, UI_Element* self) {
-	UI_HStack* hstack = self->data;
-	return &hstack->children;
-}
-
-const static UI_Element_VTable ui_hstack_vtable = {
-	.add_child = ui_hstack_add_child,
-	.get_extent = ui_hstack_get_extent,
-	.get_children = ui_hstack_get_children,
-	.layout = ui_hstack_layout,
-	.render = ui_hstack_render,
-};
-
-UI_Element* ui_push_hstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing) {
-	UI_HStack* hstack;
-	allocator_new(&ui->arena->allocator, hstack, 1);
-	*hstack = (UI_HStack) {
-		.extent = extent,
-		.padding = padding,
-		.alignment = alignment,
-		.spacing = spacing,
-		.children = ui_element_seq_new(&ui->arena->allocator, 0),
-	};
-	UI_Element* element = ui_add_leaf(ui);
-	*element = (UI_Element) {
-		.data = hstack,
-		.vtable = &ui_hstack_vtable,
-		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
-	};
-	ui->stack[ui->stack_length++] = element;
-	return element;
-}
-
-// MARK: VStack
-
-typedef struct UI_VStack {
-	UI_Extent extent;
-	UI_Padding padding;
-	UI_Horizontal_Alignment alignment;
-	f32 spacing;
-	UI_Element_Seq children;
-} UI_VStack;
-
-UI_Element* ui_vstack_add_child(UI* ui, UI_Element* self) {
-	UI_VStack* vstack = self->data;
-	return ui_element_seq_push_reserve(&vstack->children);
-}
-UI_Extent ui_vstack_get_extent(UI* ui, UI_Element* self) {
-	UI_VStack* vstack = self->data;
-
-	const u64 child_count = ui_element_seq_get_count(&vstack->children);
-
-	UI_Extent children_extent = {0};
-	if (child_count > 0) {
-		for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
-			UI_Element* child = ui_element_seq_get_ptr(&vstack->children, child_idx);
-			const UI_Extent child_extent = child->vtable->get_extent(ui, child);
-
-			children_extent.min_height += child_extent.min_height;
-			if (child_extent.max_height != UI_FILL) {
-				children_extent.max_height += child_extent.max_height;
-			}
-
-			children_extent.min_width = sl_max(children_extent.min_width, child_extent.min_width);
-			if (child_extent.max_width != UI_FILL) {
-				children_extent.max_width = sl_max(children_extent.max_width, child_extent.max_width);
-			}
-		}
-		children_extent.min_height += vstack->spacing * (f32)(child_count - 1);
-		children_extent.max_height += vstack->spacing * (f32)(child_count - 1);
-	}
-
-	children_extent = ui_extent_add_padding(children_extent, vstack->padding);
-
-	return ui_extent_combine(vstack->extent, children_extent);
-}
-void ui_vstack_layout(UI* ui, UI_Element* self) {
-	UI_VStack* vstack = self->data;
-	const u64 child_count = ui_element_seq_get_count(&vstack->children);
-
-	const u64 initial_arena_position = sl_arena_allocator_get_position(ui->arena);
-
-	UI_Distribute_Item* distribute_items;
-	allocator_new(&ui->arena->allocator, distribute_items, child_count);
-
-	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
-		UI_Element* child = ui_element_seq_get_ptr(&vstack->children, child_idx);
-		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
-		distribute_items[child_idx] = (UI_Distribute_Item) {
-			.value = 0.0f,
-			.min = child_extent.min_height,
-			.max = child_extent.max_height,
-		};
-	}
-
-	const Rect_f32 padded_rect = ui_padded_rect(self->rect, vstack->padding);
-	const vec2_f32 padded_rect_size = rect_size_f32(padded_rect);
-	ui_distribute(padded_rect_size.y, vstack->spacing, distribute_items, child_count);
-
-	f32 current_y = padded_rect.start.y;
-	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
-		UI_Element* child = ui_element_seq_get_ptr(&vstack->children, child_idx);
-		const UI_Distribute_Item* distribute_item = &distribute_items[child_idx];
-		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
-
-		const f32 child_width = sl_clamp(padded_rect_size.x, child_extent.min_width, (child_extent.max_width == UI_FILL) ? padded_rect_size.x : child_extent.max_width);
-
-		f32 offset_x;
-		switch (vstack->alignment) {
-			case UI_Vertical_Alignment_Top: {
-				offset_x = padded_rect.start.x;
-			} break;
-
-			case UI_Vertical_Alignment_Center: {
-				offset_x = padded_rect.start.x + (padded_rect_size.x * 0.5f) - (child_width * 0.5f);
-			} break;
-
-			case UI_Vertical_Alignment_Bottom: {
-				offset_x = padded_rect.start.x + padded_rect_size.x - child_width;
-			} break;
-		}
-
-		const f32 child_height = distribute_item->value;
-
-		child->rect = (Rect_f32) {
-			.start = { offset_x, current_y },
-			.end = { offset_x + child_width, current_y + child_height },
-		};
-		child->rect = ui_rect_snap_to_pixels(child->rect);
-
-		current_y += child_height + vstack->spacing;
-	}
-
-	sl_arena_allocator_reset(ui->arena, initial_arena_position);
-
-	// Now layout sub-children
-	for (u32 child_idx = 0; child_idx < child_count; child_idx++) {
-		UI_Element* child = ui_element_seq_get_ptr(&vstack->children, child_idx);
-		if (child->vtable->layout) {
-			child->vtable->layout(ui, child);
-		}
-	}
-}
-void ui_vstack_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
-	UI_VStack* vstack = self->data;
-	const u64 child_count = ui_element_seq_get_count(&vstack->children);
-	for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
-		UI_Element* child = ui_element_seq_get_ptr(&vstack->children, child_idx);
-		if (child->vtable->render) {
-			child->vtable->render(ui, child, blitter);
-		}
-	}
-}
-UI_Element_Seq* ui_vstack_get_children(UI* ui, UI_Element* self) {
-	UI_VStack* vstack = self->data;
-	return &vstack->children;
-}
-
-const static UI_Element_VTable ui_vstack_vtable = {
-	.add_child = ui_vstack_add_child,
-	.get_extent = ui_vstack_get_extent,
-	.layout = ui_vstack_layout,
-	.render = ui_vstack_render,
-	.get_children = ui_vstack_get_children,
-};
-
-UI_Element* ui_push_vstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Horizontal_Alignment alignment, f32 spacing) {
-	UI_VStack* vstack;
-	allocator_new(&ui->arena->allocator, vstack, 1);
-	*vstack = (UI_VStack) {
-		.extent = extent,
-		.padding = padding,
-		.alignment = alignment,
-		.spacing = spacing,
-		.children = ui_element_seq_new(&ui->arena->allocator, 0),
-	};
-	UI_Element* element = ui_add_leaf(ui);
-	*element = (UI_Element) {
-		.data = vstack,
-		.vtable = &ui_vstack_vtable,
-		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
-	};
-	ui->stack[ui->stack_length++] = element;
-	return element;
-}
-
-// MARK: Spacer
-
-UI_Extent ui_spacer_get_extent(UI* ui, UI_Element* self) {
-	return (UI_Extent) {
-		.min_width = 0.0f,
-		.max_width = UI_FILL,
-		.min_height = 0.0f,
-		.max_height = UI_FILL,
-	};
-}
-const static UI_Element_VTable ui_spacer_vtable = {
-	.get_extent = ui_spacer_get_extent,
-};
-UI_Element* ui_spacer(UI* ui) {
-	UI_Element* element = ui_add_leaf(ui);
-	*element = (UI_Element) {
-		.data = NULL,
-		.vtable = &ui_spacer_vtable,
-		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
-	};
-	return element;
-}
-
-// MARK: ZStack
-
-typedef struct UI_ZStack {
-	UI_Extent extent;
-	UI_Padding padding;
-	UI_Element_Seq children;
-} UI_ZStack;
-
-UI_Element* ui_zstack_add_child(UI* ui, UI_Element* self) {
-	UI_ZStack* zstack = self->data;
-	return ui_element_seq_push_reserve(&zstack->children);
-}
-UI_Extent ui_zstack_get_extent(UI* ui, UI_Element* self) {
-	UI_ZStack* zstack = self->data;
-
-	UI_Extent children_extent = {0};
-	const u64 child_count = ui_element_seq_get_count(&zstack->children);
-	for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
-		UI_Element* child = ui_element_seq_get_ptr(&zstack->children, child_idx);
-		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
-		children_extent.min_width = sl_max(children_extent.min_width, child_extent.min_width);
-		children_extent.min_height = sl_max(children_extent.min_height, child_extent.min_height);
-
-		if (child_extent.max_width != UI_FILL) {
-			children_extent.max_width = sl_max(children_extent.max_width, child_extent.max_width);
-		}
-		if (child_extent.max_height != UI_FILL) {
-			children_extent.max_height = sl_max(children_extent.max_height, child_extent.max_height);
-		}
-	}
-
-	children_extent = ui_extent_add_padding(children_extent, zstack->padding);
-
-	return ui_extent_combine(zstack->extent, children_extent);
-}
-void ui_zstack_layout(UI* ui, UI_Element* self) {
-	UI_ZStack* zstack = self->data;
-
-	const Rect_f32 padded_rect = ui_padded_rect(self->rect, zstack->padding);
-	const vec2_f32 padded_rect_size = rect_size_f32(padded_rect);
-	const vec2_f32 padded_rect_center = centre_rect_f32(padded_rect);
-
-	const u64 child_count = ui_element_seq_get_count(&zstack->children);
-	for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
-		UI_Element* child = ui_element_seq_get_ptr(&zstack->children, child_idx);
-		const UI_Extent child_extent = child->vtable->get_extent(ui, child);
-
-		const vec2_f32 child_size = {
-			sl_clamp(padded_rect_size.x, child_extent.min_width, (child_extent.max_width == UI_FILL) ? padded_rect_size.x : child_extent.max_width),
-			sl_clamp(padded_rect_size.y, child_extent.min_height, (child_extent.max_height == UI_FILL) ? padded_rect_size.y : child_extent.max_height),
-		};
-
-		const vec2_f32 child_offset = sub_vec2_f32(padded_rect_center, mul_vec2_f32(child_size, (vec2_f32) { 0.5f, 0.5f }));
-
-		const Rect_f32 child_rect = {
-			.start = child_offset,
-			.end = add_vec2_f32(child_offset, child_size),
-		};
-
-		child->rect = child_rect;
-		child->rect = ui_rect_snap_to_pixels(child->rect);
-
-		if (child->vtable->layout) {
-			child->vtable->layout(ui, child);
-		}
-	}
-}
-void ui_zstack_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
-	UI_ZStack* zstack = self->data;
-	const u64 child_count = ui_element_seq_get_count(&zstack->children);
-	for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
-		UI_Element* child = ui_element_seq_get_ptr(&zstack->children, child_idx);
-		if (child->vtable->render) {
-			child->vtable->render(ui, child, blitter);
-		}
-	}
-}
-UI_Element_Seq* ui_zstack_get_children(UI* ui, UI_Element* self) {
-	UI_ZStack* zstack = self->data;
-	return &zstack->children;
-}
-
-const static UI_Element_VTable ui_zstack_vtable = {
-	.add_child = ui_zstack_add_child,
-	.get_extent = ui_zstack_get_extent,
-	.layout = ui_zstack_layout,
-	.render = ui_zstack_render,
-	.get_children = ui_zstack_get_children,
-};
-
-UI_Element ui_zstack_new(UI* ui, UI_Extent extent, UI_Padding padding) {
-	UI_ZStack* zstack;
-	allocator_new(&ui->arena->allocator, zstack, 1);
-	*zstack = (UI_ZStack) {
-		.extent = extent,
-		.padding = padding,
-		.children = ui_element_seq_new(&ui->arena->allocator, 0),
-	};
-	UI_Element element = {
-		.data = zstack,
-		.vtable = &ui_zstack_vtable,
-		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
-	};
-	return element;
-}
-
-UI_Element* ui_push_zstack(UI* ui, UI_Extent extent, UI_Padding padding) {
-	UI_Element* element = ui_add_leaf(ui);
-	*element = ui_zstack_new(ui, extent, padding);
-	ui->stack[ui->stack_length++] = element;
-	return element;
-}
-
-// MARK: Frame
-
-void ui_begin_frame(UI* ui, Rect_f32 rect) {
-	sl_debug_assert(ui->stack_length == 0, "Must have an empty stack to begin a new frame.");
-	UI_Frame* frame = ui_frame_seq_push_reserve(&ui->frames);
-	*frame = (UI_Frame) {
-		.rect = rect,
-		.zstack = ui_zstack_new(ui, UI_EXTENT_FILL, UI_PADDING_NONE),
-	};
-
-	ui->stack_length = 0;
-	ui->stack[ui->stack_length++] = &frame->zstack;
-}
-void ui_end_frame(UI* ui) {
-	sl_debug_assert(ui->stack_length == 1, "Stack should only contain frame's zstack.");
-	ui->stack_length = 0;
-}
-
-// MARK: Debug Touches
-
-void ui_debug_touches(UI* ui, SL_Font* font, Gpu_Texture texture) {
-	const Rect_f32 rect = {
-		.start = {
-			40.0f,
-			190.0f
-		},
-		.end = {
-			600.0f,
-			900.0f,
-		},
-	};
-	ui_begin_frame(ui, rect);
-	ui_push_zstack(ui, UI_EXTENT_FILL, UI_PADDING_NONE);
-	ui_color(ui, UI_EXTENT_FILL, texture, (vec4_f32) { .w = 0.9f });
-	ui_push_vstack(ui, UI_EXTENT_FILL, ui_padding_uniform(40.0f), UI_Horizontal_Alignment_Left, 4.0f);
-
-	{
-		const UI_Label_Style label_style = {
-			.font = font,
-			.texture = texture,
-			.color = (vec4_f32) { 1.0f, 1.0f, 1.0f, 1.0f, },
-		};
-		ui_label(ui, UI_EXTENT_NONE, &label_style, "Touches");
-	}
-
-//	char buf[128];
-//	for (u8 i = 0; i < UI_MAX_TOUCHES; i++) {
-//		const UI_Touch* touch = &ui->touch_tracker.touches[i];
-//
-//		if ((touch->state & UI_Touch_State_Exists) > 0) {
-//			const UI_Label_Style label_style = {
-//				.font = font,
-//				.color = (vec4_f32) { 1.0f, 0.0f, 0.0f, 1.0f, },
-//			};
-//			sprintf(buf, "%llu: %.2f, %.2f ", touch->internal_id, touch->position.x, touch->position.y);
-//			ui_label(ui, UI_EXTENT_NONE, &label_style, buf);
-//		}
-//	}
-
-	ui_spacer(ui);
-	ui_pop(ui);
-	ui_pop(ui);
-	ui_end_frame(ui);
-}
-
-// MARK: Color
-
-typedef struct UI_Color {
-	UI_Extent extent;
-	Gpu_Texture texture;
-	vec4_f32 color;
-} UI_Color;
-
-UI_Extent ui_color_get_extent(UI* ui, UI_Element* self) {
-	UI_Color* color = self->data;
-	return color->extent;
-}
-void ui_color_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
-	UI_Color* color = self->data;
-	ui_draw_image(ui, blitter, color->texture, self->rect, (Rect_f32){0}, color->color);
-}
-const static UI_Element_VTable ui_color_vtable = {
-	.get_extent = ui_color_get_extent,
-	.render = ui_color_render,
-};
-
-UI_Element* ui_color(UI* ui, UI_Extent extent, Gpu_Texture texture, vec4_f32 color) {
-	UI_Color* color_el;
-	allocator_new(&ui->arena->allocator, color_el, 1);
-	*color_el = (UI_Color) {
-		.extent = extent,
-		.color = color,
-		.texture = texture,
-	};
-	UI_Element* element = ui_add_leaf(ui);
-	*element = (UI_Element) {
-		.data = color_el,
-		.vtable = &ui_color_vtable,
-		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
-	};
-	return element;
-}
-
-// MARK: Image
-
-typedef struct UI_Image {
-	UI_Extent extent;
-	Gpu_Texture texture;
-	Rect_u32 texture_rect;
-	u32 texture_scale;
-	vec4_f32 tint;
-} UI_Image;
-
-UI_Extent ui_image_get_extent(UI* ui, UI_Element* self) {
-	UI_Image* image = self->data;
-	UI_Extent extent = image->extent;
-
-	const vec2_f32 texture_rect_size = cvt_vec2_u32_f32(rect_size_u32(image->texture_rect));
-
-	if (extent.min_width == UI_EXTENT_IMPLICIT) {
-		extent.min_width = texture_rect_size.x * image->texture_scale;
-	}
-	if (extent.max_width == UI_EXTENT_IMPLICIT) {
-		extent.max_width = texture_rect_size.x * image->texture_scale;
-	}
-	if (extent.min_height == UI_EXTENT_IMPLICIT) {
-		extent.min_height = texture_rect_size.y * image->texture_scale;
-	}
-	if (extent.max_height == UI_EXTENT_IMPLICIT) {
-		extent.max_height = texture_rect_size.y * image->texture_scale;
-	}
-
-	return extent;
-}
-void ui_image_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
-	UI_Image* image = self->data;
-	ui_draw_image(ui, blitter, image->texture, self->rect, cvt_rect_u32_f32(image->texture_rect), image->tint);
-}
-const static UI_Element_VTable ui_image_vtable = {
-	.get_extent = ui_image_get_extent,
-	.render = ui_image_render,
-};
-
-UI_Element* ui_image(UI* ui, UI_Extent extent, Gpu_Texture texture, Rect_u32 texture_rect, u32 texture_scale, vec4_f32 tint) {
-	UI_Image* image_el;
-	allocator_new(&ui->arena->allocator, image_el, 1);
-	*image_el = (UI_Image) {
-		.extent = extent,
-		.texture = texture,
-		.texture_rect = texture_rect,
-		.texture_scale = texture_scale,
-		.tint = tint,
-	};
-	UI_Element* element = ui_add_leaf(ui);
-	*element = (UI_Element) {
-		.data = image_el,
-		.vtable = &ui_image_vtable,
-		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
-	};
-	return element;
-}
-
-// MARK: Button
-
-typedef struct UI_Button_Persistent_State {
-	Allocator* allocator;
-	UI_Button_State state;
-} UI_Button_Persistent_State;
-
-void ui_button_persistent_state_destroy(void* ctx) {
-	UI_Button_Persistent_State* state = ctx;
-	Allocator* allocator = state->allocator;
-	allocator_free(allocator, state, 1);
-}
-
-typedef struct UI_Button {
-	UI_ID id;
-	UI_Extent extent;
-	UI_Button_Style style;
-	const char* label;
-	u32 label_len;
-	UI_Text_Measurements label_measurements;
-	UI_Callback on_press;
-	UI_Button_Persistent_State* persistent_state;
-} UI_Button;
-
-UI_Extent ui_button_get_extent(UI* ui, UI_Element* self) {
-	UI_Button* button = self->data;
-	const UI_Extent label_extent = ui_text_measurements_get_extent(&button->label_measurements);
-	const UI_Extent padded_label_extent = ui_extent_add_padding(label_extent, button->style.text_padding);
-	const UI_Extent result = ui_extent_combine(button->extent, padded_label_extent);
-	return result;
-}
-void ui_button_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
-	UI_Button* button = self->data;
-
-	const Rect_f32 rect = self->rect;
-	const vec2_f32 rect_size = rect_size_f32(rect);
-
-	const Rect_f32 padded_rect = ui_padded_rect(self->rect, button->style.text_padding);
-	const vec2_f32 padded_rect_size = rect_size_f32(padded_rect);
-
-	const UI_Button_State button_state = button->persistent_state->state;
-	const UI_Button_State_Style* state_style = &button->style.state[button_state];
-
-	ui_draw_nine_patch(ui, blitter, button->style.texture, rect, state_style->backing, state_style->backing_color);
-
-	const bool has_label = (button->label != NULL);
-	if (has_label) {
-		vec2_f32 text_offset;
-		switch (button->style.text_alignment) {
-			case UI_Horizontal_Alignment_Left: {
-				text_offset = (vec2_f32) {
-					.x = roundf(padded_rect.start.x),
-					.y = roundf(padded_rect.start.y + (padded_rect_size.y * 0.5f) + button->label_measurements.y_range.end),
-				};
-			} break;
-
-			case UI_Horizontal_Alignment_Center: {
-				text_offset = (vec2_f32) {
-					.x = roundf(padded_rect.start.x + (padded_rect_size.x * 0.5f) - (button->label_measurements.size.x * 0.5f)),
-					.y = roundf(padded_rect.start.y + (padded_rect_size.y * 0.5f) + button->label_measurements.y_range.end),
-				};
-			} break;
-
-			case UI_Horizontal_Alignment_Right: {
-				text_offset = (vec2_f32) {
-					.x = roundf(padded_rect.end.x - button->label_measurements.size.x),
-					.y = roundf(padded_rect.start.y + (padded_rect_size.y * 0.5f) + button->label_measurements.y_range.end),
-				};
-			} break;
-		}
-		sl_blitter_draw_text(blitter, button->style.font, button->style.texture, button->label, add_vec2_f32(text_offset, state_style->label_offset), state_style->label_color);
-	} else if (state_style->has_icon) {
-		const vec2_f32 icon_size = mul_vec2_f32(cvt_vec2_u32_f32(rect_size_u32(state_style->icon_texture_rect)), splat_vec2_f32((f32)state_style->icon_scale));
-		const vec2_f32 icon_offset = {
-			.x = roundf(rect.start.x + (rect_size.x * 0.5f) - (icon_size.x * 0.5f)),
-			.y = roundf(rect.start.y + (rect_size.y * 0.5f) - (icon_size.y * 0.5f)),
-		};
-
-		const Rect_f32 icon_rect = {
-			.start = icon_offset,
-			.end = add_vec2_f32(icon_offset, icon_size),
-		};
-		ui_draw_image(ui, blitter, button->style.texture, icon_rect, cvt_rect_u32_f32(state_style->icon_texture_rect), state_style->icon_tint);
-	}
-}
-const static UI_Element_VTable ui_button_vtable = {
-	.get_extent = ui_button_get_extent,
-	.render = ui_button_render,
-};
-
-void ui_button_pan_callback(void* ctx, const UI_Pan_Gesture_Frame* frame) {
-	UI_Element* element = ctx;
-	UI_Button* button = element->data;
-
-	switch (frame->state) {
-		case UI_Gesture_State_Began:
-		case UI_Gesture_State_Changed: {
-			button->persistent_state->state = UI_Button_State_Active;
-		} break;
-
-		case UI_Gesture_State_Ended:
-		case UI_Gesture_State_Cancelled: {
-			button->persistent_state->state = UI_Button_State_Normal;
-		} break;
-	}
-
-	if (frame->state == UI_Gesture_State_Ended && rect_contains_f32(element->rect, frame->position)) {
-		ui_trigger_callback(button->on_press);
-	}
-}
-
-UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press) {
-	char* label_copy;
-	u32 label_len;
-	if (label) {
-		label_len = (u32)strlen(label);
-		allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
-		strcpy(label_copy, label);
-	} else {
-		label_copy = NULL;
-		label_len = 0;
-	}
-
-	const UI_ID persistent_state_id = ui_id_internal(id, 0, 0, true);
-	UI_Persistent_State* persistent_state = ui_persistent_store_acquire(&ui->persistent_store, persistent_state_id, ui->frame_index);
-	if (persistent_state->data == NULL) {
-		UI_Button_Persistent_State* button_persistent_state;
-		allocator_new(ui->allocator, button_persistent_state, 1);
-		*button_persistent_state = (UI_Button_Persistent_State) {
-			.allocator = ui->allocator,
-			.state = UI_Button_State_Normal,
-		};
-		persistent_state->data = button_persistent_state;
-		persistent_state->destroy = ui_button_persistent_state_destroy;
-	}
-
-	UI_Button* button;
-	allocator_new(&ui->arena->allocator, button, 1);
-	*button = (UI_Button) {
-		.id = id,
-		.extent = extent,
-		.style = *style,
-		.label = label_copy,
-		.label_len = label_len,
-		.label_measurements = ui_text_measurements(style->font, label),
-		.on_press = on_press,
-		.persistent_state = persistent_state->data,
-	};
-	UI_Element* element = ui_add_leaf(ui);
-	*element = (UI_Element) {
-		.data = button,
-		.vtable = &ui_button_vtable,
-		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
-	};
-
-	const UI_ID pan_gesture_id = ui_id_internal(id, 1, 0, true);
-	const UI_Pan_Gesture_Desc pan_desc = {
-		.touch_mask = Input_Touch_Kind_Mask_All,
-		.minimum_touches = 1,
-		.maximum_touches = 1,
-		.callback = {
-			.ctx = element,
-			.func = ui_button_pan_callback,
-		},
-	};
-	ui_pan_gesture(ui, pan_gesture_id, &pan_desc, element);
-
-	return element;
-}
-
-// MARK: Slider
-
-typedef struct UI_Slider {
-	UI_ID id;
-	UI_Extent extent;
-	UI_Slider_Style style;
-	f32* value;
-	Range_f32 range;
-	UI_Callback on_change;
-} UI_Slider;
-
-Rect_f32 ui_slider_get_track_rect(UI_Element* self) {
-	UI_Slider* slider = self->data;
-	const UI_Slider_Style* style = &slider->style;
-	const Rect_f32 rect = self->rect;
-	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
-	const vec2_f32 needle_image_size = cvt_vec2_u32_f32(rect_size_u32(style->needle_texture_rect));
-	const f32 track_lr_padding = ceil(needle_image_size.x * 0.5);
-	const vec2_f32 track_rect_start = {
-		rect.start.x + track_lr_padding,
-		round(center_y - (style->track_height * 0.5f)),
-	};
-	return (Rect_f32) {
-		.start = track_rect_start,
-		.end = {
-			rect.end.x - track_lr_padding,
-			.y = track_rect_start.y + style->track_height,
-		},
-	};
-}
-UI_Extent ui_slider_get_extent(UI* ui, UI_Element* self) {
-	UI_Slider* slider = self->data;
-
-	const UI_Slider_Style* style = &slider->style;
-	const vec2_f32 needle_image_size = mul_vec2_f32(cvt_vec2_u32_f32(rect_size_u32(style->needle_texture_rect)), splat_vec2_f32(style->needle_scale));
-
-	const UI_Extent slider_extent = {
-		.min_width = needle_image_size.x,
-		.max_width = needle_image_size.x,
-		.min_height = needle_image_size.y,
-		.max_height = needle_image_size.y,
-	};
-	const UI_Extent result = ui_extent_combine(slider->extent, slider_extent);
-
-	return result;
-}
-void ui_slider_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
-	UI_Slider* slider = self->data;
-
-	const UI_Slider_Style* style = &slider->style;
-
-	// track
-	const Rect_f32 track_rect = ui_slider_get_track_rect(self);
-	ui_draw_image(ui, blitter, style->texture, track_rect, (Rect_f32) { .start = {} }, style->track_color);
-
-	const Rect_f32 rect = self->rect;
-	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
-	const vec2_f32 needle_image_size = mul_vec2_f32(cvt_vec2_u32_f32(rect_size_u32(style->needle_texture_rect)), splat_vec2_f32(style->needle_scale));
-
-	// needle
-	const f32 progress = saturate_f32((*slider->value - slider->range.start) / (slider->range.end - slider->range.start));
-	const vec2_f32 needle_offset = {
-		.x = round(lerp_f32(track_rect.start.x, track_rect.end.x, progress) - (needle_image_size.x * 0.5f)),
-		.y = round(center_y - (needle_image_size.y * 0.5f)),
-	};
-	const Rect_f32 needle_rect = {
-		.start = needle_offset,
-		.end = add_vec2_f32(needle_image_size, needle_offset),
-	};
-	ui_draw_image(ui, blitter, style->texture, needle_rect, cvt_rect_u32_f32(style->needle_texture_rect), style->needle_color);
-}
-const static UI_Element_VTable ui_slider_vtable = {
-	.get_extent = ui_slider_get_extent,
-	.render = ui_slider_render,
-};
-
-void ui_slider_pan_callback(void* ctx, const UI_Pan_Gesture_Frame* frame) {
-	UI_Element* element = ctx;
-	UI_Slider* slider = element->data;
-
-	if (frame->state == UI_Gesture_State_Cancelled) {
-		// Restore original slider value?
-		return;
-	}
-
-	const Rect_f32 track_rect = ui_slider_get_track_rect(element);
-
-	const f32 mouse_progress = saturate_f32((frame->position.x - track_rect.start.x) / (track_rect.end.x - track_rect.start.x));
-	const f32 old_value = *slider->value;
-	const f32 new_value = lerp_f32(slider->range.start, slider->range.end, mouse_progress);
-	*slider->value = new_value;
-
-	if (old_value != new_value) {
-		ui_trigger_callback(slider->on_change);
-	}
-}
-
-UI_Element* ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change) {
-	UI_Slider* slider;
-	allocator_new(&ui->arena->allocator, slider, 1);
-	*slider = (UI_Slider) {
-		.id = id,
-		.extent = extent,
-		.style = *style,
-		.value = value,
-		.range = range,
-		.on_change = on_change,
-	};
-	UI_Element* element = ui_add_leaf(ui);
-	*element = (UI_Element) {
-		.data = slider,
-		.vtable = &ui_slider_vtable,
-		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
-	};
-
-	const UI_ID pan_gesture_id = ui_id_internal(id, 1, 0, true);
-	const UI_Pan_Gesture_Desc pan_desc = {
-		.touch_mask = Input_Touch_Kind_Mask_All,
-		.minimum_touches = 1,
-		.maximum_touches = 1,
-		.callback = {
-			.ctx = element,
-			.func = ui_slider_pan_callback,
-		},
-	};
-	ui_pan_gesture(ui, pan_gesture_id, &pan_desc, element);
-
-	return element;
-}
-
-// MARK: Label
-
-typedef struct UI_Label {
-	UI_Extent extent;
-	UI_Label_Style style;
-	const char* label;
-	u32 label_len;
-	UI_Text_Measurements label_measurements;
-} UI_Label;
-
-UI_Extent ui_label_get_extent(UI* ui, UI_Element* self) {
-	UI_Label* label = self->data;
-	const UI_Extent text_extent = ui_text_measurements_get_extent(&label->label_measurements);
-	const UI_Extent result = ui_extent_combine(label->extent, text_extent);
-	return result;
-}
-void ui_label_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
-	UI_Label* label = self->data;
-
-	const Rect_f32 rect = self->rect;
-	const vec2_f32 rect_size = rect_size_f32(rect);
-
-	const vec2_f32 text_offset = {
-		.x = roundf(rect.start.x + (rect_size.x * 0.5f) - (label->label_measurements.size.x * 0.5f)),
-		.y = roundf(rect.start.y + (rect_size.y * 0.5f) + label->label_measurements.y_range.end),
-	};
-
-	const UI_Label_Style* style = &label->style;
-	sl_blitter_draw_text(blitter, style->font, style->texture, label->label, text_offset, style->color);
-}
-const static UI_Element_VTable ui_label_vtable = {
-	.get_extent = ui_label_get_extent,
-	.render = ui_label_render,
-};
-
-UI_Element* ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label) {
-	const u32 label_len = (u32)strlen(label);
-	char* label_copy;
-	allocator_new(&ui->arena->allocator, label_copy, label_len + 1);
-	strcpy(label_copy, label);
-
-	UI_Label* label_el;
-	allocator_new(&ui->arena->allocator, label_el, 1);
-	*label_el = (UI_Label) {
-		.extent = extent,
-		.style = *style,
-		.label = label_copy,
-		.label_len = label_len,
-		.label_measurements = ui_text_measurements(style->font, label),
-	};
-	UI_Element* element = ui_add_leaf(ui);
-	*element = (UI_Element) {
-		.data = label_el,
-		.vtable = &ui_label_vtable,
-		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
-	};
-	return element;
-}
-
-typedef struct UI_Custom {
-	UI_Extent extent;
-	UI_Layout_Callback on_layout;
-	UI_Render_Callback on_render;
-} UI_Custom;
-UI_Extent ui_custom_get_extent(UI* ui, UI_Element* self) {
-	UI_Custom* custom = self->data;
-	return custom->extent;
-}
-void ui_custom_layout(UI* ui, UI_Element* self) {
-	UI_Custom* custom = self->data;
-	if (custom->on_layout.layout != NULL) {
-		custom->on_layout.layout(custom->on_layout.ctx, self->rect);
-	}
-}
-void ui_custom_render(UI* ui, UI_Element* self, SL_Blitter* blitter) {
-	UI_Custom* custom = self->data;
-	if (custom->on_render.render != NULL) {
-		custom->on_render.render(custom->on_render.ctx, self->rect, blitter);
-	}
-}
-const static UI_Element_VTable ui_custom_vtable = {
-	.get_extent = ui_custom_get_extent,
-	.layout = ui_custom_layout,
-	.render = ui_custom_render,
-};
-
-UI_Element* ui_custom(UI* ui, UI_Extent extent, UI_Layout_Callback on_layout, UI_Render_Callback on_render) {
-	UI_Custom* custom;
-	allocator_new(&ui->arena->allocator, custom, 1);
-	*custom = (UI_Custom) {
-		.extent = extent,
-		.on_layout = on_layout,
-		.on_render = on_render,
-	};
-	UI_Element* element = ui_add_leaf(ui);
-	*element = (UI_Element) {
-		.data = custom,
-		.vtable = &ui_custom_vtable,
-		.gestures = ui_persistent_state_ptr_seq_new(&ui->arena->allocator, 0),
-	};
-	return element;
-}
-
-// MARK: Lifecycle
-
-bool ui_populate_receivers_with_element(UI* ui, UI_Touch* touch, UI_Element* element) {
-	if (rect_contains_f32(element->rect, touch->position)) {
-		UI_Element_Seq* children = element->vtable->get_children ? element->vtable->get_children(ui, element) : NULL;
-		if (children) {
-			const s64 child_count = (s64)ui_element_seq_get_count(children);
-			for (s64 child_idx = child_count - 1; child_idx >= 0; child_idx--) {
-				UI_Element* child = ui_element_seq_get_ptr(children, child_idx);
-				const bool consumed = ui_populate_receivers_with_element(ui, touch, child);
-				if (consumed) {
-					return true;
-				}
-			}
-		}
-
-		const u64 gesture_count = ui_persistent_state_ptr_seq_get_count(&element->gestures);
-		for (u64 gesture_idx = 0; gesture_idx < gesture_count; gesture_idx++) {
-			UI_Persistent_State* gesture_persistent_state = ui_persistent_state_ptr_seq_get(&element->gestures, gesture_idx);
-
-			// TODO: Filter gestures based on what they're interested in (i.e. pencil, finger, mouse).
-			// UI_Gesture* gesture = ui_gesture_for_handle(ui, gesture_handle);
-			// ...
-
-			ui_persistent_state_handle_seq_push(&touch->receivers, ui_persistent_state_get_handle(gesture_persistent_state));
-		}
-
-		// TODO: Some views may not occlude touches (i.e. passthrough).
-		return true;
-	} else {
-		return false;
-	}
-}
-void ui_populate_receivers(UI* ui, UI_Touch* touch) {
-	const s64 frame_count = (s64)ui_frame_seq_get_count(&ui->frames);
-	for (s64 frame_idx = frame_count - 1; frame_idx >= 0; frame_idx--) {
-		UI_Frame* frame = ui_frame_seq_get_ptr(&ui->frames, frame_idx);
-		if (rect_contains_f32(frame->rect, touch->position)) {
-			bool consumed = ui_populate_receivers_with_element(ui, touch, &frame->zstack);
-			if (consumed) {
-				break;
-			}
-		}
-	}
-}
-
-void ui_begin(UI* ui) {
-	sl_debug_assert(ui->lifecycle_state == UI_Lifecycle_State_Ended, "UI must be ended before begin.");
-	ui->lifecycle_state = UI_Lifecycle_State_Began;
-	++ui->frame_index;
-
-	sl_arena_allocator_reset(ui->arena, 0);
-	ui_frame_seq_clear(&ui->frames);
-
-	ui->stack_length = 0;
-}
-
-void ui_layout_frames(UI* ui) {
-	const u64 frame_count = ui_frame_seq_get_count(&ui->frames);
-	for (u64 i = 0; i < frame_count; i++) {
-		UI_Frame* frame = ui_frame_seq_get_ptr(&ui->frames, i);
-		frame->zstack.rect = frame->rect;
-		frame->zstack.vtable->layout(ui, &frame->zstack);
-	}
-}
-
-void ui_handle_events(UI* ui, Input_Tracker* input_tracker) {
-	Input_Event_Iterator event_iterator = input_tracker_get_event_iterator(input_tracker);
-
-	Input_Event event;
-	while (input_event_iterator_get_next(&event_iterator, &event)) {
-		switch (event.kind) {
-			case Input_Event_Kind_Touch_Began: {
-				UI_Touch* touch;
-				if (ui_touch_map_get(&ui->active_touch_map, event.touch.id, &touch)) {
-					// Prior touch with same ID never received an ended/cancelled event.
-					// Ending it now for consistency; there can't be two live touches with the same external ID.
-					ui_touch_ended(ui, touch);
-					touch = NULL;
-				}
-
-				touch = ui_touch_new(ui, event.touch.id);
-				touch->position = event.touch.position;
-				touch->timestamp = event.touch.timestamp;
-				ui_populate_receivers(ui, touch);
-				ui_touch_began(ui, touch);
-			} break;
-
-			case Input_Event_Kind_Touch_Changed: {
-				UI_Touch* touch;
-				if (ui_touch_map_get(&ui->active_touch_map, event.touch.id, &touch)) {
-					touch->position = event.touch.position;
-					touch->timestamp = event.touch.timestamp;
-					ui_touch_changed(ui, touch);
-				}
-			} break;
-
-			case Input_Event_Kind_Touch_Ended: {
-				UI_Touch* touch;
-				if (ui_touch_map_get(&ui->active_touch_map, event.touch.id, &touch)) {
-					touch->position = event.touch.position;
-					touch->timestamp = event.touch.timestamp;
-					ui_touch_ended(ui, touch);
-				}
-			} break;
-
-			case Input_Event_Kind_Touch_Cancelled: {
-				UI_Touch* touch;
-				if (ui_touch_map_get(&ui->active_touch_map, event.touch.id, &touch)) {
-					touch->position = event.touch.position;
-					touch->timestamp = event.touch.timestamp;
-					ui_touch_cancelled(ui, touch);
-				}
-			} break;
-
-			default:
-				break;
-		}
-	}
-}
-
-void ui_end(UI* ui, Input_Tracker* input_tracker) {
-	sl_debug_assert(ui->lifecycle_state == UI_Lifecycle_State_Began, "UI must have began before ending.");
-	ui->lifecycle_state = UI_Lifecycle_State_Ended;
-
-	ui_layout_frames(ui);
-	ui_handle_events(ui, input_tracker);
-	ui_persistent_store_purge(&ui->persistent_store, ui->frame_index);
-}
-
-void ui_render(UI* ui, SL_Blitter* blitter) {
-	const u64 frame_count = ui_frame_seq_get_count(&ui->frames);
-	for (u64 i = 0; i < frame_count; i++) {
-		UI_Frame* frame = ui_frame_seq_get_ptr(&ui->frames, i);
-		frame->zstack.vtable->render(ui, &frame->zstack, blitter);
-	}
-}
-
-// A mechanism for storing data and being able to retrieve it in the next frame.
-// When data is not accessed in a frame, it will be cleaned up.
-// So in order to retain data, `ui_get_data()` must be called once per frame.
-void* ui_get_data(UI* ui, UI_ID id) {
-	UI_Persistent_State* state = ui_persistent_store_acquire(&ui->persistent_store, id, ui->frame_index);
-	return state->data;
-}
-void ui_set_data(UI* ui, UI_ID id, void* data, void (*destroy)(void* data)) {
-	UI_Persistent_State* state = ui_persistent_store_acquire(&ui->persistent_store, id, ui->frame_index);
-	if (state->destroy) {
-		state->destroy(state->data);
-	}
-	state->data = data;
-	state->destroy = destroy;
+	return ui_custom_gesture(id, gesture_data, &ui_pan_gesture_vtable);
 }

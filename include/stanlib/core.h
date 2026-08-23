@@ -944,6 +944,37 @@ sl_inline vec2_f64 max_vec2_f64(vec2_f64 a, vec2_f64 b) {
 	};
 }
 
+sl_inline bool eq_vec2_u8(vec2_u8 a, vec2_u8 b) {
+	return (a.x == b.x) && (a.y == b.y);
+}
+sl_inline bool eq_vec2_u16(vec2_u16 a, vec2_u16 b) {
+	return (a.x == b.x) && (a.y == b.y);
+}
+sl_inline bool eq_vec2_u32(vec2_u32 a, vec2_u32 b) {
+	return (a.x == b.x) && (a.y == b.y);
+}
+sl_inline bool eq_vec2_u64(vec2_u64 a, vec2_u64 b) {
+	return (a.x == b.x) && (a.y == b.y);
+}
+sl_inline bool eq_vec2_s8(vec2_s8 a, vec2_s8 b) {
+	return (a.x == b.x) && (a.y == b.y);
+}
+sl_inline bool eq_vec2_s16(vec2_s16 a, vec2_s16 b) {
+	return (a.x == b.x) && (a.y == b.y);
+}
+sl_inline bool eq_vec2_s32(vec2_s32 a, vec2_s32 b) {
+	return (a.x == b.x) && (a.y == b.y);
+}
+sl_inline bool eq_vec2_s64(vec2_s64 a, vec2_s64 b) {
+	return (a.x == b.x) && (a.y == b.y);
+}
+sl_inline bool eq_vec2_f32(vec2_f32 a, vec2_f32 b) {
+	return (a.x == b.x) && (a.y == b.y);
+}
+sl_inline bool eq_vec2_f64(vec2_f64 a, vec2_f64 b) {
+	return (a.x == b.x) && (a.y == b.y);
+}
+
 sl_inline vec3_u8 splat_vec3_u8(u8 v) {
 	return (vec3_u8) {
 		.x = v,
@@ -2223,6 +2254,18 @@ sl_inline bool eq_vec4_f64(vec4_f64 a, vec4_f64 b) {
 	return (a.x == b.x) && (a.y == b.y) && (a.z == b.z) && (a.w == b.w);
 }
 
+sl_inline vec2_s32 cvt_vec2_u32_s32(vec2_u32 v) {
+	return (vec2_s32) { (s32)v.x, (s32)v.y };
+}
+sl_inline vec2_u32 cvt_vec2_s32_u32(vec2_s32 v) {
+	return (vec2_u32) { (u32)v.x, (u32)v.y };
+}
+sl_inline vec2_f32 cvt_vec2_s32_f32(vec2_s32 v) {
+	return (vec2_f32) { (f32)v.x, (f32)v.y };
+}
+sl_inline vec2_s32 cvt_vec2_f32_s32(vec2_f32 v) {
+	return (vec2_s32) { (s32)v.x, (s32)v.y };
+}
 sl_inline vec2_f32 cvt_vec2_u32_f32(vec2_u32 v) {
 	return (vec2_f32) { (f32)v.x, (f32)v.y };
 }
@@ -2969,6 +3012,12 @@ sl_inline void sl_memset(void* dst, u8 value, u64 size) {
 	}\
 	sl_unused sl_inline void sl_concat(function_prefix, _clear)(type* s) {\
 		s->element_count = 0;\
+	}\
+	sl_unused sl_inline void sl_concat(function_prefix, _push_seq)(type* dst, type* src) {\
+		for (u64 i = 0; i < src->element_count; i++) {\
+			const element e = sl_concat(function_prefix, _get)(src, i);\
+			sl_concat(function_prefix, _push)(dst, e);\
+		}\
 	}
 
 sl_seq(u8, Seq_u8, seq_u8);
@@ -3657,8 +3706,8 @@ sl_shared_struct(Rect_s32) {
 
 #if !defined(__SLANG__) && !defined(__METAL_VERSION__)
 
-sl_inline vec2_f32 centre_rect_f32(Rect_f32 a) {
-	return mul_vec2_f32(add_vec2_f32(a.start, a.end), (vec2_f32) { 0.5f, 0.5f });
+sl_inline bool rect_s32_equals(Rect_s32 a, Rect_s32 b) {
+	return eq_vec2_s32(a.start, b.start) && eq_vec2_s32(a.end, b.end);
 }
 
 sl_inline Rect_f32 rect_offset_f32(Rect_f32 a, vec2_f32 b) {
@@ -3671,6 +3720,12 @@ sl_inline Rect_u32 rect_offset_u32(Rect_u32 a, vec2_u32 b) {
 	return (Rect_u32) {
 		.start = add_vec2_u32(a.start, b),
 		.end = add_vec2_u32(a.end, b),
+	};
+}
+sl_inline Rect_s32 rect_offset_s32(Rect_s32 a, vec2_s32 b) {
+	return (Rect_s32) {
+		.start = add_vec2_s32(a.start, b),
+		.end = add_vec2_s32(a.end, b),
 	};
 }
 
@@ -3693,6 +3748,18 @@ sl_inline Rect_u32 cvt_rect_f32_u32(Rect_f32 v) {
 		.end = cvt_vec2_f32_u32(v.end),
 	};
 }
+sl_inline Rect_f32 cvt_rect_s32_f32(Rect_s32 v) {
+	return (Rect_f32) {
+		.start = cvt_vec2_s32_f32(v.start),
+		.end = cvt_vec2_s32_f32(v.end),
+	};
+}
+sl_inline Rect_s32 cvt_rect_f32_s32(Rect_f32 v) {
+	return (Rect_s32) {
+		.start = cvt_vec2_f32_s32(v.start),
+		.end = cvt_vec2_f32_s32(v.end),
+	};
+}
 
 sl_inline vec2_f32 rect_size_f32(Rect_f32 a) {
 	return sub_vec2_f32(a.end, a.start);
@@ -3702,6 +3769,13 @@ sl_inline vec2_s32 rect_size_s32(Rect_s32 a) {
 }
 sl_inline vec2_u32 rect_size_u32(Rect_u32 a) {
 	return sub_vec2_u32(a.end, a.start);
+}
+
+sl_inline vec2_f32 rect_centre_f32(Rect_f32 a) {
+	return mul_vec2_f32(add_vec2_f32(a.start, a.end), (vec2_f32) { 0.5f, 0.5f });
+}
+sl_inline vec2_s32 rect_centre_s32(Rect_s32 a) {
+	return div_vec2_s32(add_vec2_s32(a.start, a.end), splat_vec2_s32(2));
 }
 
 sl_inline bool rect_contains_f32(Rect_f32 a, vec2_f32 b) {

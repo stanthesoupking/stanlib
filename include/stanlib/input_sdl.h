@@ -159,6 +159,7 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 				.kind = Input_Event_Kind_Touch_Began,
 				.touch = input_touch_event_from_sdl_mouse_button_event(window, &event->button),
 			};
+
 			return true;
 		} break;
 
@@ -180,7 +181,7 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 			if (event->tfinger.touchID == SDL_MOUSE_TOUCHID) {
 				return false;
 			}
-			
+
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Began,
 				.touch = input_touch_event_from_sdl_touch_event(window, &event->tfinger),
@@ -193,7 +194,7 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 			if (event->tfinger.touchID == SDL_MOUSE_TOUCHID) {
 				return false;
 			}
-			
+
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Ended,
 				.touch = input_touch_event_from_sdl_touch_event(window, &event->tfinger),
@@ -206,7 +207,7 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 			if (event->tfinger.touchID == SDL_MOUSE_TOUCHID) {
 				return false;
 			}
-			
+
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Changed,
 				.touch = input_touch_event_from_sdl_touch_event(window, &event->tfinger),
@@ -219,14 +220,14 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 			if (event->tfinger.touchID == SDL_MOUSE_TOUCHID) {
 				return false;
 			}
-			
+
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Cancelled,
 				.touch = input_touch_event_from_sdl_touch_event(window, &event->tfinger),
 			};
 			return true;
 		} break;
-			
+
 		case SDL_EVENT_PEN_DOWN: {
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Began,
@@ -234,7 +235,7 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 			};
 			return true;
 		} break;
-			
+
 		case SDL_EVENT_PEN_MOTION: {
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Changed,
@@ -242,7 +243,7 @@ sl_inline bool input_event_from_sdl_event(SDL_Window* window, const SDL_Event* e
 			};
 			return true;
 		} break;
-			
+
 		case SDL_EVENT_PEN_UP: {
 			*out_event = (Input_Event) {
 				.kind = Input_Event_Kind_Touch_Ended,

@@ -1,26 +1,48 @@
-#pragma once
+// Notes:
+//
+// - Everything is a window, including the root and context menus.
+// - When the parent window is resized, child windows are repositioned proportionally.
+// - Window has various modes?
+//   - Decorations
+//   - Movable
+//   - Resizable
+// - Context Menu
+// 	 - Spawn an additional window, that dismisses the context menu when tapped.
 
-#include <stanlib/core.h>
-#include <stanlib/text.h>
+#pragma once
+#include "stanlib/gpu.h"
+#include "stanlib/string.h"
+#include "stanlib/text.h"
 #include <stanlib/blitter.h>
+#include <stanlib/core.h>
 #include <stanlib/input.h>
 
-typedef struct UI_Margins {
-	u32 top, bottom, left, right;
-} UI_Margins;
+typedef enum UI_Window_Flags {
+	UI_Window_Flags_None,
+	UI_Window_Flags_Decorated
+} UI_Window_Flags;
 
-typedef struct UI_Nine_Patch {
-	Rect_u32 atlas_region;
-	UI_Margins margins;
-} UI_Nine_Patch;
+typedef enum UI_Axis {
+	UI_Axis_Horizontal,
+	UI_Axis_Vertical,
+} UI_Axis;
+
+typedef enum UI_Alignment {
+	UI_Alignment_Bottom,
+	UI_Alignment_Center,
+	UI_Alignment_Top,
+
+	UI_Alignment_Left = UI_Alignment_Bottom, // Alias
+	UI_Alignment_Right = UI_Alignment_Top, // Alias
+} UI_Alignment;
 
 typedef struct UI_Padding {
-	f32 top, bottom, left, right;
+	s32 top, bottom, left, right;
 } UI_Padding;
 
 #define UI_PADDING_NONE ((UI_Padding) {})
 
-sl_inline UI_Padding ui_padding_uniform(f32 amount) {
+sl_inline UI_Padding ui_padding_uniform(s32 amount) {
 	return (UI_Padding) { amount, amount, amount, amount };
 }
 
@@ -32,111 +54,102 @@ sl_inline UI_Padding ui_padding_add(UI_Padding a, UI_Padding b) {
 		.bottom = a.bottom + b.bottom,
 	};
 }
+Rect_s32 ui_padded_rect(Rect_s32 rect, UI_Padding padding);
 
-typedef enum UI_Horizontal_Alignment {
-	UI_Horizontal_Alignment_Center,
-	UI_Horizontal_Alignment_Left,
-	UI_Horizontal_Alignment_Right
-} UI_Horizontal_Alignment;
+typedef struct UI_Margins {
+	u32 top, bottom, left, right;
+} UI_Margins;
+
+typedef struct UI_Nine_Patch {
+	Rect_u32 atlas_region;
+	UI_Margins margins;
+} UI_Nine_Patch;
+
+typedef struct UI_ID { u64 hash; } UI_ID;
+#define UI_ID_NULL ((UI_ID) { .hash = 0ULL, })
+UI_ID ui_id(UI_ID parent, u32 item, u32 index);
+
+// Opaque
+typedef struct UI_Window_Data UI_Window_Data;
+typedef struct UI_View_Data UI_View_Data;
+typedef struct UI_Gesture_Data UI_Gesture_Data;
+
+typedef struct UI_Window { UI_Window_Data* data; u32 lifecycle_index; } UI_Window;
+typedef struct UI_View { UI_View_Data* data; u32 lifecycle_index; } UI_View;
+typedef struct UI_Gesture { UI_Gesture_Data* data; u32 lifecycle_index; } UI_Gesture;
+
+typedef struct UI_Limits {
+	vec2_s32 min;
+	vec2_s32 max;
+} UI_Limits;
+
+typedef struct UI_View_Callbacks {
+	void* ctx;
+	void (*layout_subviews)(void* ctx, UI_View view);
+	UI_Limits (*get_limits)(void* ctx, UI_View view);
+	void (*pre_render)(void* ctx, UI_View view);
+	void (*render)(void* ctx, UI_View view, SL_Blitter* blitter);
+} UI_View_Callbacks;
+
+typedef struct UI_Label_Style {
+	SL_Font* font;
+	vec4_f32 color;
+} UI_Label_Style;
+
+typedef struct UI_Window_Heading_Style {
+	UI_Label_Style label_style;
+	s32 height;
+
+	UI_Nine_Patch background_9p;
+	vec4_f32 background_tint;
+} UI_Window_Heading_Style;
+
+typedef struct UI_Window_Style {
+	bool has_heading;
+	UI_Window_Heading_Style heading_style;
+
+	UI_Nine_Patch content_background_9p;
+	vec4_f32 content_background_tint;
+	UI_Padding content_padding;
+} UI_Window_Style;
 
 typedef enum UI_Button_State {
 	UI_Button_State_Normal,
 	UI_Button_State_Hot,
-	UI_Button_State_Active
+	UI_Button_State_Active,
+	UI_Button_State_Count,
 } UI_Button_State;
-#define UI_BUTTON_STATE_COUNT 3
 
 typedef struct UI_Button_State_Style {
-	vec2_f32 label_offset;
-	vec4_f32 label_color;
-
-	bool has_icon;
-	Rect_u32 icon_texture_rect;
-	vec4_f32 icon_tint;
-	u32 icon_scale;
-
+	vec4_f32 text_color;
 	UI_Nine_Patch backing;
-	vec4_f32 backing_color;
+	vec4_f32 backing_tint;
 } UI_Button_State_Style;
 
 typedef struct UI_Button_Style {
+	bool has_text;
 	SL_Font* font;
-	Gpu_Texture texture;
-	UI_Padding text_padding;
-	UI_Horizontal_Alignment text_alignment;
-	UI_Button_State_Style state[UI_BUTTON_STATE_COUNT];
+	UI_Padding padding;
+	UI_Button_State_Style state[UI_Button_State_Count];
 } UI_Button_Style;
 
 typedef struct UI_Slider_Style {
-	Gpu_Texture texture;
-
-	Rect_u32 needle_texture_rect;
-	vec4_f32 needle_color;
-	u32 needle_scale;
-
 	vec4_f32 track_color;
-	f32 track_height;
+	s32 track_height;
+
+	Rect_u32 needle_rect;
+	vec4_f32 needle_tint;
+	s32 needle_scale;
 } UI_Slider_Style;
 
-typedef struct UI_Label_Style {
-	SL_Font* font;
-	Gpu_Texture texture;
-	vec4_f32 color;
-} UI_Label_Style;
-
-typedef struct UI UI;
-
-typedef struct UI_ID {
-	u64 hash;
-} UI_ID;
-#define UI_ID_NULL ((UI_ID) { .hash = 0ULL, })
-
-UI_ID ui_id(UI_ID parent, u32 item, u32 index);
-
-typedef enum UI_Direction {
-	UI_Direction_Horizontal,
-	UI_Direction_Vertical,
-} UI_Direction;
-
-typedef enum UI_Vertical_Alignment {
-	UI_Vertical_Alignment_Center,
-	UI_Vertical_Alignment_Top,
-	UI_Vertical_Alignment_Bottom
-} UI_Vertical_Alignment;
-
-#define UI_EXTENT_NONE ((UI_Extent) {})
-
-typedef struct UI_Extent {
-	f32 min_width;
-	f32 max_width;
-
-	f32 min_height;
-	f32 max_height;
-} UI_Extent;
-
-#define UI_FILL -1.0f
-#define UI_EXTENT_IMPLICIT 0.0f
-
-#define UI_EXTENT_NONE ((UI_Extent) {})
-#define UI_EXTENT_FILL ((UI_Extent) { .max_width = UI_FILL, .max_height = UI_FILL })
-
-typedef struct UI_Callback {
+typedef struct UI_Slider_Callbacks {
 	void* ctx;
-	void (*func)(void* ctx);
-} UI_Callback;
-#define UI_CALLBACK_NULL ((UI_Callback) {})
 
-typedef struct UI_Layout_Callback {
-	void* ctx;
-	void (*layout)(void* ctx, Rect_f32 rect);
-} UI_Layout_Callback;
-
-typedef struct UI_Render_Callback {
-	void* ctx;
-	void (*render)(void* ctx, Rect_f32 rect, SL_Blitter* blitter);
-} UI_Render_Callback;
-
-// MARK: Gesture
+	void (*set_value)(void* ctx, f32 value);
+	f32 (*get_value)(void* ctx);
+	void (*on_begin)(void* ctx);
+	void (*on_end)(void* ctx);
+} UI_Slider_Callbacks;
 
 typedef struct UI_Touch UI_Touch;
 
@@ -145,11 +158,11 @@ vec2_f32 ui_touch_get_position(UI_Touch* touch);
 bool ui_touch_equals(UI_Touch* a, UI_Touch* b);
 
 typedef struct UI_Gesture_VTable {
-	void (*touch_began)(UI* ui, void* ctx, UI_Touch* touch);
-	void (*touch_changed)(UI* ui, void* ctx, UI_Touch* touch);
-	void (*touch_ended)(UI* ui, void* ctx, UI_Touch* touch);
-	void (*touch_cancelled)(UI* ui, void* ctx, UI_Touch* touch);
-	void (*destroy)(UI* ui, void* ctx);
+	void (*touch_began)(void* ctx, UI_Touch* touch);
+	void (*touch_changed)(void* ctx, UI_Touch* touch);
+	void (*touch_ended)(void* ctx, UI_Touch* touch);
+	void (*touch_cancelled)(void* ctx, UI_Touch* touch);
+	void (*destroy)(void* ctx);
 } UI_Gesture_VTable;
 
 typedef enum UI_Gesture_State {
@@ -191,107 +204,65 @@ typedef struct UI_Tap_Gesture_Callback {
 #define UI_TAP_GESTURE_MAXIMUM_MOVEMENT_DEFAULT 10.0f
 
 typedef struct UI_Tap_Gesture_Desc {
-	// Default reccommended value is UI_TAP_GESTURE_MAXIMUM_MOVEMENT_DEFAULT.
+	// Default recommended value is UI_TAP_GESTURE_MAXIMUM_MOVEMENT_DEFAULT.
 	f32 maximum_movement;
 
 	UI_Tap_Gesture_Callback callback;
 } UI_Tap_Gesture_Desc;
 
-typedef struct UI_Atlas UI_Atlas;
+typedef struct UI_Callback {
+	void* ctx;
+	void (*func)(void* ctx);
+} UI_Callback;
+#define UI_CALLBACK_NULL ((UI_Callback) {})
 
-typedef enum UI_Atlas_Entry_Kind {
-	UI_Atlas_Entry_Kind_Image,
-	UI_Atlas_Entry_Kind_Font,
-} UI_Atlas_Entry_Kind;
-
-typedef struct UI_Atlas_Entry_Image {
-	Immutable_Buffer buffer;
-	vec2_u32 size;
-	u32 row_length; // bytes
-} UI_Atlas_Entry_Image;
-
-typedef struct UI_Atlas_Entry_Font {
-	Immutable_Buffer buffer;
-	f32 size;
-} UI_Atlas_Entry_Font;
-
-typedef struct UI_Atlas_Entry {
-	UI_Atlas_Entry_Kind kind;
-	union {
-		UI_Atlas_Entry_Image image;
-		UI_Atlas_Entry_Font font;
-	};
-} UI_Atlas_Entry;
-
-typedef struct UI_Atlas_Desc {
+typedef struct UI_Desc {
 	Allocator* allocator;
+} UI_Desc;
 
-	const UI_Atlas_Entry* entries;
-	u32 entry_count;
+// MARK: UI
+void ui_init(const UI_Desc* desc);
+void ui_deinit();
 
-	Gpu_Command_Buffer command_buffer;
-	Gpu_Slice* inout_staging_slice;
-	Gpu_Slice* inout_persistent_slice;
-} UI_Atlas_Desc;
+// MARK: Lifecycle
+void ui_lifecycle_begin(Rect_s32 frame, Gpu_Texture texture);
+void ui_lifecycle_interact(Input_Tracker* input_tracker);
+void ui_lifecycle_pre_render(void);
+void ui_lifecycle_render(SL_Blitter* blitter);
+void ui_lifecycle_end();
 
-typedef struct UI_Atlas_Handle {
-	UI_Atlas* atlas;
-	u32 index;
-} UI_Atlas_Handle;
+// MARK: Window
+UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Window_Style* style);
+bool ui_window_is_appearing(UI_Window window);
+Rect_s32 ui_window_get_frame(UI_Window window);
+void ui_window_set_frame(UI_Window window, Rect_s32 frame);
+void ui_window_send_to_front(UI_Window window);
 
-UI_Atlas* ui_atlas_new(const UI_Atlas_Desc* desc);
-void ui_atlas_destroy(UI_Atlas* atlas);
+// MARK: View
+UI_View ui_view(UI_ID id, const UI_View_Callbacks* callbacks);
+Rect_s32 ui_view_get_frame(UI_View view);
+void ui_view_set_frame(UI_View view, Rect_s32 frame);
+void ui_view_layout(UI_View view);
+UI_Limits ui_view_get_limits(UI_View view);
+void ui_view_add_subview(UI_View parent, UI_View child);
+void ui_view_add_gesture(UI_View view, UI_Gesture gesture);
 
-typedef struct UI_Element UI_Element;
+// MARK: View Types
+UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing);
+UI_View ui_label(UI_ID id, SL_String_View text, const UI_Label_Style* style);
+UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, UI_Callback on_press);
+UI_View ui_slider(UI_ID id, const UI_Slider_Style* style, Range_f32 range, UI_Slider_Callbacks callbacks);
+UI_View ui_color(UI_ID id, vec4_f32 color);
+UI_View ui_nine_patch(UI_ID id, UI_Nine_Patch nine_patch, vec4_f32 tint);
+UI_View ui_spacer(UI_ID id);
 
-UI* ui_new(Allocator* allocator);
-void ui_destroy(UI* ui);
+// MARK: Gesture
+UI_Gesture ui_custom_gesture(UI_ID id, void* ctx, const UI_Gesture_VTable* vtable);
+UI_Gesture ui_pan_gesture(UI_ID id, const UI_Pan_Gesture_Desc* desc);
+UI_Gesture ui_tap_gesture(UI_ID id, const UI_Tap_Gesture_Desc* desc);
 
-// The allocator used internally by UI.
-Allocator* ui_get_allocator(UI* ui);
-
-void ui_begin(UI* ui);
-void ui_end(UI* ui, Input_Tracker* input_tracker);
-
-void ui_begin_frame(UI* ui, Rect_f32 rect);
-void ui_end_frame(UI* ui);
-
-void ui_debug_touches(UI* ui, SL_Font* font, Gpu_Texture texture);
-
-// Fill available space in a hstack/vstack
-UI_Element* ui_spacer(UI* ui);
-
-UI_Element* ui_push_hstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Vertical_Alignment alignment, f32 spacing);
-UI_Element* ui_push_vstack(UI* ui, UI_Extent extent, UI_Padding padding, UI_Horizontal_Alignment alignment, f32 spacing);
-UI_Element* ui_push_zstack(UI* ui, UI_Extent extent, UI_Padding padding);
-
-void ui_pop(UI* ui);
-
-UI_Element* ui_color(UI* ui, UI_Extent extent, Gpu_Texture texture, vec4_f32 color);
-UI_Element* ui_image(UI* ui, UI_Extent extent, Gpu_Texture texture, Rect_u32 texture_rect, u32 texture_scale, vec4_f32 tint);
-UI_Element* ui_button(UI* ui, UI_ID id, UI_Extent extent, const UI_Button_Style* style, const char* label, UI_Callback on_press);
-UI_Element* ui_slider_f32(UI* ui, UI_ID id, UI_Extent extent, const UI_Slider_Style* style, f32* value, Range_f32 range, UI_Callback on_change);
-UI_Element* ui_label(UI* ui, UI_Extent extent, const UI_Label_Style* style, const char* label);
-
-// Custom element rendered using a callback.
-UI_Element* ui_custom(UI* ui, UI_Extent extent, UI_Layout_Callback on_layout, UI_Render_Callback on_render);
-
-// Get the rect after layout for the given element.
-//
-// Note #1: An element will only have a rect once layout has run (after calling ui_end()).
-// Note #2: When the element is culled, this function returns `false`.
-bool ui_element_get_layout_rect(UI* ui, UI_Element* element, Rect_f32* out_rect);
-
-void ui_custom_gesture(UI* ui, UI_ID id, const UI_Gesture_VTable* vtable, void* ctx, UI_Element* element);
-void ui_pan_gesture(UI* ui, UI_ID id, const UI_Pan_Gesture_Desc* desc, UI_Element* element);
-void ui_tap_gesture(UI* ui, UI_ID id, const UI_Tap_Gesture_Desc* desc, UI_Element* element);
-
-void ui_render(UI* ui, SL_Blitter* blitter);
-
-// A mechanism for storing data and being able to retrieve it in the next frame.
-// When data is not accessed in a frame, it will be cleaned up.
-// So in order to retain data, `ui_get_data()` must be called once per frame.
-//
-// The allocator used for `data` must be outlive UI. It is reccommended to either use libc (malloc/free) or UI's allocator via `ui_get_allocator()`.
-void* ui_get_data(UI* ui, UI_ID id);
-void ui_set_data(UI* ui, UI_ID id, void* data, void (*destroy)(void* data));
+// MARK: Storage
+// Store persistent data between lifecycles.
+// If a data is not accessed in a lifecycle, it is cleaned up.
+void* ui_storage_get(UI_ID id);
+void ui_storage_set(UI_ID id, void* data, void (*destroy)(void* data));
