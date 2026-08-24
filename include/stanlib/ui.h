@@ -225,6 +225,7 @@ void ui_init(const UI_Desc* desc);
 void ui_deinit();
 
 // MARK: Lifecycle
+Allocator* ui_lifecycle_allocator();
 void ui_lifecycle_begin(Rect_s32 frame, Gpu_Texture texture);
 void ui_lifecycle_interact(Input_Tracker* input_tracker);
 void ui_lifecycle_pre_render(void);
@@ -243,12 +244,14 @@ UI_View ui_view(UI_ID id, const UI_View_Callbacks* callbacks);
 Rect_s32 ui_view_get_frame(UI_View view);
 void ui_view_set_frame(UI_View view, Rect_s32 frame);
 void ui_view_layout(UI_View view);
+void ui_view_set_limits(UI_View view, UI_Limits limits);
 UI_Limits ui_view_get_limits(UI_View view);
 void ui_view_add_subview(UI_View parent, UI_View child);
 void ui_view_add_gesture(UI_View view, UI_Gesture gesture);
 
 // MARK: View Types
-UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing);
+UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing, UI_Padding padding);
+UI_View ui_zstack(UI_ID id);
 UI_View ui_label(UI_ID id, SL_String_View text, const UI_Label_Style* style);
 UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, UI_Callback on_press);
 UI_View ui_slider(UI_ID id, const UI_Slider_Style* style, Range_f32 range, UI_Slider_Callbacks callbacks);

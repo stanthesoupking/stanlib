@@ -49,6 +49,9 @@ typedef struct UI_View_Data {
 
 	bool needs_layout;
 
+	bool has_custom_limits;
+	UI_Limits custom_limits;
+
 	UI_View_Callbacks callbacks;
 	Rect_s32 frame;
 
@@ -384,7 +387,11 @@ SL_Arena_Allocator* ui_current_arena() {
 }
 
 Allocator* ui_lifecycle_allocator() {
-	return &ui_current_arena()->allocator;
+	if (ui.current_lifecycle) {
+		return &ui_current_arena()->allocator;
+	} else {
+		return NULL;
+	}
 }
 
 void ui_lifecycle_begin(Rect_s32 frame, Gpu_Texture texture) {
@@ -1002,8 +1009,19 @@ void ui_view_render(UI_View view, SL_Blitter* blitter) {
 	}
 }
 
+void ui_view_set_limits(UI_View view, UI_Limits limits) {
+	ui_view_validate(view);
+
+	view.data->has_custom_limits = true;
+	view.data->custom_limits = limits;
+}
+
 UI_Limits ui_view_get_limits(UI_View view) {
 	ui_view_validate(view);
+
+	if (view.data->has_custom_limits) {
+		return view.data->custom_limits;
+	}
 
 	if (view.data->callbacks.get_limits) {
 		return view.data->callbacks.get_limits(view.data->callbacks.ctx, view);
@@ -1189,7 +1207,7 @@ void ui_stack_layout_subviews(void* ctx, UI_View view) {
 					.value = 0.0f,
 					.min = child_limits.min.y,
 					.max = child_limits.max.y,
-					.fill = ((child.data->flags & UI_View_Flags_Fill_Available_Space) > 0),
+					.fill = (child_limits.max.x == s32_max),//((child.data->flags & UI_View_Flags_Fill_Available_Space) > 0),
 				};
 			} break;
 
@@ -1198,7 +1216,7 @@ void ui_stack_layout_subviews(void* ctx, UI_View view) {
 					.value = 0.0f,
 					.min = child_limits.min.x,
 					.max = child_limits.max.x,
-					.fill = ((child.data->flags & UI_View_Flags_Fill_Available_Space) > 0),
+					.fill = (child_limits.max.x == s32_max),//((child.data->flags & UI_View_Flags_Fill_Available_Space) > 0),
 				};
 			} break;
 		}
@@ -1251,7 +1269,7 @@ void ui_stack_layout_subviews(void* ctx, UI_View view) {
 		} break;
 
 		case UI_Axis_Horizontal: {
-			ui_distribute(padded_rect_size.y, stack_data->spacing, distribute_items, child_count);
+			ui_distribute(padded_rect_size.x, stack_data->spacing, distribute_items, child_count);
 			f32 current_x = stack_frame_padded.start.x;
 			for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
 				const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
@@ -1296,19 +1314,55 @@ void ui_stack_layout_subviews(void* ctx, UI_View view) {
 	sl_arena_allocator_reset(ui.scratch_arena, initial_arena_position);
 }
 
-UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing) {
+UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing, UI_Padding padding) {
 	UI_Stack_Data* stack_data;
 	allocator_new(ui_lifecycle_allocator(), stack_data, 1);
 	*stack_data = (UI_Stack_Data) {
 		.axis = axis,
 		.alignment = alignment,
 		.spacing = spacing,
+		.padding = padding,
 	};
 
 	const UI_View_Callbacks callbacks = {
 		.ctx = stack_data,
 		.get_limits = ui_stack_get_limits,
 		.layout_subviews = ui_stack_layout_subviews,
+	};
+	return ui_view(id, &callbacks);
+}
+
+// MARK: Z Stack
+
+UI_Limits ui_zstack_get_limits(void* ctx, UI_View view) {
+	UI_Limits result = {0};
+
+	const u64 child_count = ui_view_seq_get_count(&view.data->children);
+	for (u64 i = 0; i < child_count; i++) {
+		const UI_View child = ui_view_seq_get(&view.data->children, i);
+		const UI_Limits child_limits = ui_view_get_limits(child);
+		result.min = max_vec2_s32(result.min, child_limits.min);
+		result.max = max_vec2_s32(result.max, child_limits.max);
+	}
+
+	return result;
+}
+
+void ui_zstack_layout_subviews(void* ctx, UI_View view) {
+	const Rect_s32 view_frame = ui_view_get_frame(view);
+
+	const u64 child_count = ui_view_seq_get_count(&view.data->children);
+	for (u64 i = 0; i < child_count; i++) {
+		const UI_View child = ui_view_seq_get(&view.data->children, i);
+		ui_view_set_frame(child, view_frame);
+	}
+}
+
+UI_View ui_zstack(UI_ID id) {
+	const UI_View_Callbacks callbacks = {
+		.ctx = NULL,
+		.get_limits = ui_zstack_get_limits,
+		.layout_subviews = ui_zstack_layout_subviews,
 	};
 	return ui_view(id, &callbacks);
 }
