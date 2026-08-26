@@ -38,19 +38,11 @@ sl_seq(UI_Gesture, UI_Gesture_Seq, ui_gesture_seq);
 
 sl_hashmap(UI_ID, UI_Window, UI_Window_Map, ui_window_map, ui_id_get_hash, ui_id_equals);
 
-typedef enum UI_View_Flags {
-	UI_View_Flags_None,
-	UI_View_Flags_Fill_Available_Space = 1 << 0,
-} UI_View_Flags;
-
 typedef struct UI_View_Data {
 	UI_ID id;
 	UI_View_Flags flags;
 
 	bool needs_layout;
-
-	bool has_custom_limits;
-	UI_Limits custom_limits;
 
 	UI_View_Callbacks callbacks;
 	Rect_s32 frame;
@@ -872,9 +864,8 @@ UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Wi
 		ui_window_seq_push(&ui.current_lifecycle->windows, window);
 
 		// Apply default frame
-		const UI_Limits content_limits = ui_view_get_limits(content);
 		const vec2_s32 root_frame_centre = rect_centre_s32(ui.current_lifecycle->frame);
-		const vec2_s32 window_size = content_limits.min;
+		const vec2_s32 window_size = ui_view_get_intrinsic_size(content);
 		const vec2_s32 window_offset = sub_vec2_s32(root_frame_centre, div_vec2_s32(window_size, splat_vec2_s32(2)));
 		const Rect_s32 window_frame = {
 			.start = window_offset,
@@ -950,6 +941,16 @@ void ui_view_validate(UI_View view) {
 	sl_debug_assert(view.lifecycle_index == ui.lifecycle_index, "Invalid view.");
 }
 
+UI_View_Flags ui_view_get_flags(UI_View view) {
+	ui_view_validate(view);
+	return view.data->flags;
+}
+
+void ui_view_set_flags(UI_View view, UI_View_Flags flags) {
+	ui_view_validate(view);
+	view.data->flags = flags;
+}
+
 Rect_s32 ui_view_get_frame(UI_View view) {
 	ui_view_validate(view);
 
@@ -1009,28 +1010,11 @@ void ui_view_render(UI_View view, SL_Blitter* blitter) {
 	}
 }
 
-void ui_view_set_limits(UI_View view, UI_Limits limits) {
+vec2_s32 ui_view_get_intrinsic_size(UI_View view) {
 	ui_view_validate(view);
 
-	view.data->has_custom_limits = true;
-	view.data->custom_limits = limits;
-}
-
-UI_Limits ui_view_get_limits(UI_View view) {
-	ui_view_validate(view);
-
-	if (view.data->has_custom_limits) {
-		return view.data->custom_limits;
-	}
-
-	if (view.data->callbacks.get_limits) {
-		return view.data->callbacks.get_limits(view.data->callbacks.ctx, view);
-	} else {
-		return (UI_Limits) {
-			.min = { 0, 0 },
-			.max = { s32_max, s32_max },
-		};
-	}
+	const UI_View_Callbacks* callbacks = &view.data->callbacks;
+	return callbacks->get_intrinsic_size ? callbacks->get_intrinsic_size(callbacks->ctx, view) : (vec2_s32) { 0, 0 };
 }
 
 void ui_view_add_subview(UI_View parent, UI_View child) {
@@ -1140,32 +1124,26 @@ typedef struct UI_Stack_Data {
 	s32 spacing;
 } UI_Stack_Data;
 
-UI_Limits ui_stack_get_limits(void* ctx, UI_View view) {
+vec2_s32 ui_stack_get_intrinsic_size(void* ctx, UI_View view) {
 	ui_view_validate(view);
 	UI_Stack_Data* stack_data = ctx;
 
-	UI_Limits limits = {0};
+	vec2_s32 size = {0};
 
 	const u64 child_count = ui_view_seq_get_count(&view.data->children);
 	for (u64 i = 0; i < child_count; i++) {
 		const UI_View child = ui_view_seq_get(&view.data->children, i);
-		const UI_Limits child_limits = ui_view_get_limits(child);
+		const vec2_s32 child_size = ui_view_get_intrinsic_size(child);
 
 		switch (stack_data->axis) {
 			case UI_Axis_Vertical: {
-				limits.min.x = sl_max(limits.min.x, child_limits.min.x);
-				limits.max.x = sl_max(limits.max.x, child_limits.max.x);
-
-				limits.min.y += child_limits.min.y;
-				limits.max.y = (child_limits.max.y == s32_max) ? s32_max : (limits.max.y + child_limits.max.y);
+				size.x = sl_max(size.x, child_size.x);
+				size.y += child_size.y;
 			} break;
 
 			case UI_Axis_Horizontal: {
-				limits.min.y = sl_max(limits.min.y, child_limits.min.y);
-				limits.max.y = sl_max(limits.max.y, child_limits.max.y);
-
-				limits.min.x += child_limits.min.x;
-				limits.max.x = (child_limits.max.x == s32_max) ? s32_max : (limits.max.x + child_limits.max.x);
+				size.x += child_size.x;
+				size.y = sl_max(size.y, child_size.y);
 			} break;
 		}
 	}
@@ -1173,17 +1151,18 @@ UI_Limits ui_stack_get_limits(void* ctx, UI_View view) {
 	const s32 spacing_total = (child_count > 0) ? ((s32)child_count - 1) : 0;
 	switch (stack_data->axis) {
 		case UI_Axis_Vertical: {
-			limits.min.y += spacing_total;
-			limits.max.y = (limits.max.y == s32_max) ? s32_max : spacing_total;
+			size.y += spacing_total;
 		} break;
 
 		case UI_Axis_Horizontal: {
-			limits.min.x += spacing_total;
-			limits.max.x = (limits.max.x == s32_max) ? s32_max : spacing_total;
+			size.x += spacing_total;
 		} break;
 	}
 
-	return limits;
+	size.x += stack_data->padding.left + stack_data->padding.right;
+	size.y += stack_data->padding.top + stack_data->padding.bottom;
+
+	return size;
 }
 
 void ui_stack_layout_subviews(void* ctx, UI_View view) {
@@ -1199,24 +1178,24 @@ void ui_stack_layout_subviews(void* ctx, UI_View view) {
 
 	for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
 		const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
-		const UI_Limits child_limits = ui_view_get_limits(child);
+		const vec2_s32 child_intrinsic_size = ui_view_get_intrinsic_size(child);
 
 		switch (stack_data->axis) {
 			case UI_Axis_Vertical: {
 				distribute_items[child_idx] = (UI_Distribute_Item) {
 					.value = 0.0f,
-					.min = child_limits.min.y,
-					.max = child_limits.max.y,
-					.fill = (child_limits.max.x == s32_max),//((child.data->flags & UI_View_Flags_Fill_Available_Space) > 0),
+					.min = child_intrinsic_size.y,
+					.max = child_intrinsic_size.y,
+					.fill = ((child.data->flags & UI_View_Flags_Fill_Available_Space) > 0),
 				};
 			} break;
 
 			case UI_Axis_Horizontal: {
 				distribute_items[child_idx] = (UI_Distribute_Item) {
 					.value = 0.0f,
-					.min = child_limits.min.x,
-					.max = child_limits.max.x,
-					.fill = (child_limits.max.x == s32_max),//((child.data->flags & UI_View_Flags_Fill_Available_Space) > 0),
+					.min = child_intrinsic_size.x,
+					.max = child_intrinsic_size.x,
+					.fill = ((child.data->flags & UI_View_Flags_Fill_Available_Space) > 0),
 				};
 			} break;
 		}
@@ -1232,12 +1211,14 @@ void ui_stack_layout_subviews(void* ctx, UI_View view) {
 			f32 current_y = stack_frame_padded.start.y;
 			for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
 				const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
-				const UI_Limits child_limits = ui_view_get_limits(child);
+				const vec2_s32 child_intrinsic_size = ui_view_get_intrinsic_size(child);
 				const UI_Distribute_Item* distribute_item = &distribute_items[child_idx];
-				const s32 child_width = sl_clamp(padded_rect_size.x, child_limits.min.x, child_limits.max.x);
+				const bool is_fill = (stack_data->alignment == UI_Alignment_Fill);
+				const s32 child_width = is_fill ? padded_rect_size.x : sl_min(padded_rect_size.x, child_intrinsic_size.x);
 
 				f32 offset_x;
 				switch (stack_data->alignment) {
+					case UI_Alignment_Fill:
 					case UI_Alignment_Left: {
 						offset_x = stack_frame_padded.start.x;
 					} break;
@@ -1273,12 +1254,14 @@ void ui_stack_layout_subviews(void* ctx, UI_View view) {
 			f32 current_x = stack_frame_padded.start.x;
 			for (u64 child_idx = 0; child_idx < child_count; child_idx++) {
 				const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
-				const UI_Limits child_limits = ui_view_get_limits(child);
+				const vec2_s32 child_intrinsic_size = ui_view_get_intrinsic_size(child);
 				const UI_Distribute_Item* distribute_item = &distribute_items[child_idx];
-				const s32 child_height = sl_clamp(padded_rect_size.y, child_limits.min.y, child_limits.max.y);
+				const bool is_fill = (stack_data->alignment == UI_Alignment_Fill);
+				const s32 child_height = is_fill ? padded_rect_size.y : sl_min(padded_rect_size.y, child_intrinsic_size.y);
 
 				f32 offset_y;
 				switch (stack_data->alignment) {
+					case UI_Alignment_Fill:
 					case UI_Alignment_Top: {
 						offset_y = stack_frame_padded.start.y;
 					} break;
@@ -1326,7 +1309,7 @@ UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing, UI
 
 	const UI_View_Callbacks callbacks = {
 		.ctx = stack_data,
-		.get_limits = ui_stack_get_limits,
+		.get_intrinsic_size = ui_stack_get_intrinsic_size,
 		.layout_subviews = ui_stack_layout_subviews,
 	};
 	return ui_view(id, &callbacks);
@@ -1334,18 +1317,17 @@ UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing, UI
 
 // MARK: Z Stack
 
-UI_Limits ui_zstack_get_limits(void* ctx, UI_View view) {
-	UI_Limits result = {0};
+vec2_s32 ui_zstack_get_intrinsic_size(void* ctx, UI_View view) {
+	vec2_s32 size = {0};
 
 	const u64 child_count = ui_view_seq_get_count(&view.data->children);
 	for (u64 i = 0; i < child_count; i++) {
 		const UI_View child = ui_view_seq_get(&view.data->children, i);
-		const UI_Limits child_limits = ui_view_get_limits(child);
-		result.min = max_vec2_s32(result.min, child_limits.min);
-		result.max = max_vec2_s32(result.max, child_limits.max);
+		const vec2_s32 child_size = ui_view_get_intrinsic_size(child);
+		size = max_vec2_s32(size, child_size);
 	}
 
-	return result;
+	return size;
 }
 
 void ui_zstack_layout_subviews(void* ctx, UI_View view) {
@@ -1361,7 +1343,7 @@ void ui_zstack_layout_subviews(void* ctx, UI_View view) {
 UI_View ui_zstack(UI_ID id) {
 	const UI_View_Callbacks callbacks = {
 		.ctx = NULL,
-		.get_limits = ui_zstack_get_limits,
+		.get_intrinsic_size = ui_zstack_get_intrinsic_size,
 		.layout_subviews = ui_zstack_layout_subviews,
 	};
 	return ui_view(id, &callbacks);
@@ -1375,12 +1357,9 @@ typedef struct UI_Label_Data {
 	UI_Text_Measurements measurements;
 } UI_Label_Data;
 
-UI_Limits ui_label_get_limits(void* ctx, UI_View view) {
+vec2_s32 ui_label_get_intrinsic_size(void* ctx, UI_View view) {
 	UI_Label_Data* data = ctx;
-	return (UI_Limits) {
-		.min = data->measurements.size,
-		.max = data->measurements.size,
-	};
+	return data->measurements.size;
 }
 
 void ui_label_render(void* ctx, UI_View view, SL_Blitter* blitter) {
@@ -1409,7 +1388,7 @@ UI_View ui_label(UI_ID id, SL_String_View text, const UI_Label_Style* style) {
 
 	const UI_View_Callbacks callbacks = {
 		.ctx = label_data,
-		.get_limits = ui_label_get_limits,
+		.get_intrinsic_size = ui_label_get_intrinsic_size,
 		.render = ui_label_render,
 	};
 	return ui_view(id, &callbacks);
@@ -1492,16 +1471,13 @@ void ui_button_pan(void* ctx, const UI_Pan_Gesture_Frame* frame) {
 	}
 }
 
-UI_Limits ui_button_get_limits(void* ctx, UI_View view) {
+vec2_s32 ui_button_get_intrinsic_size(void* ctx, UI_View view) {
 	UI_Button_Data* data = ctx;
 	const vec2_s32 padding_size = {
 		data->style.padding.left + data->style.padding.right,
 		data->style.padding.top + data->style.padding.bottom,
 	};
-	return (UI_Limits) {
-		.min = add_vec2_s32(data->text_measurements.size, padding_size),
-		.max = add_vec2_s32(data->text_measurements.size, padding_size),
-	};
+	return add_vec2_s32(data->text_measurements.size, padding_size);
 }
 
 UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, UI_Callback on_press) {
@@ -1528,7 +1504,7 @@ UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, U
 
 	const UI_View_Callbacks callbacks = {
 		.ctx = button_data,
-		.get_limits = ui_button_get_limits,
+		.get_intrinsic_size = ui_button_get_intrinsic_size,
 		.render = ui_button_render,
 	};
 	UI_View view = ui_view(id, &callbacks);
@@ -1655,14 +1631,14 @@ void ui_slider_render(void* ctx, UI_View view, SL_Blitter* blitter) {
 	ui_draw_image(blitter, ui.current_lifecycle->texture, needle_rect, cvt_rect_u32_f32(style->needle_rect), style->needle_tint);
 }
 
-UI_Limits ui_slider_get_limits(void* ctx, UI_View view) {
+vec2_s32 ui_slider_get_intrinsic_size(void* ctx, UI_View view) {
 	UI_Slider_Data* slider_data = ctx;
 
 	const vec2_f32 needle_image_size = mul_vec2_f32(cvt_vec2_u32_f32(rect_size_u32(slider_data->style.needle_rect)), splat_vec2_f32(slider_data->style.needle_scale));
 
-	return (UI_Limits) {
-		.min = { needle_image_size.x, needle_image_size.y },
-		.max = { s32_max, needle_image_size.y }
+	return (vec2_s32) {
+		needle_image_size.x,
+		needle_image_size.y,
 	};
 }
 
@@ -1677,7 +1653,7 @@ UI_View ui_slider(UI_ID id, const UI_Slider_Style* style, Range_f32 range, UI_Sl
 
 	const UI_View_Callbacks view_callbacks = {
 		.ctx = slider_data,
-		.get_limits = ui_slider_get_limits,
+		.get_intrinsic_size = ui_slider_get_intrinsic_size,
 		.render = ui_slider_render,
 	};
 	UI_View view = ui_view(id, &view_callbacks);
@@ -1753,6 +1729,54 @@ UI_View ui_nine_patch(UI_ID id, UI_Nine_Patch nine_patch, vec4_f32 tint) {
 	const UI_View_Callbacks callbacks = {
 		.ctx = nine_patch_data,
 		.render = ui_nine_patch_render,
+	};
+	return ui_view(id, &callbacks);
+}
+
+// MARK: Image
+
+typedef struct UI_Image_Data {
+	Gpu_Texture texture;
+	Rect_u32 texture_rect;
+	s32 scale;
+	vec4_f32 tint;
+} UI_Image_Data;
+
+vec2_s32 ui_image_get_intrinsic_size(void* ctx, UI_View view) {
+	UI_Image_Data* image_data = ctx;
+	return mul_vec2_s32(cvt_vec2_u32_s32(rect_size_u32(image_data->texture_rect)), splat_vec2_s32(image_data->scale));
+}
+
+void ui_image_render(void* ctx, UI_View view, SL_Blitter* blitter) {
+	UI_Image_Data* image_data = ctx;
+
+	const Rect_s32 frame = ui_view_get_frame(view);
+
+	const vec2_s32 scaled_size = mul_vec2_s32(cvt_vec2_u32_s32(rect_size_u32(image_data->texture_rect)), splat_vec2_s32(image_data->scale));
+	const vec2_s32 frame_center = rect_centre_s32(frame);
+	const vec2_s32 image_offset = sub_vec2_s32(frame_center, div_vec2_s32(scaled_size, splat_vec2_s32(2)));
+	const Rect_f32 rect = {
+		.start = cvt_vec2_s32_f32(image_offset),
+		.end = cvt_vec2_s32_f32(add_vec2_s32(image_offset, scaled_size)),
+	};
+
+	ui_draw_image(blitter, image_data->texture, rect, cvt_rect_u32_f32(image_data->texture_rect), image_data->tint);
+}
+
+UI_View ui_image(UI_ID id, Gpu_Texture texture, Rect_u32 texture_rect, s32 scale, vec4_f32 tint) {
+	UI_Image_Data* image_data;
+	allocator_new(ui_lifecycle_allocator(), image_data, 1);
+	*image_data = (UI_Image_Data) {
+		.texture = texture,
+		.texture_rect = texture_rect,
+		.scale = scale,
+		.tint = tint,
+	};
+
+	const UI_View_Callbacks callbacks = {
+		.ctx = image_data,
+		.get_intrinsic_size = ui_image_get_intrinsic_size,
+		.render = ui_image_render,
 	};
 	return ui_view(id, &callbacks);
 }

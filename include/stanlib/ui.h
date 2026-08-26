@@ -32,6 +32,10 @@ typedef enum UI_Alignment {
 	UI_Alignment_Center,
 	UI_Alignment_Top,
 
+	// Elements on off-axis will be sized to fill the available space.
+	// Example: For a vstack, all elements will fill the available width.
+	UI_Alignment_Fill,
+
 	UI_Alignment_Left = UI_Alignment_Bottom, // Alias
 	UI_Alignment_Right = UI_Alignment_Top, // Alias
 } UI_Alignment;
@@ -78,18 +82,18 @@ typedef struct UI_Window { UI_Window_Data* data; u32 lifecycle_index; } UI_Windo
 typedef struct UI_View { UI_View_Data* data; u32 lifecycle_index; } UI_View;
 typedef struct UI_Gesture { UI_Gesture_Data* data; u32 lifecycle_index; } UI_Gesture;
 
-typedef struct UI_Limits {
-	vec2_s32 min;
-	vec2_s32 max;
-} UI_Limits;
-
 typedef struct UI_View_Callbacks {
 	void* ctx;
 	void (*layout_subviews)(void* ctx, UI_View view);
-	UI_Limits (*get_limits)(void* ctx, UI_View view);
+	vec2_s32 (*get_intrinsic_size)(void* ctx, UI_View view);
 	void (*pre_render)(void* ctx, UI_View view);
 	void (*render)(void* ctx, UI_View view, SL_Blitter* blitter);
 } UI_View_Callbacks;
+
+typedef enum UI_View_Flags {
+	UI_View_Flags_None,
+	UI_View_Flags_Fill_Available_Space = 1 << 0,
+} UI_View_Flags;
 
 typedef struct UI_Label_Style {
 	SL_Font* font;
@@ -241,11 +245,12 @@ void ui_window_send_to_front(UI_Window window);
 
 // MARK: View
 UI_View ui_view(UI_ID id, const UI_View_Callbacks* callbacks);
+UI_View_Flags ui_view_get_flags(UI_View view);
+void ui_view_set_flags(UI_View view, UI_View_Flags flags);
 Rect_s32 ui_view_get_frame(UI_View view);
 void ui_view_set_frame(UI_View view, Rect_s32 frame);
 void ui_view_layout(UI_View view);
-void ui_view_set_limits(UI_View view, UI_Limits limits);
-UI_Limits ui_view_get_limits(UI_View view);
+vec2_s32 ui_view_get_intrinsic_size(UI_View view);
 void ui_view_add_subview(UI_View parent, UI_View child);
 void ui_view_add_gesture(UI_View view, UI_Gesture gesture);
 
@@ -257,6 +262,7 @@ UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, U
 UI_View ui_slider(UI_ID id, const UI_Slider_Style* style, Range_f32 range, UI_Slider_Callbacks callbacks);
 UI_View ui_color(UI_ID id, vec4_f32 color);
 UI_View ui_nine_patch(UI_ID id, UI_Nine_Patch nine_patch, vec4_f32 tint);
+UI_View ui_image(UI_ID id, Gpu_Texture texture, Rect_u32 texture_rect, s32 scale, vec4_f32 tint);
 UI_View ui_spacer(UI_ID id);
 
 // MARK: Gesture
