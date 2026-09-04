@@ -44,6 +44,9 @@ typedef struct UI_View_Data {
 
 	bool needs_layout;
 
+	bool has_custom_implicit_size;
+	vec2_s32 custom_implicit_size;
+
 	UI_View_Callbacks callbacks;
 	Rect_s32 frame;
 
@@ -1010,8 +1013,20 @@ void ui_view_render(UI_View view, SL_Blitter* blitter) {
 	}
 }
 
+void ui_view_set_intrinsic_size(UI_View view, vec2_s32 size) {
+	ui_view_validate(view);
+
+	view.data->has_custom_implicit_size = true;
+	view.data->custom_implicit_size = size;
+}
+
 vec2_s32 ui_view_get_intrinsic_size(UI_View view) {
 	ui_view_validate(view);
+
+	if (view.data->has_custom_implicit_size) {
+		// Size has been overridden via `ui_view_set_intrinsic_size()`.
+		return view.data->custom_implicit_size;
+	}
 
 	const UI_View_Callbacks* callbacks = &view.data->callbacks;
 	return callbacks->get_intrinsic_size ? callbacks->get_intrinsic_size(callbacks->ctx, view) : (vec2_s32) { 0, 0 };
@@ -1432,7 +1447,20 @@ void ui_button_render(void* ctx, UI_View view, SL_Blitter* blitter) {
 	Rect_s32 padded_frame = ui_padded_rect(button_frame, data->style.padding);
 	vec2_s32 padded_frame_size = rect_size_s32(padded_frame);
 
+	const UI_Button_State_Style* state_style = &data->style.state[storage->state];
+
 	ui_draw_nine_patch(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(ui_view_get_frame(view)), data->style.state[storage->state].backing, data->style.state[storage->state].backing_tint);
+
+	if (state_style->has_icon) {
+		const vec2_s32 image_scaled_size = cvt_vec2_u32_s32(rect_size_u32(state_style->icon_rect));
+		const vec2_s32 button_center = rect_centre_s32(button_frame);
+		const vec2_s32 rect_start = sub_vec2_s32(button_center, div_vec2_s32(image_scaled_size, splat_vec2_s32(2)));
+		const Rect_s32 rect = {
+			.start = rect_start,
+			.end = add_vec2_s32(rect_start, image_scaled_size),
+		};
+		ui_draw_image(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(rect), cvt_rect_u32_f32(state_style->icon_rect), state_style->icon_tint);
+	}
 
 	if (data->style.has_text) {
 		vec2_f32 text_offset = (vec2_f32) {

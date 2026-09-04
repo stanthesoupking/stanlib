@@ -68,7 +68,11 @@ SL_String* sl_string_new_uninit(Allocator* allocator, u64 length) {
 
 SL_String* sl_string_new(Allocator* allocator, SL_String_View view) {
 	SL_String* string = sl_string_new_uninit(allocator, view.length);
-	sl_memcpy(string->data, view.str, view.length + 1);
+	if (sl_string_view_is_null(view)) {
+		string->data[0] = 0;
+	} else {
+		sl_memcpy(string->data, view.str, view.length + 1);
+	}
 	return string;
 }
 SL_String* sl_string_new_c(Allocator* allocator, const char* cstr) {

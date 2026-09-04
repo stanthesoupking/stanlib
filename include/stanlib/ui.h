@@ -126,6 +126,12 @@ typedef enum UI_Button_State {
 
 typedef struct UI_Button_State_Style {
 	vec4_f32 text_color;
+
+	bool has_icon;
+	Rect_u32 icon_rect;
+	vec4_f32 icon_tint;
+	u32 icon_scale;
+
 	UI_Nine_Patch backing;
 	vec4_f32 backing_tint;
 } UI_Button_State_Style;
@@ -250,6 +256,10 @@ void ui_view_set_flags(UI_View view, UI_View_Flags flags);
 Rect_s32 ui_view_get_frame(UI_View view);
 void ui_view_set_frame(UI_View view, Rect_s32 frame);
 void ui_view_layout(UI_View view);
+
+// Setting the intrinsic size of a view will override it's default.
+void ui_view_set_intrinsic_size(UI_View view, vec2_s32 size);
+
 vec2_s32 ui_view_get_intrinsic_size(UI_View view);
 void ui_view_add_subview(UI_View parent, UI_View child);
 void ui_view_add_gesture(UI_View view, UI_Gesture gesture);
