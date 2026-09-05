@@ -2132,6 +2132,21 @@ sl_inline vec3_f64 round_vec3_f64(vec3_f64 a) {
 	};
 }
 
+sl_inline vec3_f32 floor_vec3_f32(vec3_f32 a) {
+	return (vec3_f32) {
+		.x = floorf(a.x),
+		.y = floorf(a.y),
+		.z = floorf(a.z),
+	};
+}
+sl_inline vec3_f64 floor_vec3_f64(vec3_f64 a) {
+	return (vec3_f64) {
+		.x = floor(a.x),
+		.y = floor(a.y),
+		.z = floor(a.z),
+	};
+}
+
 sl_inline f32 saturate_f32(f32 a) {
 	return sl_clamp(a, 0.0f, 1.0f);
 }
