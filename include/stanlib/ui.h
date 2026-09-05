@@ -115,6 +115,10 @@ typedef struct UI_Window_Style {
 	UI_Nine_Patch content_background_9p;
 	vec4_f32 content_background_tint;
 	UI_Padding content_padding;
+
+	bool has_shadow;
+	vec2_s32 shadow_offset;
+	vec4_f32 shadow_color;
 } UI_Window_Style;
 
 typedef enum UI_Button_State {
@@ -160,6 +164,8 @@ typedef struct UI_Slider_Callbacks {
 	void (*on_begin)(void* ctx);
 	void (*on_end)(void* ctx);
 } UI_Slider_Callbacks;
+
+UI_Slider_Callbacks ui_slider_callbacks_basic_f32(f32* ptr);
 
 typedef struct UI_Touch UI_Touch;
 

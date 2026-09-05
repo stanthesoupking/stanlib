@@ -63,6 +63,7 @@ typedef enum UI_Window_ID {
 	UI_Window_ID_Top_Background,
 	UI_Window_ID_Content_Background,
 	UI_Window_ID_Pan_Gesture,
+	UI_Window_ID_Shadow
 } UI_Window_ID;
 
 typedef struct UI_Window_Data {
@@ -85,6 +86,7 @@ typedef struct UI_Window_Data {
 
 	UI_View content_background;
 	UI_View content;
+	UI_View shadow;
 } UI_Window_Data;
 
 typedef struct UI_Storage_Data {
@@ -744,6 +746,10 @@ void ui_window_root_layout_subviews(void* ctx, UI_View view) {
 
 	Rect_s32 root_frame = ui_view_get_frame(window_data->root);
 
+	if (window_data->style.has_shadow) {
+		ui_view_set_frame(window_data->shadow, rect_offset_s32(root_frame, window_data->style.shadow_offset));
+	}
+
 	Rect_s32 content_frame;
 	if (window_data->style.has_heading) {
 		Rect_s32 top_frame = {
@@ -818,6 +824,12 @@ UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Wi
 	UI_View root = ui_view(ui_id_internal(id, UI_Window_ID_Root, 0, true), &root_callbacks);
 	ui_view_set_frame(root, current_data->frame);
 
+	UI_View shadow = (UI_View) {0};
+	if (style->has_shadow) {
+		shadow = ui_color(ui_id_internal(id, UI_Window_ID_Shadow, 0, true), (vec4_f32) { 0, 0, 0, 0.15 });
+		ui_view_add_subview(root, shadow);
+	}
+
 	const UI_Window window = {
 		.data = current_data,
 		.lifecycle_index = ui.lifecycle_index,
@@ -862,13 +874,22 @@ UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Wi
 	current_data->content_background = content_background;
 	current_data->style = *style;
 	current_data->appearing = appearing;
+	current_data->shadow = shadow;
 
 	if (appearing) {
 		ui_window_seq_push(&ui.current_lifecycle->windows, window);
 
 		// Apply default frame
 		const vec2_s32 root_frame_centre = rect_centre_s32(ui.current_lifecycle->frame);
-		const vec2_s32 window_size = ui_view_get_intrinsic_size(content);
+		const vec2_s32 header_size = style->has_heading ? ui_view_get_intrinsic_size(current_data->heading_label) : (vec2_s32) {};
+
+		vec2_s32 content_size = ui_view_get_intrinsic_size(content);
+		content_size = add_vec2_s32(content_size, (vec2_s32) { style->content_padding.left + style->content_padding.right, style->content_padding.top + style->content_padding.bottom });
+
+		const vec2_s32 window_size = {
+			.x = sl_max(header_size.x, content_size.x),
+			.y = style->heading_style.height + content_size.y,
+		};
 		const vec2_s32 window_offset = sub_vec2_s32(root_frame_centre, div_vec2_s32(window_size, splat_vec2_s32(2)));
 		const Rect_s32 window_frame = {
 			.start = window_offset,
@@ -1561,6 +1582,23 @@ UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, U
 }
 
 // MARK: Slider
+
+void ui_slider_callbacks_basic_f32_set_value(void* ctx, f32 value) {
+	f32* ptr = ctx;
+	*ptr = value;
+}
+f32 ui_slider_callbacks_basic_f32_get_value(void* ctx) {
+	f32* ptr = ctx;
+	return *ptr;
+}
+
+UI_Slider_Callbacks ui_slider_callbacks_basic_f32(f32* ptr) {
+	return (UI_Slider_Callbacks) {
+		.ctx = ptr,
+		.set_value = ui_slider_callbacks_basic_f32_set_value,
+		.get_value = ui_slider_callbacks_basic_f32_get_value,
+	};
+}
 
 typedef enum UI_Slider_ID {
 	UI_Slider_ID_Pan_Gesture,
