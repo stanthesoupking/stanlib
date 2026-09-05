@@ -1473,7 +1473,7 @@ void ui_button_render(void* ctx, UI_View view, SL_Blitter* blitter) {
 	ui_draw_nine_patch(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(ui_view_get_frame(view)), data->style.state[storage->state].backing, data->style.state[storage->state].backing_tint);
 
 	if (state_style->has_icon) {
-		const vec2_s32 image_scaled_size = cvt_vec2_u32_s32(rect_size_u32(state_style->icon_rect));
+		const vec2_s32 image_scaled_size = mul_vec2_s32(cvt_vec2_u32_s32(rect_size_u32(state_style->icon_rect)), splat_vec2_s32(state_style->icon_scale));
 		const vec2_s32 button_center = rect_centre_s32(button_frame);
 		const vec2_s32 rect_start = sub_vec2_s32(button_center, div_vec2_s32(image_scaled_size, splat_vec2_s32(2)));
 		const Rect_s32 rect = {
