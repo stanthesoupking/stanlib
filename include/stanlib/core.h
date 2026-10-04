@@ -2132,21 +2132,6 @@ sl_inline vec3_f64 round_vec3_f64(vec3_f64 a) {
 	};
 }
 
-sl_inline vec3_f32 floor_vec3_f32(vec3_f32 a) {
-	return (vec3_f32) {
-		.x = floorf(a.x),
-		.y = floorf(a.y),
-		.z = floorf(a.z),
-	};
-}
-sl_inline vec3_f64 floor_vec3_f64(vec3_f64 a) {
-	return (vec3_f64) {
-		.x = floor(a.x),
-		.y = floor(a.y),
-		.z = floor(a.z),
-	};
-}
-
 sl_inline f32 saturate_f32(f32 a) {
 	return sl_clamp(a, 0.0f, 1.0f);
 }
@@ -2332,6 +2317,26 @@ sl_inline vec4_f32 xyz0_vec3_f32(vec3_f32 v) {
 }
 sl_inline vec4_f32 xyz1_vec3_f32(vec3_f32 v) {
 	return (vec4_f32) { .x = v.x, .y = v.y, .z = v.z, 1.0f };
+}
+
+sl_inline vec2_f32 floor_vec2_f32(vec2_f32 v) {
+	return (vec2_f32) { .x = floorf(v.x), .y = floorf(v.y) };
+}
+sl_inline vec3_f32 floor_vec3_f32(vec3_f32 v) {
+	return (vec3_f32) { .x = floorf(v.x), .y = floorf(v.y), .z = floorf(v.z) };
+}
+sl_inline vec4_f32 floor_vec4_f32(vec4_f32 v) {
+	return (vec4_f32) { .x = floorf(v.x), .y = floorf(v.y), .z = floorf(v.z), .w = floorf(v.w) };
+}
+
+sl_inline vec2_f32 ceil_vec2_f32(vec2_f32 v) {
+	return (vec2_f32) { .x = ceilf(v.x), .y = ceilf(v.y) };
+}
+sl_inline vec3_f32 ceil_vec3_f32(vec3_f32 v) {
+	return (vec3_f32) { .x = ceilf(v.x), .y = ceilf(v.y), .z = ceilf(v.z) };
+}
+sl_inline vec4_f32 ceil_vec4_f32(vec4_f32 v) {
+	return (vec4_f32) { .x = ceilf(v.x), .y = ceilf(v.y), .z = ceilf(v.z), .w = ceilf(v.w) };
 }
 
 sl_inline f32 angle_between_vec2_f32(vec2_f32 a, vec2_f32 b) {
