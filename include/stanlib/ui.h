@@ -58,6 +58,8 @@ sl_inline UI_Padding ui_padding_add(UI_Padding a, UI_Padding b) {
 		.bottom = a.bottom + b.bottom,
 	};
 }
+
+vec2_s32 ui_padding_size(UI_Padding padding);
 Rect_s32 ui_padded_rect(Rect_s32 rect, UI_Padding padding);
 
 typedef struct UI_Margins {
@@ -106,25 +108,23 @@ typedef struct UI_Label_Style {
 	vec4_f32 color;
 } UI_Label_Style;
 
-typedef struct UI_Window_Heading_Style {
-	UI_Label_Style label_style;
-	s32 height;
+typedef enum UI_Window_State {
+	UI_Window_State_Inactive,
+	UI_Window_State_Active,
+} UI_Window_State;
 
-	UI_Nine_Patch background_9p;
-	vec4_f32 background_tint;
-} UI_Window_Heading_Style;
+typedef struct UI_Window_Render_Desc {
+	void* ctx;
+	Rect_s32 frame;
+	UI_Window_State window_state;
+	SL_Blitter* blitter;
+} UI_Window_Render_Desc;
+
+typedef void (*UI_Window_Render_Fn)(const UI_Window_Render_Desc* desc);
 
 typedef struct UI_Window_Style {
-	bool has_heading;
-	UI_Window_Heading_Style heading_style;
-
-	UI_Nine_Patch content_background_9p;
-	vec4_f32 content_background_tint;
-	UI_Padding content_padding;
-
-	bool has_shadow;
-	vec2_s32 shadow_offset;
-	vec4_f32 shadow_color;
+	void* ctx;
+	UI_Window_Render_Fn render;
 } UI_Window_Style;
 
 typedef enum UI_Button_State {
@@ -134,23 +134,22 @@ typedef enum UI_Button_State {
 	UI_Button_State_Count,
 } UI_Button_State;
 
-typedef struct UI_Button_State_Style {
-	vec4_f32 text_color;
+typedef struct UI_Button_Render_Desc {
+	void* ctx;
+	Rect_s32 frame;
+	UI_Button_State button_state;
+	SL_Blitter* blitter;
 
-	bool has_icon;
-	Rect_u32 icon_rect;
-	vec4_f32 icon_tint;
-	u32 icon_scale;
+	// Could also include the time when it became hot or active along with wall time.
+	// Quite a simple way of implementing animations.
+} UI_Button_Render_Desc;
 
-	UI_Nine_Patch backing;
-	vec4_f32 backing_tint;
-} UI_Button_State_Style;
+typedef void (*UI_Button_Render_Fn)(const UI_Button_Render_Desc* desc);
 
 typedef struct UI_Button_Style {
-	bool has_text;
-	SL_Font* font;
-	UI_Padding padding;
-	UI_Button_State_Style state[UI_Button_State_Count];
+	void* ctx;
+	vec2_s32 intrinsic_size;
+	UI_Button_Render_Fn render;
 } UI_Button_Style;
 
 typedef struct UI_Slider_Style {
@@ -255,8 +254,9 @@ void ui_lifecycle_render(SL_Blitter* blitter);
 void ui_lifecycle_end();
 
 // MARK: Window
-UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Window_Style* style);
+UI_Window ui_window(UI_ID id, UI_View content, UI_Window_Style style);
 bool ui_window_is_appearing(UI_Window window);
+vec2_s32 ui_window_get_intrinsic_size(UI_Window window);
 Rect_s32 ui_window_get_frame(UI_Window window);
 void ui_window_set_frame(UI_Window window, Rect_s32 frame);
 void ui_window_send_to_front(UI_Window window);
@@ -280,7 +280,7 @@ void ui_view_add_gesture(UI_View view, UI_Gesture gesture);
 UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing, UI_Padding padding);
 UI_View ui_zstack(UI_ID id);
 UI_View ui_label(UI_ID id, SL_String_View text, const UI_Label_Style* style);
-UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, UI_Callback on_press);
+UI_View ui_button(UI_ID id, UI_Button_Style style, UI_Callback on_press);
 UI_View ui_slider(UI_ID id, const UI_Slider_Style* style, Range_f32 range, UI_Slider_Callbacks callbacks);
 UI_View ui_color(UI_ID id, vec4_f32 color);
 UI_View ui_nine_patch(UI_ID id, UI_Nine_Patch nine_patch, vec4_f32 tint);
@@ -297,3 +297,8 @@ UI_Gesture ui_tap_gesture(UI_ID id, const UI_Tap_Gesture_Desc* desc);
 // If a data is not accessed in a lifecycle, it is cleaned up.
 void* ui_storage_get(UI_ID id);
 void ui_storage_set(UI_ID id, void* data, void (*destroy)(void* data));
+
+// MARK: Render Utility Functions
+void ui_render_util_draw_image(SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, Rect_f32 atlas_rect, vec4_f32 color);
+void ui_render_util_draw_color(SL_Blitter* blitter, Rect_f32 rect, vec4_f32 color);
+void ui_render_util_draw_nine_patch(SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, UI_Nine_Patch nine_patch, vec4_f32 tint);

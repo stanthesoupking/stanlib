@@ -73,16 +73,10 @@ typedef struct UI_Window_Data {
 	// Root view.
 	// Contains label, buttons and menu bar.
 	UI_View root;
+	UI_View content;
 
 	vec2_f32 pan_initial_location;
 	Rect_s32 pan_initial_frame;
-
-	UI_View heading_background;
-	UI_View heading_label;
-
-	UI_View content_background;
-	UI_View content;
-	UI_View shadow;
 } UI_Window_Data;
 
 typedef struct UI_Storage_Data {
@@ -205,6 +199,13 @@ void ui_init(const UI_Desc* desc) {
 }
 void ui_deinit() {
 
+}
+
+vec2_s32 ui_padding_size(UI_Padding padding) {
+	return (vec2_s32) {
+		.x = padding.left + padding.right,
+		.y = padding.top + padding.bottom,
+	};
 }
 
 Rect_s32 ui_padded_rect(Rect_s32 rect, UI_Padding padding) {
@@ -552,6 +553,18 @@ void ui_render_windows(SL_Blitter* blitter) {
 		if (!window.data->accessed) {
 			continue;
 		}
+
+		const UI_Window_Render_Fn render_fn = window.data->style.render;
+		if (render_fn) {
+			const UI_Window_Render_Desc render_desc = {
+				.ctx = window.data->style.ctx,
+				.blitter = blitter,
+				.frame = ui_window_get_frame(window),
+				.window_state = UI_Window_State_Active,
+			};
+			render_fn(&render_desc);
+		}
+
 		ui_view_render(window.data->root, blitter);
 	}
 }
@@ -595,7 +608,7 @@ void ui_lifecycle_end() {
 
 // MARK: Drawing
 
-void ui_draw_image(SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, Rect_f32 atlas_rect, vec4_f32 color) {
+void ui_render_util_draw_image(SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, Rect_f32 atlas_rect, vec4_f32 color) {
 	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
 	const vec2_f32 texture_size = { (f32)texture_desc->size.x, (f32)texture_desc->size.y };
 
@@ -603,7 +616,11 @@ void ui_draw_image(SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, Rect
 	sl_blitter_draw_textured_quads(blitter, texture, &quad, 1, SL_Blitter_Sampler_Nearest);
 }
 
-void ui_draw_nine_patch(SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, UI_Nine_Patch nine_patch, vec4_f32 tint) {
+void ui_render_util_draw_color(SL_Blitter* blitter, Rect_f32 rect, vec4_f32 color) {
+	ui_render_util_draw_image(blitter, ui.current_lifecycle->texture, rect, (Rect_f32){0}, color);
+}
+
+void ui_render_util_draw_nine_patch(SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, UI_Nine_Patch nine_patch, vec4_f32 tint) {
 	Textured_Quad_f32 quads[9];
 
 	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
@@ -741,38 +758,8 @@ void ui_window_root_layout_subviews(void* ctx, UI_View view) {
 	UI_Window_Data* window_data = ctx;
 
 	Rect_s32 root_frame = ui_view_get_frame(window_data->root);
-
-	if (window_data->style.has_shadow) {
-		ui_view_set_frame(window_data->shadow, rect_offset_s32(root_frame, window_data->style.shadow_offset));
-	}
-
-	Rect_s32 content_frame;
-	if (window_data->style.has_heading) {
-		Rect_s32 top_frame = {
-			.start = root_frame.start,
-			.end = {
-				root_frame.end.x,
-				root_frame.start.y + window_data->style.heading_style.height,
-			},
-		};
-		ui_view_set_frame(window_data->heading_background, top_frame);
-		ui_view_set_frame(window_data->heading_label, top_frame);
-
-		content_frame = (Rect_s32) {
-			.start = {
-				root_frame.start.x,
-				top_frame.end.y,
-			},
-			.end = root_frame.end,
-		};
-	} else {
-		content_frame = root_frame;
-	}
-
-	ui_view_set_frame(window_data->content_background, content_frame);
-
-	const Rect_s32 padded_content_frame = ui_padded_rect(content_frame, window_data->style.content_padding);
-	ui_view_set_frame(window_data->content, padded_content_frame);
+	const Rect_s32 content_frame = root_frame;
+	ui_view_set_frame(window_data->content, content_frame);
 }
 
 void ui_window_pan(void* ctx, const UI_Pan_Gesture_Frame* frame) {
@@ -790,7 +777,7 @@ void ui_window_pan(void* ctx, const UI_Pan_Gesture_Frame* frame) {
 	ui_window_set_frame(*window, new_frame);
 }
 
-UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Window_Style* style) {
+UI_Window ui_window(UI_ID id, UI_View content, UI_Window_Style style) {
 	bool appearing = false;
 	UI_Window_Data* current_data = NULL;
 
@@ -820,12 +807,6 @@ UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Wi
 	UI_View root = ui_view(ui_id_internal_auto(id), &root_callbacks);
 	ui_view_set_frame(root, current_data->frame);
 
-	UI_View shadow = (UI_View) {0};
-	if (style->has_shadow) {
-		shadow = ui_color(ui_id_internal_auto(id), (vec4_f32) { 0, 0, 0, 0.15 });
-		ui_view_add_subview(root, shadow);
-	}
-
 	const UI_Window window = {
 		.data = current_data,
 		.lifecycle_index = ui.lifecycle_index,
@@ -845,47 +826,22 @@ UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Wi
 	};
 	UI_Gesture pan_gesture = ui_pan_gesture(ui_id_internal_auto(id), &pan_desc);
 
-	UI_View content_background = ui_nine_patch(ui_id_internal_auto(id), style->content_background_9p, style->content_background_tint);
-	ui_view_add_subview(root, content_background);
-
-	if (style->has_heading) {
-		current_data->heading_background = ui_nine_patch(ui_id_internal_auto(id), style->heading_style.background_9p, style->heading_style.background_tint);
-		ui_view_add_subview(root, current_data->heading_background);
-		ui_view_add_gesture(current_data->heading_background, pan_gesture);
-
-		current_data->heading_label = ui_label(ui_id_internal_auto(id), title, &style->heading_style.label_style);
-		ui_view_add_subview(root, current_data->heading_label);
-		ui_view_add_gesture(current_data->heading_label, pan_gesture);
-	} else {
-		current_data->heading_background = (UI_View) {0};
-		current_data->heading_label = (UI_View) {0};
-	}
-
 	ui_view_add_subview(root, content);
 
 	current_data->id = id;
 	current_data->accessed = true;
 	current_data->root = root;
 	current_data->content = content;
-	current_data->content_background = content_background;
-	current_data->style = *style;
+	current_data->style = style;
 	current_data->appearing = appearing;
-	current_data->shadow = shadow;
 
 	if (appearing) {
 		ui_window_seq_push(&ui.current_lifecycle->windows, window);
 
-		// Apply default frame
 		const vec2_s32 root_frame_centre = rect_centre_s32(ui.current_lifecycle->frame);
-		const vec2_s32 header_size = style->has_heading ? ui_view_get_intrinsic_size(current_data->heading_label) : (vec2_s32) {};
 
-		vec2_s32 content_size = ui_view_get_intrinsic_size(content);
-		content_size = add_vec2_s32(content_size, (vec2_s32) { style->content_padding.left + style->content_padding.right, style->content_padding.top + style->content_padding.bottom });
-
-		const vec2_s32 window_size = {
-			.x = sl_max(header_size.x, content_size.x),
-			.y = style->heading_style.height + content_size.y,
-		};
+		// Apply default frame
+		const vec2_s32 window_size = ui_window_get_intrinsic_size(window);
 		const vec2_s32 window_offset = sub_vec2_s32(root_frame_centre, div_vec2_s32(window_size, splat_vec2_s32(2)));
 		const Rect_s32 window_frame = {
 			.start = window_offset,
@@ -895,6 +851,11 @@ UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Wi
 	}
 
 	return window;
+}
+
+vec2_s32 ui_window_get_intrinsic_size(UI_Window window) {
+	ui_window_validate(window);
+	return ui_view_get_intrinsic_size(window.data->content);
 }
 
 bool ui_window_is_appearing(UI_Window window) {
@@ -1444,43 +1405,29 @@ void ui_button_storage_destroy(void* ctx) {
 }
 
 typedef struct UI_Button_Data {
-	SL_String* text;
-	UI_Text_Measurements text_measurements;
 	UI_Storage_Handle storage_handle;
 	UI_Button_Style style;
 	UI_Callback on_press;
 } UI_Button_Data;
 
 void ui_button_render(void* ctx, UI_View view, SL_Blitter* blitter) {
-	UI_Button_Data* data = ctx;
-	UI_Button_Storage* storage = ui_storage_handle_resolve(data->storage_handle)->data;
+	const UI_Button_Data* data = ctx;
+	const UI_Button_Render_Fn render_fn = data->style.render;
 
-	Rect_s32 button_frame = ui_view_get_frame(view);
-	Rect_s32 padded_frame = ui_padded_rect(button_frame, data->style.padding);
-	vec2_s32 padded_frame_size = rect_size_s32(padded_frame);
-
-	const UI_Button_State_Style* state_style = &data->style.state[storage->state];
-
-	ui_draw_nine_patch(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(ui_view_get_frame(view)), data->style.state[storage->state].backing, data->style.state[storage->state].backing_tint);
-
-	if (state_style->has_icon) {
-		const vec2_s32 image_scaled_size = mul_vec2_s32(cvt_vec2_u32_s32(rect_size_u32(state_style->icon_rect)), splat_vec2_s32(state_style->icon_scale));
-		const vec2_s32 button_center = rect_centre_s32(button_frame);
-		const vec2_s32 rect_start = sub_vec2_s32(button_center, div_vec2_s32(image_scaled_size, splat_vec2_s32(2)));
-		const Rect_s32 rect = {
-			.start = rect_start,
-			.end = add_vec2_s32(rect_start, image_scaled_size),
-		};
-		ui_draw_image(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(rect), cvt_rect_u32_f32(state_style->icon_rect), state_style->icon_tint);
+	if (!render_fn) {
+		return;
 	}
 
-	if (data->style.has_text) {
-		vec2_f32 text_offset = (vec2_f32) {
-			.x = roundf(padded_frame.start.x + (padded_frame_size.x * 0.5f) - (data->text_measurements.size.x * 0.5f)),
-			.y = roundf(padded_frame.start.y + (padded_frame_size.y * 0.5f) + data->text_measurements.y_range.end),
-		};
-		sl_blitter_draw_text(blitter, data->style.font, ui.current_lifecycle->texture, sl_string_view(data->text).str, text_offset, data->style.state[storage->state].text_color);
-	}
+	const UI_Button_Storage* storage = ui_storage_handle_resolve(data->storage_handle)->data;
+	const Rect_s32 button_frame = ui_view_get_frame(view);
+
+	const UI_Button_Render_Desc render_desc = {
+		.ctx = data->style.ctx,
+		.blitter = blitter,
+		.frame = button_frame,
+		.button_state = storage->state,
+	};
+	render_fn(&render_desc);
 }
 
 typedef struct UI_Button_Pan_Data {
@@ -1513,14 +1460,10 @@ void ui_button_pan(void* ctx, const UI_Pan_Gesture_Frame* frame) {
 
 vec2_s32 ui_button_get_intrinsic_size(void* ctx, UI_View view) {
 	UI_Button_Data* data = ctx;
-	const vec2_s32 padding_size = {
-		data->style.padding.left + data->style.padding.right,
-		data->style.padding.top + data->style.padding.bottom,
-	};
-	return add_vec2_s32(data->text_measurements.size, padding_size);
+	return data->style.intrinsic_size;
 }
 
-UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, UI_Callback on_press) {
+UI_View ui_button(UI_ID id, UI_Button_Style style, UI_Callback on_press) {
 	const UI_ID storage_id = ui_id_internal_auto(id);
 	UI_Storage_Handle storage_handle;
 	if (!ui_storage_get_handle(storage_id, &storage_handle)) {
@@ -1535,10 +1478,8 @@ UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, U
 	UI_Button_Data* button_data;
 	allocator_new(ui_lifecycle_allocator(), button_data, 1);
 	*button_data = (UI_Button_Data) {
-		.text = style->has_text ? sl_string_new(ui_lifecycle_allocator(), text) : NULL,
-		.text_measurements = style->has_text ? ui_text_measurements(style->font, text) : (UI_Text_Measurements) {},
 		.storage_handle = storage_handle,
-		.style = *style,
+		.style = style,
 		.on_press = on_press,
 	};
 
@@ -1664,7 +1605,7 @@ void ui_slider_render(void* ctx, UI_View view, SL_Blitter* blitter) {
 
 	// track
 	const Rect_s32 track_rect = ui_slider_get_track_rect(view, slider);
-	ui_draw_image(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(track_rect), (Rect_f32) { .start = {} }, style->track_color);
+	ui_render_util_draw_image(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(track_rect), (Rect_f32) { .start = {} }, style->track_color);
 
 	const Rect_s32 rect = ui_view_get_frame(view);
 	const f32 center_y = (rect.end.y + rect.start.y) * 0.5f;
@@ -1681,7 +1622,7 @@ void ui_slider_render(void* ctx, UI_View view, SL_Blitter* blitter) {
 		.start = needle_offset,
 		.end = add_vec2_f32(needle_image_size, needle_offset),
 	};
-	ui_draw_image(blitter, ui.current_lifecycle->texture, needle_rect, cvt_rect_u32_f32(style->needle_rect), style->needle_tint);
+	ui_render_util_draw_image(blitter, ui.current_lifecycle->texture, needle_rect, cvt_rect_u32_f32(style->needle_rect), style->needle_tint);
 }
 
 vec2_s32 ui_slider_get_intrinsic_size(void* ctx, UI_View view) {
@@ -1742,7 +1683,7 @@ typedef struct UI_Color_Data {
 
 void ui_color_render(void* ctx, UI_View view, SL_Blitter* blitter) {
 	UI_Color_Data* data = ctx;
-	ui_draw_image(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(ui_view_get_frame(view)), (Rect_f32) {}, data->color);
+	ui_render_util_draw_image(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(ui_view_get_frame(view)), (Rect_f32) {}, data->color);
 }
 
 UI_View ui_color(UI_ID id, vec4_f32 color) {
@@ -1768,7 +1709,7 @@ typedef struct UI_Nine_Patch_Data {
 
 void ui_nine_patch_render(void* ctx, UI_View view, SL_Blitter* blitter) {
 	UI_Nine_Patch_Data* data = ctx;
-	ui_draw_nine_patch(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(ui_view_get_frame(view)), data->nine_patch, data->tint);
+	ui_render_util_draw_nine_patch(blitter, ui.current_lifecycle->texture, cvt_rect_s32_f32(ui_view_get_frame(view)), data->nine_patch, data->tint);
 }
 
 UI_View ui_nine_patch(UI_ID id, UI_Nine_Patch nine_patch, vec4_f32 tint) {
@@ -1813,7 +1754,7 @@ void ui_image_render(void* ctx, UI_View view, SL_Blitter* blitter) {
 		.end = cvt_vec2_s32_f32(add_vec2_s32(image_offset, scaled_size)),
 	};
 
-	ui_draw_image(blitter, image_data->texture, rect, cvt_rect_u32_f32(image_data->texture_rect), image_data->tint);
+	ui_render_util_draw_image(blitter, image_data->texture, rect, cvt_rect_u32_f32(image_data->texture_rect), image_data->tint);
 }
 
 UI_View ui_image(UI_ID id, Gpu_Texture texture, Rect_u32 texture_rect, s32 scale, vec4_f32 tint) {

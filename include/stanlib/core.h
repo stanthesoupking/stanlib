@@ -3793,6 +3793,13 @@ sl_inline vec2_u32 rect_size_u32(Rect_u32 a) {
 	return sub_vec2_u32(a.end, a.start);
 }
 
+sl_inline Rect_s32 rect_dilate_s32(Rect_s32 a, s32 b) {
+	return (Rect_s32) {
+		.start = sub_vec2_s32(a.start, splat_vec2_s32(b)),
+		.end = add_vec2_s32(a.end, splat_vec2_s32(b)),
+	};
+}
+
 sl_inline vec2_f32 rect_centre_f32(Rect_f32 a) {
 	return mul_vec2_f32(add_vec2_f32(a.start, a.end), (vec2_f32) { 0.5f, 0.5f });
 }
