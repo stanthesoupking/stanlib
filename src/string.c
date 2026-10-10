@@ -29,6 +29,13 @@ SL_String_View sl_string_view(const SL_String* str) {
 	};
 }
 
+Immutable_Buffer sl_string_view_get_immutable_buffer(SL_String_View view) {
+	return (Immutable_Buffer) {
+		.data = view.str,
+		.size = view.length,
+	};
+}
+
 bool sl_string_view_is_null(SL_String_View view) {
 	return view.str == NULL;
 }

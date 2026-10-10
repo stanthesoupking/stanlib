@@ -71,7 +71,13 @@ typedef struct UI_Nine_Patch {
 
 typedef struct UI_ID { u64 hash; } UI_ID;
 #define UI_ID_NULL ((UI_ID) { .hash = 0ULL, })
-UI_ID ui_id(UI_ID parent, u32 item, u32 index);
+UI_ID _ui_id(UI_ID parent, SL_String_View name, u32 index);
+
+#define ui_id_i(parent, name, index) (_ui_id((parent), sl_string_view_const(name), (index)))
+#define ui_id(parent, name) ui_id_i((parent), (name))
+
+#define ui_id_auto_i(parent, index) (ui_id_i((parent), __BASE_FILE__ ":" sl_stringize(__COUNTER__), (index)))
+#define ui_id_auto(parent) ui_id_auto_i((parent), 0)
 
 // Opaque
 typedef struct UI_Window_Data UI_Window_Data;

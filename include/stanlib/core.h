@@ -33,6 +33,8 @@
 
 #define sl_unused __attribute__((unused))
 #define sl_inline static inline
+#define _sl_stringize(x) #x
+#define sl_stringize(x) _sl_stringize(x)
 #define sl_concat(a, b) a ## b
 #define sl_min(a, b) ((a) < (b) ? (a) : (b))
 #define sl_max(a, b) ((a) > (b) ? (a) : (b))

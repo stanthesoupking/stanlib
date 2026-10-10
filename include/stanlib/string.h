@@ -15,6 +15,9 @@ sl_seq(SL_String*, SL_String_Seq, sl_string_seq);
 
 SL_String_View sl_string_view(const SL_String* str);
 SL_String_View sl_string_view_c(const char* cstr);
+#define sl_string_view_const(STR) ((SL_String_View) { .str = STR, .length = sizeof(STR) - 1, })
+
+Immutable_Buffer sl_string_view_get_immutable_buffer(SL_String_View view);
 
 #define SL_STRING_VIEW_NULL ((SL_String_View) { .str = NULL })
 

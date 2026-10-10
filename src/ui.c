@@ -7,20 +7,25 @@
 
 // MARK: ID
 
-UI_ID ui_id_internal(UI_ID parent, u32 item, u32 index, bool internal) {
+#define ui_id_internal_i(parent, name, index) (_ui_id_internal((parent), sl_string_view_const(name), (index), true))
+#define ui_id_internal(parent, name) ui_id_internal_i((parent), (name))
+
+#define ui_id_internal_auto_i(parent, index) (ui_id_internal_i((parent), __BASE_FILE__ ":" sl_stringize(__COUNTER__), (index)))
+#define ui_id_internal_auto(parent) ui_id_internal_auto_i((parent), 0)
+
+UI_ID _ui_id_internal(UI_ID parent, SL_String_View name, u32 index, bool internal) {
 	SL_Hasher hasher;
 	sl_hasher_init(&hasher);
 	sl_hasher_push(&hasher, immutable_buffer_for(internal));
 	sl_hasher_push(&hasher, immutable_buffer_for(parent.hash));
-	sl_hasher_push(&hasher, immutable_buffer_for(item));
+	sl_hasher_push(&hasher, sl_string_view_get_immutable_buffer(name));
 	sl_hasher_push(&hasher, immutable_buffer_for(index));
 	return (UI_ID) {
 		.hash = sl_hasher_finalise(&hasher),
 	};
 }
-
-UI_ID ui_id(UI_ID parent, u32 item, u32 index) {
-	return ui_id_internal(parent, item, index, false);
+UI_ID _ui_id(UI_ID parent, SL_String_View name, u32 index) {
+	return _ui_id_internal(parent, name, index, false);
 }
 u64 ui_id_get_hash(UI_ID id) {
 	return id.hash;
@@ -56,15 +61,6 @@ typedef struct UI_View_Data {
 	UI_Gesture_Seq gestures;
 } UI_View_Data;
 sl_seq(UI_View_Data, UI_View_Data_Seq, ui_view_data_seq);
-
-typedef enum UI_Window_ID {
-	UI_Window_ID_Root,
-	UI_Window_ID_Label,
-	UI_Window_ID_Top_Background,
-	UI_Window_ID_Content_Background,
-	UI_Window_ID_Pan_Gesture,
-	UI_Window_ID_Shadow
-} UI_Window_ID;
 
 typedef struct UI_Window_Data {
 	UI_ID id;
@@ -821,12 +817,12 @@ UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Wi
 		.ctx = current_data,
 		.layout_subviews = ui_window_root_layout_subviews,
 	};
-	UI_View root = ui_view(ui_id_internal(id, UI_Window_ID_Root, 0, true), &root_callbacks);
+	UI_View root = ui_view(ui_id_internal_auto(id), &root_callbacks);
 	ui_view_set_frame(root, current_data->frame);
 
 	UI_View shadow = (UI_View) {0};
 	if (style->has_shadow) {
-		shadow = ui_color(ui_id_internal(id, UI_Window_ID_Shadow, 0, true), (vec4_f32) { 0, 0, 0, 0.15 });
+		shadow = ui_color(ui_id_internal_auto(id), (vec4_f32) { 0, 0, 0, 0.15 });
 		ui_view_add_subview(root, shadow);
 	}
 
@@ -847,17 +843,17 @@ UI_Window ui_window(UI_ID id, UI_View content, SL_String_View title, const UI_Wi
 			.func = ui_window_pan,
 		},
 	};
-	UI_Gesture pan_gesture = ui_pan_gesture(ui_id_internal(id, UI_Window_ID_Pan_Gesture, 0, true), &pan_desc);
+	UI_Gesture pan_gesture = ui_pan_gesture(ui_id_internal_auto(id), &pan_desc);
 
-	UI_View content_background = ui_nine_patch(ui_id_internal(id, UI_Window_ID_Content_Background, 0, true), style->content_background_9p, style->content_background_tint);
+	UI_View content_background = ui_nine_patch(ui_id_internal_auto(id), style->content_background_9p, style->content_background_tint);
 	ui_view_add_subview(root, content_background);
 
 	if (style->has_heading) {
-		current_data->heading_background = ui_nine_patch(ui_id_internal(id, UI_Window_ID_Top_Background, 0, true), style->heading_style.background_9p, style->heading_style.background_tint);
+		current_data->heading_background = ui_nine_patch(ui_id_internal_auto(id), style->heading_style.background_9p, style->heading_style.background_tint);
 		ui_view_add_subview(root, current_data->heading_background);
 		ui_view_add_gesture(current_data->heading_background, pan_gesture);
 
-		current_data->heading_label = ui_label(ui_id_internal(id, UI_Window_ID_Label, 0, true), title, &style->heading_style.label_style);
+		current_data->heading_label = ui_label(ui_id_internal_auto(id), title, &style->heading_style.label_style);
 		ui_view_add_subview(root, current_data->heading_label);
 		ui_view_add_gesture(current_data->heading_label, pan_gesture);
 	} else {
@@ -1447,11 +1443,6 @@ void ui_button_storage_destroy(void* ctx) {
 	allocator_free(ui.allocator, state, 1);
 }
 
-typedef enum UI_Button_ID {
-	UI_Button_ID_Storage,
-	UI_Button_ID_Pan_Gesture,
-} UI_Button_ID;
-
 typedef struct UI_Button_Data {
 	SL_String* text;
 	UI_Text_Measurements text_measurements;
@@ -1530,7 +1521,7 @@ vec2_s32 ui_button_get_intrinsic_size(void* ctx, UI_View view) {
 }
 
 UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, UI_Callback on_press) {
-	const UI_ID storage_id = ui_id_internal(id, UI_Button_ID_Storage, 0, true);
+	const UI_ID storage_id = ui_id_internal_auto(id);
 	UI_Storage_Handle storage_handle;
 	if (!ui_storage_get_handle(storage_id, &storage_handle)) {
 		UI_Button_Storage* storage;
@@ -1565,7 +1556,7 @@ UI_View ui_button(UI_ID id, SL_String_View text, const UI_Button_Style* style, U
 		.button = button_data,
 	};
 
-	const UI_ID pan_gesture_id = ui_id_internal(id, UI_Button_ID_Pan_Gesture, 0, true);
+	const UI_ID pan_gesture_id = ui_id_internal_auto(id);
 	const UI_Pan_Gesture_Desc pan_desc = {
 		.touch_mask = Input_Touch_Kind_Mask_All,
 		.minimum_touches = 1,
@@ -1599,10 +1590,6 @@ UI_Slider_Callbacks ui_slider_callbacks_basic_f32(f32* ptr) {
 		.get_value = ui_slider_callbacks_basic_f32_get_value,
 	};
 }
-
-typedef enum UI_Slider_ID {
-	UI_Slider_ID_Pan_Gesture,
-} UI_Slider_ID;
 
 typedef struct UI_Slider_Data {
 	UI_Slider_Style style;
@@ -1731,7 +1718,7 @@ UI_View ui_slider(UI_ID id, const UI_Slider_Style* style, Range_f32 range, UI_Sl
 		.slider_data = slider_data,
 	};
 
-	const UI_ID pan_gesture_id = ui_id_internal(id, UI_Slider_ID_Pan_Gesture, 0, true);
+	const UI_ID pan_gesture_id = ui_id_internal_auto(id);
 	const UI_Pan_Gesture_Desc pan_desc = {
 		.touch_mask = Input_Touch_Kind_Mask_All,
 		.minimum_touches = 1,
@@ -1854,17 +1841,13 @@ UI_View ui_spacer(UI_ID id) {
 	return view;
 }
 
-typedef enum UI_Gesture_ID {
-	UI_Gesture_ID_Storage,
-} UI_Gesture_ID;
-
 void ui_gesture_storage_destroy(void* data) {
 	UI_Gesture_Storage* data0 = data;
 	allocator_free(ui.allocator, data0, 1);
 }
 
 UI_Gesture ui_custom_gesture(UI_ID id, void* ctx, const UI_Gesture_VTable* vtable) {
-	const UI_ID storage_id = ui_id_internal(id, UI_Gesture_ID_Storage, 0, true);
+	const UI_ID storage_id = ui_id_internal_auto(id);
 	UI_Storage_Handle storage_handle;
 	if (!ui_storage_get_handle(storage_id, &storage_handle)) {
 		UI_Gesture_Storage* storage;
