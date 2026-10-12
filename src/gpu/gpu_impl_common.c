@@ -57,11 +57,11 @@ sl_inline u8 gpu_bytes_per_pixel_for_format(Gpu_Format format) {
 	}
 }
 
-u32 gpu_get_command_buffer_index(Gpu_Command_Buffer cb) {
+u32 gpu_command_buffer_get_index(Gpu_Command_Buffer cb) {
 	return cb.index;
 }
 
-Gpu_Texture gpu_new_texture_from_image(SL_Image* image, Gpu_Slice* inout_staging_allocator, Gpu_Slice* inout_texture_allocator, Gpu_Command_Buffer command_buffer) {
+Gpu_Texture gpu_texture_new_from_image(SL_Image* image, Gpu_Slice* inout_staging_allocator, Gpu_Slice* inout_texture_allocator, Gpu_Command_Buffer command_buffer) {
 	// For reverting:
 	const Gpu_Slice texture_allocator_initial = *inout_texture_allocator;
 
@@ -85,10 +85,10 @@ Gpu_Texture gpu_new_texture_from_image(SL_Image* image, Gpu_Slice* inout_staging
 		return SL_HANDLE_NULL;
 	}
 
-	void* staging_slice_ptr = gpu_get_slice_host_ptr(staging_slice);
+	void* staging_slice_ptr = gpu_slice_get_host_ptr(staging_slice);
 	memcpy(staging_slice_ptr, image->buffer.data, image->buffer.size);
 
-	Gpu_Texture texture = gpu_new_texture(&texture_desc, texture_slice);
+	Gpu_Texture texture = gpu_texture_new(&texture_desc, texture_slice);
 
 	const Gpu_Texture_Layout blit_layout = Gpu_Texture_Layout_General;
 	gpu_transition_texture_layouts(command_buffer, &texture, &blit_layout, 1);
@@ -110,7 +110,7 @@ Gpu_Texture gpu_new_texture_from_image(SL_Image* image, Gpu_Slice* inout_staging
 	return texture;
 }
 
-SL_Image* gpu_new_image_from_texture(Gpu_Texture texture, Allocator* allocator, Gpu_Slice* inout_staging_allocator, Gpu_Command_Buffer_Pool command_buffer_pool) {
+SL_Image* sl_image_new_from_texture(Gpu_Texture texture, Allocator* allocator, Gpu_Slice* inout_staging_allocator, Gpu_Command_Buffer_Pool command_buffer_pool) {
 	if (sl_handle_is_null(texture)) {
 		return NULL;
 	}
@@ -118,7 +118,7 @@ SL_Image* gpu_new_image_from_texture(Gpu_Texture texture, Allocator* allocator, 
 	// For reverting:
 	const Gpu_Slice staging_allocator_initial = *inout_staging_allocator;
 
-	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
+	const Gpu_Texture_Desc* texture_desc = gpu_texture_get_desc(texture);
 
 	switch (texture_desc->format) {
 		case Gpu_Format_RGBA8_Unorm:
@@ -141,7 +141,7 @@ SL_Image* gpu_new_image_from_texture(Gpu_Texture texture, Allocator* allocator, 
 	}
 
 	Gpu_Command_Buffer command_buffer;
-	if (!gpu_new_command_buffer(command_buffer_pool, &command_buffer)) {
+	if (!gpu_command_buffer_new(command_buffer_pool, &command_buffer)) {
 		*inout_staging_allocator = staging_allocator_initial;
 		return NULL;
 	}
@@ -162,7 +162,7 @@ SL_Image* gpu_new_image_from_texture(Gpu_Texture texture, Allocator* allocator, 
 	const u64 row_length = (u64)texture_desc->size.x * 4ULL;
 	SL_Image* result = sl_image_new(allocator, (vec2_u32) { texture_desc->size.x, texture_desc->size.y }, row_length);
 
-	sl_memcpy(result->buffer.data, gpu_get_slice_host_ptr(staging_slice), result->buffer.size);
+	sl_memcpy(result->buffer.data, gpu_slice_get_host_ptr(staging_slice), result->buffer.size);
 
 	return result;
 }

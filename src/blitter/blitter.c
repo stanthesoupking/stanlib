@@ -59,8 +59,8 @@ Gpu_Render_Pipeline sl_blitter_new_render_pipeline(bool swizzle_rrrr) {
 	};
 	const Gpu_Render_Pipeline_Desc render_pipeline_desc = {
 		.render_pass_layout = render_pass_layout,
-		.vertex_blob = gpu_new_shader_blob(&blit_vs_blob),
-		.fragment_blob = gpu_new_shader_blob(&blit_fs_blob),
+		.vertex_blob = gpu_shader_blob_new(&blit_vs_blob),
+		.fragment_blob = gpu_shader_blob_new(&blit_fs_blob),
 		.vertex_entry_point = "vs_main",
 		.fragment_entry_point = "fs_main",
 		.bindings = blit_quad_bindings,
@@ -70,7 +70,7 @@ Gpu_Render_Pipeline sl_blitter_new_render_pipeline(bool swizzle_rrrr) {
 		.constants = constants,
 		.constant_count = sl_array_count(constants),
 	};
-	return gpu_new_render_pipeline(&render_pipeline_desc);
+	return gpu_render_pipeline_new(&render_pipeline_desc);
 }
 
 SL_Blitter_Resources* sl_blitter_resources_new(Allocator* allocator) {
@@ -78,13 +78,13 @@ SL_Blitter_Resources* sl_blitter_resources_new(Allocator* allocator) {
 		.min_filter = Gpu_Filter_Linear,
 		.mag_filter = Gpu_Filter_Linear,
 	};
-	Gpu_Sampler linear_sampler = gpu_new_sampler(&linear_sampler_desc);
+	Gpu_Sampler linear_sampler = gpu_sampler_new(&linear_sampler_desc);
 
 	const Gpu_Sampler_Desc nearest_sampler_desc = {
 		.min_filter = Gpu_Filter_Nearest,
 		.mag_filter = Gpu_Filter_Nearest,
 	};
-	Gpu_Sampler nearest_sampler = gpu_new_sampler(&nearest_sampler_desc);
+	Gpu_Sampler nearest_sampler = gpu_sampler_new(&nearest_sampler_desc);
 
 	SL_Blitter_Resources* result;
 	allocator_new(allocator, result, 1);
@@ -200,7 +200,7 @@ void sl_blitter_draw_text(SL_Blitter* blitter, SL_Font* font, Gpu_Texture textur
 	allocator_free(blitter->allocator, quads, quad_count);
 }
 void sl_blitter_draw_texture(SL_Blitter* blitter, Gpu_Texture texture, vec2_f32 position, vec4_f32 color, SL_Blitter_Sampler sampler) {
-	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
+	const Gpu_Texture_Desc* texture_desc = gpu_texture_get_desc(texture);
 
 	const vec2_f32 p_start = position;
 	const vec2_f32 p_end = add_vec2_f32(p_start, (vec2_f32) { texture_desc->size.x, texture_desc->size.y });
@@ -261,7 +261,7 @@ void sl_blitter_flush(SL_Blitter* blitter) {
 		return;
 	}
 
-	Textured_Quad_f32* quads_slice_ptr = gpu_get_slice_host_ptr(quads_slice);
+	Textured_Quad_f32* quads_slice_ptr = gpu_slice_get_host_ptr(quads_slice);
 	for (u32 quad_idx = 0; quad_idx < quad_count; quad_idx++) {
 		quads_slice_ptr[quad_idx] = textured_quad_f32_seq_get(&blitter->quads, quad_idx);
 	}

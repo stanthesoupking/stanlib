@@ -2460,6 +2460,13 @@ sl_inline vec3_f32 step_vec3_f32(vec3_f32 edge, vec3_f32 x) {
 		(x.z >= edge.z) ? 1.0f : 0.0f,
 	};
 }
+sl_inline vec3_f64 step_vec3_f64(vec3_f64 edge, vec3_f64 x) {
+	return (vec3_f64) {
+		(x.x >= edge.x) ? 1.0 : 0.0,
+		(x.y >= edge.y) ? 1.0 : 0.0,
+		(x.z >= edge.z) ? 1.0 : 0.0,
+	};
+}
 
 sl_inline f32 extract_y_rotation_mat4x4_f32(mat4x4_f32 m) {
 	vec3_f32 forward = xyz_vec4_f32(m.z);
@@ -2897,15 +2904,15 @@ sl_inline Immutable_Buffer sl_immutable_buffer_from_mutable(Mutable_Buffer buf) 
 	};
 }
 
-typedef void* (*Allocator_New_Fn)(void* ctx, u64 size, u64 alignment);
-typedef void* (*Allocator_Resize_Fn)(void* ctx, void* ptr, u64 old_size, u64 new_size, u64 alignment);
-typedef void (*Allocator_Free_Fn)(void* ctx, void* ptr, u64 size, u64 alignment);
+typedef void* (*SL_Allocator_New_Fn)(void* ctx, u64 size, u64 alignment);
+typedef void* (*SL_Allocator_Resize_Fn)(void* ctx, void* ptr, u64 old_size, u64 new_size, u64 alignment);
+typedef void (*SL_Allocator_Free_Fn)(void* ctx, void* ptr, u64 size, u64 alignment);
 
-typedef struct Allocator {
+typedef struct SL_Allocator {
 	void* ctx;
-	Allocator_New_Fn new;
-	Allocator_Resize_Fn resize;
-	Allocator_Free_Fn free;
+	SL_Allocator_New_Fn new;
+	SL_Allocator_Resize_Fn resize;
+	SL_Allocator_Free_Fn free;
 } Allocator;
 
 #define allocator_new(allocator, ptr, count)\

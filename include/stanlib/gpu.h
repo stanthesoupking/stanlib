@@ -189,12 +189,12 @@ sl_inline bool gpu_slice_suballocate(Gpu_Slice basis, Gpu_Size_And_Align size_an
 	return true;
 }
 
-void* gpu_get_slice_host_ptr(Gpu_Slice slice);
+void* gpu_slice_get_host_ptr(Gpu_Slice slice);
 
 // Note: The GPU flushes host-visible caches on `gpu_enqueue()`, so a flush is not needed in this case.
-void gpu_flush_slice_to_gpu(Gpu_Slice slice);
+void gpu_slice_flush_to_gpu(Gpu_Slice slice);
 
-void gpu_flush_slice_from_gpu(Gpu_Slice slice);
+void gpu_slice_flush_from_gpu(Gpu_Slice slice);
 
 // Get the minimum alignment for slices bound as `Gpu_Binding_Kind_Uniform_Slice`.
 u64 gpu_get_minimum_uniform_slice_alignment(void);
@@ -295,9 +295,9 @@ void gpu_init(const Gpu_Desc* desc);
 void gpu_deinit(void);
 
 // Swapchain
-Gpu_Swapchain gpu_new_swapchain(Gpu_Surface surface);
-void gpu_destroy_swapchain(Gpu_Swapchain swapchain);
-bool gpu_fetch_swapchain_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb, Gpu_Swapchain_Desc swapchain_desc, u64 timeout, Gpu_Texture* out_texture);
+Gpu_Swapchain gpu_swapchain_new(Gpu_Surface surface);
+void gpu_swapchain_destroy(Gpu_Swapchain swapchain);
+bool gpu_swapchain_fetch_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb, Gpu_Swapchain_Desc swapchain_desc, u64 timeout, Gpu_Texture* out_texture);
 
 // Texture
 typedef struct Gpu_Texture_Desc {
@@ -309,17 +309,17 @@ typedef struct Gpu_Texture_Desc {
 	u32 array_layers;
 } Gpu_Texture_Desc;
 Gpu_Size_And_Align gpu_size_and_align_for_texture(const Gpu_Texture_Desc* desc);
-Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice);
-Gpu_Texture gpu_new_texture_from_image(SL_Image* image, Gpu_Slice* inout_staging_allocator, Gpu_Slice* inout_texture_allocator, Gpu_Command_Buffer command_buffer);
-SL_Image* gpu_new_image_from_texture(Gpu_Texture texture, Allocator* allocator, Gpu_Slice* inout_staging_allocator, Gpu_Command_Buffer_Pool command_buffer_pool);
-void gpu_destroy_texture(Gpu_Texture texture);
-const Gpu_Texture_Desc* gpu_get_texture_desc(Gpu_Texture texture);
+Gpu_Texture gpu_texture_new(const Gpu_Texture_Desc* desc, Gpu_Slice slice);
+Gpu_Texture gpu_texture_new_from_image(SL_Image* image, Gpu_Slice* inout_staging_allocator, Gpu_Slice* inout_texture_allocator, Gpu_Command_Buffer command_buffer);
+SL_Image* sl_image_new_from_texture(Gpu_Texture texture, Allocator* allocator, Gpu_Slice* inout_staging_allocator, Gpu_Command_Buffer_Pool command_buffer_pool);
+void gpu_texture_destroy(Gpu_Texture texture);
+const Gpu_Texture_Desc* gpu_texture_get_desc(Gpu_Texture texture);
 
 // Heap
-Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type);
-void gpu_destroy_heap(Gpu_Heap heap);
-u64 gpu_get_heap_size(Gpu_Heap heap);
-Gpu_Slice gpu_get_heap_slice(Gpu_Heap heap);
+Gpu_Heap gpu_heap_new(u64 bytes, Gpu_Memory_Type memory_type);
+void gpu_heap_destroy(Gpu_Heap heap);
+u64 gpu_heap_get_size(Gpu_Heap heap);
+Gpu_Slice gpu_heap_get_slice(Gpu_Heap heap);
 
 // Sampler
 typedef struct Gpu_Sampler_Desc {
@@ -333,16 +333,16 @@ typedef struct Gpu_Sampler_Desc {
 
 	Gpu_Sampler_Coordinate coordinate;
 } Gpu_Sampler_Desc;
-Gpu_Sampler gpu_new_sampler(const Gpu_Sampler_Desc* desc);
-void gpu_destroy_sampler(Gpu_Sampler sampler);
+Gpu_Sampler gpu_sampler_new(const Gpu_Sampler_Desc* desc);
+void gpu_sampler_destroy(Gpu_Sampler sampler);
 
 // Command Buffer Pool
-Gpu_Command_Buffer_Pool gpu_new_command_buffer_pool(u32 size);
-void gpu_destroy_command_buffer_pool(Gpu_Command_Buffer_Pool pool);
+Gpu_Command_Buffer_Pool gpu_command_buffer_pool_new(u32 size);
+void gpu_command_buffer_pool_destroy(Gpu_Command_Buffer_Pool pool);
 
 // Command Buffer
-bool gpu_new_command_buffer(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* out_cb);
-u32 gpu_get_command_buffer_index(Gpu_Command_Buffer cb);
+bool gpu_command_buffer_new(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* out_cb);
+u32 gpu_command_buffer_get_index(Gpu_Command_Buffer cb);
 void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed);
 
 void gpu_add_on_complete_callback(Gpu_Command_Buffer cb, void* ctx, Gpu_Callback_Fn fn);
@@ -357,8 +357,8 @@ typedef struct Gpu_Shader_Blob_Desc {
     Immutable_Buffer spv;
     Immutable_Buffer metallib;
 } Gpu_Shader_Blob_Desc;
-Gpu_Shader_Blob gpu_new_shader_blob(const Gpu_Shader_Blob_Desc* desc);
-void gpu_destroy_shader_blob(Gpu_Shader_Blob blob);
+Gpu_Shader_Blob gpu_shader_blob_new(const Gpu_Shader_Blob_Desc* desc);
+void gpu_shader_blob_destroy(Gpu_Shader_Blob blob);
 
 // Render
 void gpu_begin_render(Gpu_Command_Buffer cb, const Gpu_Render_Pass_Layout* layout, const Gpu_Render_Pass_Values* values);
@@ -385,7 +385,7 @@ typedef struct Gpu_Render_Pipeline_Desc {
 	// Enable alpha blending, may want more options in the future.
 	bool alpha_blending;
 } Gpu_Render_Pipeline_Desc;
-Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc);
+Gpu_Render_Pipeline gpu_render_pipeline_new(const Gpu_Render_Pipeline_Desc* desc);
 
 typedef struct Gpu_Draw_Desc {
 	Gpu_Render_Pipeline pipeline;
@@ -411,7 +411,7 @@ typedef struct Gpu_Compute_Pipeline_Desc {
 
 	vec3_u32 group_size;
 } Gpu_Compute_Pipeline_Desc;
-Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* desc);
+Gpu_Compute_Pipeline gpu_compute_pipeline_new(const Gpu_Compute_Pipeline_Desc* desc);
 
 void gpu_dispatch(Gpu_Command_Buffer cb, Gpu_Compute_Pipeline pipeline, const Gpu_Binding* bindings, u32 binding_count, vec3_u32 group_count);
 
@@ -459,8 +459,8 @@ void gpu_copy_texture_to_slice(Gpu_Command_Buffer cb, const Gpu_Copy_Texture_To_
 void gpu_barrier(Gpu_Command_Buffer cb);
 
 // Semaphore
-Gpu_Semaphore gpu_new_semaphore(void);
-void gpu_destroy_semaphore(Gpu_Semaphore semaphore);
+Gpu_Semaphore gpu_semaphore_new(void);
+void gpu_semaphore_destroy(Gpu_Semaphore semaphore);
 void gpu_notify(Gpu_Semaphore semaphore, u64 value, void* ctx, Gpu_Callback_Fn fn);
 void gpu_wait_gpu(Gpu_Command_Buffer cb, Gpu_Semaphore semaphore, u64 value);
 void gpu_signal_gpu(Gpu_Command_Buffer cb, Gpu_Semaphore semaphore, u64 value);

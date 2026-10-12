@@ -71,11 +71,11 @@ SL_Font* sl_font_load(Allocator* allocator, Immutable_Buffer font_buffer, f32 si
 		SL_Image* image = sl_image_new(allocator, image_size, image_size.x * 4);
 
 		for (u32 img_y = 0; img_y < image_size.y; img_y++) {
-			u8* staging_row = staging + (img_y * image_size.x);
+			u8* staging_row = staging + (size_t)(img_y * image_size.x);
 			u8* img_row = (u8*)image->buffer.data + (img_y * image->row_length);
 			for (u32 img_x = 0; img_x < image_size.x; img_x++) {
 				const u8 value = staging_row[img_x];
-				u8* img_pixel = img_row + (img_x * 4);
+				u8* img_pixel = img_row + (size_t)(img_x * 4);
 
 				const vec4_f32 value_v4 = linear_to_srgb_vec4_f32(splat_vec4_f32(value / 255.0f));
 				img_pixel[0] = (u8)roundf(value_v4.x * 255.0f);
@@ -112,7 +112,7 @@ Range_s32 sl_font_get_y_range(SL_Font* font) {
 void sl_font_generate_geometry_for_string(SL_Font* font, Gpu_Texture texture, const char* string, vec2_f32 position, vec4_f32 color, Textured_Quad_f32* out_quads, u32* out_quad_count) {
 	u32 quad_count = 0;
 
-	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
+	const Gpu_Texture_Desc* texture_desc = gpu_texture_get_desc(texture);
 	const vec2_f32 texture_size = { texture_desc->size.x, texture_desc->size.y };
 
 	f32 cx = position.x;

@@ -609,7 +609,7 @@ void ui_lifecycle_end() {
 // MARK: Drawing
 
 void ui_render_util_draw_image(SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, Rect_f32 atlas_rect, vec4_f32 color) {
-	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
+	const Gpu_Texture_Desc* texture_desc = gpu_texture_get_desc(texture);
 	const vec2_f32 texture_size = { (f32)texture_desc->size.x, (f32)texture_desc->size.y };
 
 	const Textured_Quad_f32 quad = textured_quad_for_sub_region_f32(rect, div_rect_vec_f32(atlas_rect, texture_size), color);
@@ -623,7 +623,7 @@ void ui_render_util_draw_color(SL_Blitter* blitter, Rect_f32 rect, vec4_f32 colo
 void ui_render_util_draw_nine_patch(SL_Blitter* blitter, Gpu_Texture texture, Rect_f32 rect, UI_Nine_Patch nine_patch, vec4_f32 tint) {
 	Textured_Quad_f32 quads[9];
 
-	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(texture);
+	const Gpu_Texture_Desc* texture_desc = gpu_texture_get_desc(texture);
 	const vec2_f32 texture_size = { (f32)texture_desc->size.x, (f32)texture_desc->size.y };
 
 	u32 next_quad = 0;

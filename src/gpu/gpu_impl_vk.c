@@ -1070,7 +1070,7 @@ Gpu_Size_And_Align gpu_size_and_align_for_texture(const Gpu_Texture_Desc* desc) 
 	};
 }
 
-Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice) {
+Gpu_Texture gpu_texture_new(const Gpu_Texture_Desc* desc, Gpu_Slice slice) {
 	Gpu_Texture texture = gpu_texture_pool_acquire(&gpu.texture_pool);
 	Gpu_Texture_Data* texture_data = gpu_texture_pool_resolve(&gpu.texture_pool, texture);
 	texture_data->layout = Gpu_Texture_Layout_Undefined;
@@ -1123,7 +1123,7 @@ Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice) {
 	return texture;
 }
 
-const Gpu_Texture_Desc* gpu_get_texture_desc(Gpu_Texture texture) {
+const Gpu_Texture_Desc* gpu_texture_get_desc(Gpu_Texture texture) {
 	Gpu_Texture_Data* data = gpu_texture_pool_resolve(&gpu.texture_pool, texture);
 	if (data) {
 		return &data->desc;
@@ -1131,7 +1131,7 @@ const Gpu_Texture_Desc* gpu_get_texture_desc(Gpu_Texture texture) {
 		return NULL;
 	}
 }
-void gpu_destroy_texture(Gpu_Texture texture) {
+void gpu_texture_destroy(Gpu_Texture texture) {
 	Gpu_Texture_Data* data = gpu_texture_pool_resolve(&gpu.texture_pool, texture);
 	sl_assert(data != NULL, "Texture is invalid.");
 
@@ -1281,7 +1281,7 @@ Gpu_Framebuffer gpu_acquire_framebuffer(Gpu_Framebuffer_Key key) {
 			attachments[attachment_idx] = texture_data->image_view;
 		}
 
-		const vec3_u32 size = gpu_get_texture_desc(key.textures[0])->size;
+		const vec3_u32 size = gpu_texture_get_desc(key.textures[0])->size;
 
 		VkFramebufferCreateInfo framebuffer_info = {
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
@@ -1303,7 +1303,7 @@ Gpu_Framebuffer gpu_acquire_framebuffer(Gpu_Framebuffer_Key key) {
 }
 
 // Swapchain
-Gpu_Swapchain gpu_new_swapchain(Gpu_Surface surface) {
+Gpu_Swapchain gpu_swapchain_new(Gpu_Surface surface) {
 
 	// Create surface
 	VkSurfaceKHR vk_surface;
@@ -1318,7 +1318,7 @@ Gpu_Swapchain gpu_new_swapchain(Gpu_Surface surface) {
 
 	return swapchain;
 }
-void gpu_destroy_swapchain(Gpu_Swapchain swapchain) {
+void gpu_swapchain_destroy(Gpu_Swapchain swapchain) {
 	// todo
 }
 
@@ -1337,7 +1337,7 @@ void gpu_release_swapchain_instance(Gpu_Swapchain_Instance* instance) {
 		vkQueueWaitIdle(gpu.queue[Gpu_Queue_Present]);
 
 		for (u32 texture_idx = 0; texture_idx < instance->texture_count; texture_idx++) {
-			gpu_destroy_texture(instance->textures[texture_idx]);
+			gpu_texture_destroy(instance->textures[texture_idx]);
 			vkDestroySemaphore(gpu.device, instance->present_semaphores[texture_idx], NULL);
 		}
 		vkDestroySwapchainKHR(gpu.device, instance->swapchain, NULL);
@@ -1533,7 +1533,7 @@ void gpu_init(const Gpu_Desc* desc) {
 	gpu_init_instance(desc);
 	gpu_init_device(desc);
 	gpu_init_resource_pools();
-	gpu.global_semaphore = gpu_new_semaphore();
+	gpu.global_semaphore = gpu_semaphore_new();
 
 #if GPU_LOGGING
 	VkPhysicalDeviceProperties physical_device_properties;
@@ -1544,14 +1544,14 @@ void gpu_init(const Gpu_Desc* desc) {
 void gpu_deinit() {
 	gpu_log("Deinit");
 	gpu_wait_cpu(gpu.global_semaphore, gpu.global_semaphore_value);
-	gpu_destroy_semaphore(gpu.global_semaphore);
+	gpu_semaphore_destroy(gpu.global_semaphore);
 	vkDestroyInstance(gpu.instance, NULL);
 	sl_mutex_destroy(&gpu.enqueue_mutex);
 	gpu = (Gpu) {};
 }
 
 // Heap
-Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type) {
+Gpu_Heap gpu_heap_new(u64 bytes, Gpu_Memory_Type memory_type) {
 	gpu_log("Allocating heap of size %lu.", bytes);
 
 	Gpu_Heap heap_handle = gpu_heap_pool_acquire(&gpu.heap_pool);
@@ -1603,7 +1603,7 @@ Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type) {
 
 	return heap_handle;
 }
-void gpu_destroy_heap(Gpu_Heap heap) {
+void gpu_heap_destroy(Gpu_Heap heap) {
 	Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, heap);
 
 	switch (heap_data->memory_type) {
@@ -1620,21 +1620,21 @@ void gpu_destroy_heap(Gpu_Heap heap) {
 
 	gpu_heap_pool_release(&gpu.heap_pool, heap);
 }
-u64 gpu_get_heap_size(Gpu_Heap heap) {
+u64 gpu_heap_get_size(Gpu_Heap heap) {
 	Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, heap);
 	return heap_data->size;
 }
-Gpu_Slice gpu_get_heap_slice(Gpu_Heap heap) {
-	return gpu_slice(heap, 0, gpu_get_heap_size(heap));
+Gpu_Slice gpu_heap_get_slice(Gpu_Heap heap) {
+	return gpu_slice(heap, 0, gpu_heap_get_size(heap));
 }
 
 // Slice
-void* gpu_get_slice_host_ptr(Gpu_Slice slice) {
+void* gpu_slice_get_host_ptr(Gpu_Slice slice) {
 	Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, slice.heap);
 	sl_assert(heap_data->memory_type == Gpu_Memory_Type_Host_Visible, "Can only map host-visible memory.");
 	return heap_data->host_ptr + slice.offset;
 }
-void gpu_flush_slice_to_gpu(Gpu_Slice slice) {
+void gpu_slice_flush_to_gpu(Gpu_Slice slice) {
 	Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, slice.heap);
 	sl_assert(heap_data->memory_type == Gpu_Memory_Type_Host_Visible, "Flush only makes sense for host-visible memory.");
 
@@ -1653,7 +1653,7 @@ void gpu_flush_slice_to_gpu(Gpu_Slice slice) {
 	VkResult flush_result = vkFlushMappedMemoryRanges(gpu.device, 1, &memory_range);
 	sl_assert(flush_result == VK_SUCCESS, "Failed to flush slice upload.");
 }
-void gpu_flush_slice_from_gpu(Gpu_Slice slice) {
+void gpu_slice_flush_from_gpu(Gpu_Slice slice) {
 	Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, slice.heap);
 	sl_assert(heap_data->memory_type == Gpu_Memory_Type_Host_Visible, "Flush only makes sense for host-visible memory.");
 
@@ -1672,7 +1672,7 @@ void gpu_flush_slice_from_gpu(Gpu_Slice slice) {
 }
 
 // Sampler
-Gpu_Sampler gpu_new_sampler(const Gpu_Sampler_Desc* desc) {
+Gpu_Sampler gpu_sampler_new(const Gpu_Sampler_Desc* desc) {
 	gpu_log("Created sampler.");
 
 	Gpu_Sampler result = gpu_sampler_pool_acquire(&gpu.sampler_pool);
@@ -1696,7 +1696,7 @@ Gpu_Sampler gpu_new_sampler(const Gpu_Sampler_Desc* desc) {
 
 	return result;
 }
-void gpu_destroy_sampler(Gpu_Sampler sampler) {
+void gpu_sampler_destroy(Gpu_Sampler sampler) {
 	Gpu_Sampler_Data* data = gpu_sampler_pool_resolve(&gpu.sampler_pool, sampler);
 	vkDestroySampler(gpu.device, data->sampler, NULL);
 	gpu_sampler_pool_release(&gpu.sampler_pool, sampler);
@@ -1744,7 +1744,7 @@ void gpu_deinit_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 }
 
 // Command Buffer Pool
-Gpu_Command_Buffer_Pool gpu_new_command_buffer_pool(u32 size) {
+Gpu_Command_Buffer_Pool gpu_command_buffer_pool_new(u32 size) {
 	gpu_log("Creating command buffer pool of size %u.", size);
 	Gpu_Command_Buffer_Pool pool = gpu_command_buffer_pool_pool_acquire(&gpu.command_pool_pool);
 	Gpu_Command_Buffer_Pool_Data* pool_data = gpu_command_buffer_pool_pool_resolve(&gpu.command_pool_pool, pool);
@@ -1758,7 +1758,7 @@ Gpu_Command_Buffer_Pool gpu_new_command_buffer_pool(u32 size) {
 
 	return pool;
 }
-void gpu_destroy_command_buffer_pool(Gpu_Command_Buffer_Pool pool) {
+void gpu_command_buffer_pool_destroy(Gpu_Command_Buffer_Pool pool) {
 	Gpu_Command_Buffer_Pool_Data* pool_data = gpu_command_buffer_pool_pool_resolve(&gpu.command_pool_pool, pool);
 	for (u32 i = 0; i < pool_data->command_buffer_count; i++) {
 		gpu_deinit_command_buffer(&pool_data->command_buffers[i]);
@@ -1777,7 +1777,7 @@ Gpu_Command_Buffer_Data* gpu_resolve_command_buffer_data(Gpu_Command_Buffer cb) 
 	return &pool_data->command_buffers[cb.index];
 }
 
-bool gpu_new_command_buffer(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* out_cb) {
+bool gpu_command_buffer_new(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* out_cb) {
 	Gpu_Command_Buffer_Pool_Data* pool_data = gpu_command_buffer_pool_pool_resolve(&gpu.command_pool_pool, pool);
 	sl_assert(pool_data != NULL, "Pool is invalid.");
 
@@ -2231,7 +2231,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 					};
 				}
 
-				const vec3_u32 render_size = gpu_get_texture_desc(begin_render->values.attachments[0].texture)->size;
+				const vec3_u32 render_size = gpu_texture_get_desc(begin_render->values.attachments[0].texture)->size;
 
 				const Gpu_Render_Pass_Object_Data* render_pass_object_data = gpu_render_pass_object_pool_resolve(&gpu.render_pass_object_pool, fb_data->render_pass_object);
 
@@ -2537,7 +2537,7 @@ void gpu_transition_texture_layouts(Gpu_Command_Buffer cb, const Gpu_Texture* te
 }
 
 // Shader Blob
-Gpu_Shader_Blob gpu_new_shader_blob(const Gpu_Shader_Blob_Desc* desc) {
+Gpu_Shader_Blob gpu_shader_blob_new(const Gpu_Shader_Blob_Desc* desc) {
     if (desc->spv.size == 0) {
         return SL_HANDLE_NULL;
     }
@@ -2562,13 +2562,13 @@ Gpu_Shader_Blob gpu_new_shader_blob(const Gpu_Shader_Blob_Desc* desc) {
 	data->shader_module = module;
 	return result;
 }
-void gpu_destroy_shader_blob(Gpu_Shader_Blob blob) {
+void gpu_shader_blob_destroy(Gpu_Shader_Blob blob) {
 	Gpu_Shader_Blob_Data* data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, blob);
 	vkDestroyShaderModule(gpu.device, data->shader_module, NULL);
 	gpu_shader_blob_pool_release(&gpu.shader_blob_pool, blob);
 }
 
-bool gpu_fetch_swapchain_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb, Gpu_Swapchain_Desc swapchain_desc, u64 timeout, Gpu_Texture* out_texture) {
+bool gpu_swapchain_fetch_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb, Gpu_Swapchain_Desc swapchain_desc, u64 timeout, Gpu_Texture* out_texture) {
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 
@@ -2779,7 +2779,7 @@ void gpu_vk_specialization_destroy(Gpu_Vk_Specialization* specialization) {
 	*specialization = (Gpu_Vk_Specialization) { 0 };
 }
 
-Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc) {
+Gpu_Render_Pipeline gpu_render_pipeline_new(const Gpu_Render_Pipeline_Desc* desc) {
 	Gpu_Shader_Blob_Data* vertex_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->vertex_blob);
 	Gpu_Shader_Blob_Data* fragment_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->fragment_blob);
 	if ((vertex_blob_data == NULL) || (fragment_blob_data == NULL)) {
@@ -2918,7 +2918,7 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 	return pipeline;
 }
 
-Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* desc) {
+Gpu_Compute_Pipeline gpu_compute_pipeline_new(const Gpu_Compute_Pipeline_Desc* desc) {
 	Gpu_Shader_Blob_Data* blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->blob);
 	if (blob_data == NULL) {
 		return SL_HANDLE_NULL;
@@ -3135,7 +3135,7 @@ void* gpu_semaphore_thread(void* ctx) {
 	return NULL;
 }
 
-Gpu_Semaphore gpu_new_semaphore(void) {
+Gpu_Semaphore gpu_semaphore_new(void) {
 	Gpu_Semaphore result = gpu_semaphore_pool_acquire(&gpu.semaphore_pool);
 	Gpu_Semaphore_Data* result_data = gpu_semaphore_pool_resolve(&gpu.semaphore_pool, result);
 
@@ -3159,7 +3159,7 @@ Gpu_Semaphore gpu_new_semaphore(void) {
 	return result;
 }
 
-void gpu_destroy_semaphore(Gpu_Semaphore semaphore) {
+void gpu_semaphore_destroy(Gpu_Semaphore semaphore) {
 	Gpu_Semaphore_Data* data = gpu_semaphore_pool_resolve(&gpu.semaphore_pool, semaphore);
 
 	sl_mutex_lock(&data->mutex);
