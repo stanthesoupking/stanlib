@@ -331,7 +331,7 @@ void gpu_init(const Gpu_Desc* desc) {
 	gpu.semaphore_pool = gpu_semaphore_pool_new(gpu.allocator);
 	gpu.swapchain_pool = gpu_swapchain_pool_new(gpu.allocator);
 	gpu.command_pool_pool = gpu_command_buffer_pool_pool_new(gpu.allocator);
-	gpu.global_semaphore = gpu_new_semaphore();
+	gpu.global_semaphore = gpu_semaphore_new();
 
 	sl_unused const char* device_name = [gpu.device.name cStringUsingEncoding:NSUTF8StringEncoding];
 	gpu_log("Initialised with device '%s', using Metal backend.", device_name);
@@ -369,7 +369,7 @@ void gpu_deinit_command_buffer(Gpu_Command_Buffer_Data* command_buffer) {
 }
 
 // Command Pool
-Gpu_Command_Buffer_Pool gpu_new_command_buffer_pool(u32 size) {
+Gpu_Command_Buffer_Pool gpu_command_buffer_pool_new(u32 size) {
 	Gpu_Command_Buffer_Pool pool = gpu_command_buffer_pool_pool_acquire(&gpu.command_pool_pool);
 	Gpu_Command_Buffer_Pool_Data* data = gpu_command_buffer_pool_pool_resolve(&gpu.command_pool_pool, pool);
 
@@ -381,7 +381,7 @@ Gpu_Command_Buffer_Pool gpu_new_command_buffer_pool(u32 size) {
 
 	return pool;
 }
-void gpu_destroy_command_buffer_pool(Gpu_Command_Buffer_Pool pool) {
+void gpu_command_buffer_pool_destroy(Gpu_Command_Buffer_Pool pool) {
 	Gpu_Command_Buffer_Pool_Data* data = gpu_command_buffer_pool_pool_resolve(&gpu.command_pool_pool, pool);
 	for (u32 i = 0; i < data->command_buffer_count; i++) {
 		gpu_deinit_command_buffer(&data->command_buffers[i]);
@@ -401,7 +401,7 @@ Gpu_Command_Buffer_Data* gpu_resolve_command_buffer_data(Gpu_Command_Buffer cb) 
 }
 
 // Command Buffer
-bool gpu_new_command_buffer(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* out_cb) {
+bool gpu_command_buffer_new(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* out_cb) {
 	Gpu_Command_Buffer_Pool_Data* pool_data = gpu_command_buffer_pool_pool_resolve(&gpu.command_pool_pool, pool);
 
 	Gpu_Command_Buffer cb_handle = {
@@ -425,13 +425,13 @@ bool gpu_new_command_buffer(Gpu_Command_Buffer_Pool pool, Gpu_Command_Buffer* ou
 	*out_cb = cb_handle;
 	return true;
 }
-void gpu_cleanup_command_buffer(Gpu_Command_Buffer cb) {
+void gpu_command_buffer_cleanup(Gpu_Command_Buffer cb) {
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 
 	const u64 cleanup_count = gpu_texture_seq_get_count(&cb_data->cleanup_textures);
 	for (u64 i = 0; i < cleanup_count; i++) {
 		Gpu_Texture texture = gpu_texture_seq_get(&cb_data->cleanup_textures, i);
-		gpu_destroy_texture(texture);
+		gpu_texture_destroy(texture);
 	}
 	gpu_texture_seq_clear(&cb_data->cleanup_textures);
 
@@ -442,8 +442,8 @@ void gpu_cleanup_command_buffer(Gpu_Command_Buffer cb) {
 	}
 	gpu_callback_seq_clear(&cb_data->on_complete_callbacks);
 
-	const u32 retained_ref_count = sl_retained_ref_seq_get_count(&cb_data->retained_refs);
-	for (u32 retained_ref_idx = 0; retained_ref_idx < retained_ref_count; retained_ref_idx++) {
+	const u64 retained_ref_count = sl_retained_ref_seq_get_count(&cb_data->retained_refs);
+	for (u64 retained_ref_idx = 0; retained_ref_idx < retained_ref_count; retained_ref_idx++) {
 		SL_Retained_Ref* ref = sl_retained_ref_seq_get_ptr(&cb_data->retained_refs, retained_ref_idx);
 		sl_retained_ref_deinit(ref);
 	}
@@ -467,13 +467,13 @@ typedef struct Gpu_Encoder_State {
 	id<MTLBlitCommandEncoder> blit_encoder;
 } Gpu_Encoder_State;
 
-Gpu_Encoder_State gpu_new_encoder_state(id<MTLCommandBuffer> command_buffer) {
+Gpu_Encoder_State gpu_encoder_state_new(id<MTLCommandBuffer> command_buffer) {
 	return (Gpu_Encoder_State) {
 		.current = Gpu_Encoder_Kind_None,
 		.command_buffer = command_buffer,
 	};
 }
-void gpu_destroy_encoder_state(Gpu_Encoder_State* state) {
+void gpu_encoder_state_destroy(Gpu_Encoder_State* state) {
 	*state = (Gpu_Encoder_State) {0};
 }
 void gpu_end_current_encoder(Gpu_Encoder_State* state) {
@@ -519,7 +519,7 @@ void gpu_start_render_encoder(Gpu_Encoder_State* state, const Gpu_Render_Pass_La
 	[state->render_encoder waitForFence:gpu.fence beforeStages:(MTLRenderStageVertex | MTLRenderStageFragment)];
 	[state->render_encoder updateFence:gpu.fence afterStages:(MTLRenderStageVertex | MTLRenderStageFragment)];
 
-	const Gpu_Texture_Desc* texture_desc = gpu_get_texture_desc(values->attachments[0].texture);
+	const Gpu_Texture_Desc* texture_desc = gpu_texture_get_desc(values->attachments[0].texture);
 
 	// flip viewport for consistency with Vulkan.
 	const MTLViewport vp = {
@@ -562,7 +562,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 
 	id<MTLCommandBuffer> mtl_cb = [gpu.queue commandBufferWithUnretainedReferences];
 
-	Gpu_Encoder_State encoder_state = gpu_new_encoder_state(mtl_cb);
+	Gpu_Encoder_State encoder_state = gpu_encoder_state_new(mtl_cb);
 
 	const u64 command_count = gpu_command_seq_get_count(&cb_data->commands);
 	for (u64 command_idx = 0; command_idx < command_count; command_idx++) {
@@ -774,7 +774,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 	}
 
 	gpu_end_current_encoder(&encoder_state);
-	gpu_destroy_encoder_state(&encoder_state);
+	gpu_encoder_state_destroy(&encoder_state);
 
 	const u64 present_count = gpu_swapchain_present_seq_get_count(&cb_data->swapchain_presents);
 	for (u64 present_idx = 0; present_idx < present_count; present_idx++) {
@@ -785,7 +785,7 @@ void gpu_enqueue(Gpu_Command_Buffer cb, bool wait_until_completed) {
 	gpu_swapchain_present_seq_clear(&cb_data->swapchain_presents);
 
 	[mtl_cb addCompletedHandler:^(id<MTLCommandBuffer> mtl_cb1) {
-		gpu_cleanup_command_buffer(cb);
+		gpu_command_buffer_cleanup(cb);
 	}];
 
 	[mtl_cb commit];
@@ -817,7 +817,7 @@ void gpu_transition_texture_layouts(Gpu_Command_Buffer cb, const Gpu_Texture* te
 }
 
 // Heap
-Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type) {
+Gpu_Heap gpu_heap_new(u64 bytes, Gpu_Memory_Type memory_type) {
 	MTLResourceOptions resource_options;
 	switch (memory_type) {
 		case Gpu_Memory_Type_Device_Local: {
@@ -859,23 +859,23 @@ Gpu_Heap gpu_new_heap(u64 bytes, Gpu_Memory_Type memory_type) {
 	data->host_ptr = host_ptr;
 	return result;
 }
-void gpu_destroy_heap(Gpu_Heap heap) {
+void gpu_heap_destroy(Gpu_Heap heap) {
 	Gpu_Heap_Data* data = gpu_heap_pool_resolve(&gpu.heap_pool, heap);
 	data->heap = nil;
 	data->buffer = nil;
 	data->host_ptr = NULL;
 	gpu_heap_pool_release(&gpu.heap_pool, heap);
 }
-u64 gpu_get_heap_size(Gpu_Heap heap) {
+u64 gpu_heap_get_size(Gpu_Heap heap) {
 	Gpu_Heap_Data* data = gpu_heap_pool_resolve(&gpu.heap_pool, heap);
 	return data->size;
 }
-Gpu_Slice gpu_get_heap_slice(Gpu_Heap heap) {
-	return gpu_slice(heap, 0, gpu_get_heap_size(heap));
+Gpu_Slice gpu_heap_get_slice(Gpu_Heap heap) {
+	return gpu_slice(heap, 0, gpu_heap_get_size(heap));
 }
 
 // Slice
-void* gpu_get_slice_host_ptr(Gpu_Slice slice) {
+void* gpu_slice_get_host_ptr(Gpu_Slice slice) {
 	Gpu_Heap_Data* data = gpu_heap_pool_resolve(&gpu.heap_pool, slice.heap);
 	switch (data->memory_type) {
 		case Gpu_Memory_Type_Host_Visible: {
@@ -887,10 +887,10 @@ void* gpu_get_slice_host_ptr(Gpu_Slice slice) {
 		} break;
 	}
 }
-void gpu_flush_slice_to_gpu(Gpu_Slice slice) {
+void gpu_slice_flush_to_gpu(Gpu_Slice slice) {
 	// Memory reads/writes are coherent on Apple GPUs.
 }
-void gpu_flush_slice_from_gpu(Gpu_Slice slice) {
+void gpu_slice_flush_from_gpu(Gpu_Slice slice) {
 	// Memory reads/writes are coherent on Apple GPUs.
 }
 
@@ -906,7 +906,7 @@ MTLSamplerDescriptor* gpu_sampler_desc_to_mtl_sampler_descriptor(const Gpu_Sampl
 	result.normalizedCoordinates = (desc->coordinate == Gpu_Sampler_Coordinate_Normalised);
 	return result;
 }
-Gpu_Sampler gpu_new_sampler(const Gpu_Sampler_Desc* desc) {
+Gpu_Sampler gpu_sampler_new(const Gpu_Sampler_Desc* desc) {
 	MTLSamplerDescriptor* mtl_desc = gpu_sampler_desc_to_mtl_sampler_descriptor(desc);
 	id<MTLSamplerState> sampler = [gpu.device newSamplerStateWithDescriptor:mtl_desc];
 
@@ -915,7 +915,7 @@ Gpu_Sampler gpu_new_sampler(const Gpu_Sampler_Desc* desc) {
 	data->sampler = sampler;
 	return result;
 }
-void gpu_destroy_sampler(Gpu_Sampler sampler) {
+void gpu_sampler_destroy(Gpu_Sampler sampler) {
 	Gpu_Sampler_Data* data = gpu_sampler_pool_resolve(&gpu.sampler_pool, sampler);
 	data->sampler = nil;
 	gpu_sampler_pool_release(&gpu.sampler_pool, sampler);
@@ -958,7 +958,7 @@ Gpu_Size_And_Align gpu_size_and_align_for_texture(const Gpu_Texture_Desc* desc) 
 		.align = mtl_size_and_align.align,
 	};
 }
-Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice) {
+Gpu_Texture gpu_texture_new(const Gpu_Texture_Desc* desc, Gpu_Slice slice) {
 	MTLTextureDescriptor* mtl_desc = gpu_texture_desc_to_mtl_texture_descriptor(desc);
 	Gpu_Heap_Data* heap_data = gpu_heap_pool_resolve(&gpu.heap_pool, slice.heap);
 	mtl_desc.storageMode = heap_data->heap.storageMode;
@@ -970,18 +970,18 @@ Gpu_Texture gpu_new_texture(const Gpu_Texture_Desc* desc, Gpu_Slice slice) {
 	data->desc = *desc;
 	return result;
 }
-void gpu_destroy_texture(Gpu_Texture texture) {
+void gpu_texture_destroy(Gpu_Texture texture) {
 	Gpu_Texture_Data* data = gpu_texture_pool_resolve(&gpu.texture_pool, texture);
 	data->texture = nil;
 	gpu_texture_pool_release(&gpu.texture_pool, texture);
 }
-const Gpu_Texture_Desc* gpu_get_texture_desc(Gpu_Texture texture) {
+const Gpu_Texture_Desc* gpu_texture_get_desc(Gpu_Texture texture) {
 	Gpu_Texture_Data* data = gpu_texture_pool_resolve(&gpu.texture_pool, texture);
 	return &data->desc;
 }
 
 // Swapchain
-Gpu_Swapchain gpu_new_swapchain(Gpu_Surface surface) {
+Gpu_Swapchain gpu_swapchain_new(Gpu_Surface surface) {
 	Gpu_Swapchain swapchain = gpu_swapchain_pool_acquire(&gpu.swapchain_pool);
 	Gpu_Swapchain_Data* swapchain_data = gpu_swapchain_pool_resolve(&gpu.swapchain_pool, swapchain);
 	CAMetalLayer* metal_layer = (__bridge CAMetalLayer*)surface.metal_layer.metal_layer;
@@ -991,13 +991,13 @@ Gpu_Swapchain gpu_new_swapchain(Gpu_Surface surface) {
 
 	return swapchain;
 }
-void gpu_destroy_swapchain(Gpu_Swapchain swapchain) {
+void gpu_swapchain_destroy(Gpu_Swapchain swapchain) {
 	Gpu_Swapchain_Data* swapchain_data = gpu_swapchain_pool_resolve(&gpu.swapchain_pool, swapchain);
 	swapchain_data->metal_layer = nil;
 	sl_mutex_destroy(&swapchain_data->mutex);
 	gpu_swapchain_pool_release(&gpu.swapchain_pool, swapchain);
 }
-bool gpu_fetch_swapchain_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb, Gpu_Swapchain_Desc swapchain_desc, u64 timeout, Gpu_Texture* out_texture) {
+bool gpu_swapchain_fetch_texture(Gpu_Swapchain swapchain, Gpu_Command_Buffer cb, Gpu_Swapchain_Desc swapchain_desc, u64 timeout, Gpu_Texture* out_texture) {
 	Gpu_Command_Buffer_Data* cb_data = gpu_resolve_command_buffer_data(cb);
 	sl_assert(cb_data->state == Gpu_Command_Buffer_State_Recording, "Command buffer should be in the recording state.");
 
@@ -1077,7 +1077,7 @@ MTLFunctionConstantValues* gpu_function_constants_to_mtl_function_constant_value
 	return result;
 }
 
-Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc) {
+Gpu_Render_Pipeline gpu_render_pipeline_new(const Gpu_Render_Pipeline_Desc* desc) {
 	Gpu_Shader_Blob_Data* vert_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->vertex_blob);
 	Gpu_Shader_Blob_Data* frag_blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->fragment_blob);
 
@@ -1128,7 +1128,7 @@ Gpu_Render_Pipeline gpu_new_render_pipeline(const Gpu_Render_Pipeline_Desc* desc
 }
 
 // Compute
-Gpu_Compute_Pipeline gpu_new_compute_pipeline(const Gpu_Compute_Pipeline_Desc* desc) {
+Gpu_Compute_Pipeline gpu_compute_pipeline_new(const Gpu_Compute_Pipeline_Desc* desc) {
 	Gpu_Shader_Blob_Data* blob_data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, desc->blob);
 	if (blob_data == NULL) {
 		return SL_HANDLE_NULL;
@@ -1281,14 +1281,14 @@ void gpu_barrier(Gpu_Command_Buffer cb) {
 }
 
 // Semaphore
-Gpu_Semaphore gpu_new_semaphore(void) {
+Gpu_Semaphore gpu_semaphore_new(void) {
 	Gpu_Semaphore result = gpu_semaphore_pool_acquire(&gpu.semaphore_pool);
 	Gpu_Semaphore_Data* data = gpu_semaphore_pool_resolve(&gpu.semaphore_pool, result);
 	data->event = [gpu.device newSharedEvent];
 	data->listener = [[MTLSharedEventListener alloc] init];
 	return result;
 }
-void gpu_destroy_semaphore(Gpu_Semaphore semaphore) {
+void gpu_semaphore_destroy(Gpu_Semaphore semaphore) {
 	Gpu_Semaphore_Data* data = gpu_semaphore_pool_resolve(&gpu.semaphore_pool, semaphore);
 	data->event = nil;
 	data->listener = nil;
@@ -1346,7 +1346,7 @@ void gpu_signal_cpu(Gpu_Semaphore semaphore, u64 value) {
 }
 
 // Shader Blob
-Gpu_Shader_Blob gpu_new_shader_blob(const Gpu_Shader_Blob_Desc* desc) {
+Gpu_Shader_Blob gpu_shader_blob_new(const Gpu_Shader_Blob_Desc* desc) {
     if (desc->metallib.size == 0) {
         return SL_HANDLE_NULL;
     }
@@ -1364,7 +1364,7 @@ Gpu_Shader_Blob gpu_new_shader_blob(const Gpu_Shader_Blob_Desc* desc) {
 	data->library = library;
 	return blob;
 }
-void gpu_destroy_shader_blob(Gpu_Shader_Blob blob) {
+void gpu_shader_blob_destroy(Gpu_Shader_Blob blob) {
 	Gpu_Shader_Blob_Data* data = gpu_shader_blob_pool_resolve(&gpu.shader_blob_pool, blob);
 	data->library = nil;
 	gpu_shader_blob_pool_release(&gpu.shader_blob_pool, blob);
