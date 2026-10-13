@@ -1310,13 +1310,20 @@ UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing, UI
 
 // MARK: Z Stack
 
+typedef struct UI_ZStack_Data {
+	UI_Padding padding;
+} UI_ZStack_Data;
+
 vec2_s32 ui_zstack_get_intrinsic_size(void* ctx, UI_View view) {
+	UI_ZStack_Data* zstack_data = ctx;
+
 	vec2_s32 size = {0};
 
+	const vec2_s32 padding_size = ui_padding_size(zstack_data->padding);
 	const u64 child_count = ui_view_seq_get_count(&view.data->children);
 	for (u64 i = 0; i < child_count; i++) {
 		const UI_View child = ui_view_seq_get(&view.data->children, i);
-		const vec2_s32 child_size = ui_view_get_intrinsic_size(child);
+		const vec2_s32 child_size = add_vec2_s32(ui_view_get_intrinsic_size(child), padding_size);
 		size = max_vec2_s32(size, child_size);
 	}
 
@@ -1324,18 +1331,27 @@ vec2_s32 ui_zstack_get_intrinsic_size(void* ctx, UI_View view) {
 }
 
 void ui_zstack_layout_subviews(void* ctx, UI_View view) {
+	UI_ZStack_Data* zstack_data = ctx;
+
 	const Rect_s32 view_frame = ui_view_get_frame(view);
+	const Rect_s32 padded_frame = ui_padded_rect(view_frame, zstack_data->padding);
 
 	const u64 child_count = ui_view_seq_get_count(&view.data->children);
 	for (u64 i = 0; i < child_count; i++) {
 		const UI_View child = ui_view_seq_get(&view.data->children, i);
-		ui_view_set_frame(child, view_frame);
+		ui_view_set_frame(child, padded_frame);
 	}
 }
 
-UI_View ui_zstack(UI_ID id) {
+UI_View ui_zstack(UI_ID id, UI_Padding padding) {
+	UI_ZStack_Data* zstack_data;
+	allocator_new(ui_lifecycle_allocator(), zstack_data, 1);
+	*zstack_data = (UI_ZStack_Data) {
+		.padding = padding,
+	};
+
 	const UI_View_Callbacks callbacks = {
-		.ctx = NULL,
+		.ctx = zstack_data,
 		.get_intrinsic_size = ui_zstack_get_intrinsic_size,
 		.layout_subviews = ui_zstack_layout_subviews,
 	};

@@ -278,7 +278,7 @@ void ui_view_add_gesture(UI_View view, UI_Gesture gesture);
 
 // MARK: View Types
 UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing, UI_Padding padding);
-UI_View ui_zstack(UI_ID id);
+UI_View ui_zstack(UI_ID id, UI_Padding padding);
 UI_View ui_label(UI_ID id, SL_String_View text, const UI_Label_Style* style);
 UI_View ui_button(UI_ID id, UI_Button_Style style, UI_Callback on_press);
 UI_View ui_slider(UI_ID id, const UI_Slider_Style* style, Range_f32 range, UI_Slider_Callbacks callbacks);
