@@ -4031,7 +4031,13 @@ typedef struct SL_Bit_Table {
 	Allocator* allocator;
 	u64* words;
 	u64 word_count;
+	u64 bit_count;
 } SL_Bit_Table;
+
+typedef struct SL_Bit_Table_Iterator {
+	const SL_Bit_Table* table;
+	u64 pos;
+} SL_Bit_Table_Iterator;
 
 sl_inline SL_Bit_Table sl_bit_table_new(Allocator* allocator, u64 size) {
 	const u64 word_count = (size + 63ULL) / 64ULL;
@@ -4041,6 +4047,7 @@ sl_inline SL_Bit_Table sl_bit_table_new(Allocator* allocator, u64 size) {
 		.allocator = allocator,
 		.words = words,
 		.word_count = word_count,
+		.bit_count = size,
 	};
 }
 sl_inline void sl_bit_table_destroy(SL_Bit_Table* table) {
@@ -4070,6 +4077,28 @@ sl_inline void sl_bit_table_add_all(SL_Bit_Table* table) {
 }
 sl_inline void sl_bit_table_remove_all(SL_Bit_Table* table) {
 	sl_memset(table->words, 0, sizeof(u64) * table->word_count);
+}
+sl_inline SL_Bit_Table_Iterator sl_bit_table_get_iterator(const SL_Bit_Table* table) {
+	return (SL_Bit_Table_Iterator) {
+		.table = table,
+		.pos = 0,
+	};
+}
+
+sl_inline bool sl_bit_table_iterator_next(SL_Bit_Table_Iterator* iterator, u64* out_bit) {
+	while (iterator->pos < iterator->table->bit_count) {
+		const u64 word_offset = iterator->pos & 0x3FULL;
+		const u64 masked_word = iterator->table->words[iterator->pos >> 6ULL] >> word_offset;
+		const u64 lz = sl_ctz_u64(masked_word);
+		iterator->pos += lz;
+
+		if (lz < 64) {
+			*out_bit = iterator->pos++;
+			return true;
+		}
+	}
+
+	return false;
 }
 
 #endif
