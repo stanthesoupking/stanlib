@@ -100,7 +100,12 @@ typedef struct UI_View_Callbacks {
 
 typedef enum UI_View_Flags {
 	UI_View_Flags_None,
+	
+	// The view will fill all available space in containers (i.e. vstack, hstack).
 	UI_View_Flags_Fill_Available_Space = 1 << 0,
+	
+	// The view won't block gestures for views underneath.
+	UI_View_Flags_Passthrough_Gestures = 1 << 1,
 } UI_View_Flags;
 
 typedef struct UI_Label_Style {
@@ -243,18 +248,19 @@ typedef struct UI_Desc {
 
 // MARK: UI
 void ui_init(const UI_Desc* desc);
-void ui_deinit();
+void ui_deinit(void);
 
 // MARK: Lifecycle
-Allocator* ui_lifecycle_allocator();
+Allocator* ui_lifecycle_allocator(void);
 void ui_lifecycle_begin(Rect_s32 frame, Gpu_Texture texture);
 void ui_lifecycle_interact(Input_Tracker* input_tracker);
 void ui_lifecycle_pre_render(void);
 void ui_lifecycle_render(SL_Blitter* blitter);
-void ui_lifecycle_end();
+void ui_lifecycle_end(void);
 
 // MARK: Window
 UI_Window ui_window(UI_ID id, UI_View content, UI_Window_Style style);
+UI_Gesture ui_window_get_drag_gesture(UI_Window window);
 bool ui_window_is_appearing(UI_Window window);
 vec2_s32 ui_window_get_intrinsic_size(UI_Window window);
 Rect_s32 ui_window_get_frame(UI_Window window);
@@ -265,6 +271,7 @@ void ui_window_send_to_front(UI_Window window);
 UI_View ui_view(UI_ID id, const UI_View_Callbacks* callbacks);
 UI_View_Flags ui_view_get_flags(UI_View view);
 void ui_view_set_flags(UI_View view, UI_View_Flags flags);
+void ui_view_add_flags(UI_View view, UI_View_Flags flags);
 Rect_s32 ui_view_get_frame(UI_View view);
 void ui_view_set_frame(UI_View view, Rect_s32 frame);
 void ui_view_layout(UI_View view);

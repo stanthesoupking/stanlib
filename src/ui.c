@@ -74,6 +74,8 @@ typedef struct UI_Window_Data {
 	// Contains label, buttons and menu bar.
 	UI_View root;
 	UI_View content;
+	
+	UI_Gesture drag_gesture;
 
 	vec2_f32 pan_initial_location;
 	Rect_s32 pan_initial_frame;
@@ -197,8 +199,8 @@ void ui_init(const UI_Desc* desc) {
 		.scratch_arena = sl_arena_allocator_new(desc->allocator),
 	};
 }
-void ui_deinit() {
-
+void ui_deinit(void) {
+	// todo
 }
 
 vec2_s32 ui_padding_size(UI_Padding padding) {
@@ -376,11 +378,11 @@ void ui_touch_cancelled(UI_Touch* touch) {
 	ui_touch_release(touch);
 }
 
-SL_Arena_Allocator* ui_current_arena() {
+SL_Arena_Allocator* ui_current_arena(void) {
 	return ui.arena[ui.lifecycle_index % 2];
 }
 
-Allocator* ui_lifecycle_allocator() {
+Allocator* ui_lifecycle_allocator(void) {
 	if (ui.current_lifecycle) {
 		return &ui_current_arena()->allocator;
 	} else {
@@ -427,6 +429,9 @@ typedef struct UI_Gesture_Data {
 bool ui_populate_receivers_recurse(UI_Touch* touch, UI_View view) {
 	const Rect_s32 frame = ui_view_get_frame(view);
 	if (rect_contains_f32(cvt_rect_s32_f32(frame), touch->position)) {
+		const bool passthrough_gestures = (view.data->flags & UI_View_Flags_Passthrough_Gestures) > 0;
+		const bool consume_touch = !passthrough_gestures;
+		
 		const s64 child_count = ui_view_seq_get_count(&view.data->children);
 		for (s64 child_idx = child_count - 1; child_idx >= 0; child_idx--) {
 			const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
@@ -440,7 +445,8 @@ bool ui_populate_receivers_recurse(UI_Touch* touch, UI_View view) {
 			UI_Gesture gesture = ui_gesture_seq_get(&view.data->gestures, gesture_idx);
 			ui_gesture_storage_handle_seq_push(&touch->receivers, gesture.data->storage_handle);
 		}
-		return true;
+		
+		return consume_touch;
 	}
 
 	return false;
@@ -461,7 +467,7 @@ void ui_populate_receivers(UI_Touch* touch) {
 	}
 }
 
-void ui_layout_windows() {
+void ui_layout_windows(void) {
 	const u64 window_count = ui_window_seq_get_count(&ui.current_lifecycle->windows);
 	for (u64 window_idx = 0; window_idx < window_count; window_idx++) {
 		const UI_Window window = ui_window_seq_get(&ui.current_lifecycle->windows, window_idx);
@@ -534,7 +540,7 @@ void ui_lifecycle_interact(Input_Tracker* input_tracker) {
 }
 
 void ui_view_pre_render(UI_View view);
-void ui_pre_render_windows() {
+void ui_pre_render_windows(void) {
 	const u64 window_count = ui_window_seq_get_count(&ui.current_lifecycle->windows);
 	for (u64 window_idx = 0; window_idx < window_count; window_idx++) {
 		const UI_Window window = ui_window_seq_get(&ui.current_lifecycle->windows, window_idx);
@@ -587,7 +593,7 @@ void ui_lifecycle_render(SL_Blitter* blitter) {
 	ui_render_windows(blitter);
 }
 
-void ui_cull_unused_windows() {
+void ui_cull_unused_windows(void) {
 	u64 i = 0;
 	while (i < ui_window_seq_get_count(&ui.current_lifecycle->windows)) {
 		const UI_Window window = ui_window_seq_get(&ui.current_lifecycle->windows, i);
@@ -599,7 +605,7 @@ void ui_cull_unused_windows() {
 	}
 }
 
-void ui_lifecycle_end() {
+void ui_lifecycle_end(void) {
 	ui_cull_unused_windows();
 
 	ui.prev_lifecycle = ui.current_lifecycle;
@@ -824,7 +830,7 @@ UI_Window ui_window(UI_ID id, UI_View content, UI_Window_Style style) {
 			.func = ui_window_pan,
 		},
 	};
-	UI_Gesture pan_gesture = ui_pan_gesture(ui_id_internal_auto(id), &pan_desc);
+	UI_Gesture drag_gesture = ui_pan_gesture(ui_id_internal_auto(id), &pan_desc);
 
 	ui_view_add_subview(root, content);
 
@@ -834,6 +840,7 @@ UI_Window ui_window(UI_ID id, UI_View content, UI_Window_Style style) {
 	current_data->content = content;
 	current_data->style = style;
 	current_data->appearing = appearing;
+	current_data->drag_gesture = drag_gesture;
 
 	if (appearing) {
 		ui_window_seq_push(&ui.current_lifecycle->windows, window);
@@ -851,6 +858,11 @@ UI_Window ui_window(UI_ID id, UI_View content, UI_Window_Style style) {
 	}
 
 	return window;
+}
+
+UI_Gesture ui_window_get_drag_gesture(UI_Window window) {
+	ui_window_validate(window);
+	return window.data->drag_gesture;
 }
 
 vec2_s32 ui_window_get_intrinsic_size(UI_Window window) {
@@ -930,6 +942,11 @@ UI_View_Flags ui_view_get_flags(UI_View view) {
 void ui_view_set_flags(UI_View view, UI_View_Flags flags) {
 	ui_view_validate(view);
 	view.data->flags = flags;
+}
+
+void ui_view_add_flags(UI_View view, UI_View_Flags flags) {
+	ui_view_validate(view);
+	view.data->flags |= flags;
 }
 
 Rect_s32 ui_view_get_frame(UI_View view) {
