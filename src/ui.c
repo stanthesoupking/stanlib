@@ -1381,17 +1381,19 @@ typedef struct UI_Label_Data {
 	SL_String* text;
 	UI_Label_Style style;
 	UI_Text_Measurements measurements;
+	UI_Padding padding;
 } UI_Label_Data;
 
 vec2_s32 ui_label_get_intrinsic_size(void* ctx, UI_View view) {
 	UI_Label_Data* data = ctx;
-	return data->measurements.size;
+	return add_vec2_s32(data->measurements.size, ui_padding_size(data->padding));
 }
 
 void ui_label_render(void* ctx, UI_View view, SL_Blitter* blitter) {
 	UI_Label_Data* data = ctx;
 
-	const Rect_f32 frame_f32 = cvt_rect_s32_f32(ui_view_get_frame(view));
+	Rect_s32 padded_frame = ui_padded_rect(ui_view_get_frame(view), data->padding);
+	const Rect_f32 frame_f32 = cvt_rect_s32_f32(padded_frame);
 	const vec2_f32 frame_size = rect_size_f32(frame_f32);
 
 	const vec2_f32 text_offset = {
@@ -1403,13 +1405,14 @@ void ui_label_render(void* ctx, UI_View view, SL_Blitter* blitter) {
 	sl_blitter_draw_text(blitter, style->font, ui.current_lifecycle->texture, sl_string_view(data->text).str, text_offset, style->color);
 }
 
-UI_View ui_label(UI_ID id, SL_String_View text, const UI_Label_Style* style) {
+UI_View ui_label(UI_ID id, SL_String_View text, const UI_Label_Style* style, UI_Padding padding) {
 	UI_Label_Data* label_data;
 	allocator_new(ui_lifecycle_allocator(), label_data, 1);
 	*label_data = (UI_Label_Data) {
 		.text = sl_string_new(ui_lifecycle_allocator(), text),
 		.measurements = ui_text_measurements(style->font, text),
 		.style = *style,
+		.padding = padding,
 	};
 
 	const UI_View_Callbacks callbacks = {
