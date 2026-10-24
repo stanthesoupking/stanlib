@@ -85,33 +85,23 @@ UI_ID _ui_id(UI_ID parent, SL_String_View name, u32 index);
 typedef struct UI_Window_Data UI_Window_Data;
 typedef struct UI_View_Data UI_View_Data;
 typedef struct UI_Gesture_Data UI_Gesture_Data;
+typedef struct UI_Menu_Data UI_Menu_Data;
 
 typedef struct UI_Window { UI_Window_Data* data; u32 lifecycle_index; } UI_Window;
 typedef struct UI_View { UI_View_Data* data; u32 lifecycle_index; } UI_View;
 typedef struct UI_Gesture { UI_Gesture_Data* data; u32 lifecycle_index; } UI_Gesture;
 
-typedef struct UI_View_Callbacks {
+typedef struct UI_Callback {
 	void* ctx;
-	void (*layout_subviews)(void* ctx, UI_View view);
-	vec2_s32 (*get_intrinsic_size)(void* ctx, UI_View view);
-	void (*pre_render)(void* ctx, UI_View view);
-	void (*render)(void* ctx, UI_View view, SL_Blitter* blitter);
-} UI_View_Callbacks;
+	void (*func)(void* ctx);
+} UI_Callback;
+#define UI_CALLBACK_NULL ((UI_Callback) {})
 
-typedef enum UI_View_Flags {
-	UI_View_Flags_None,
-	
-	// The view will fill all available space in containers (i.e. vstack, hstack).
-	UI_View_Flags_Fill_Available_Space = 1 << 0,
-	
-	// The view won't block gestures for views underneath.
-	UI_View_Flags_Passthrough_Gestures = 1 << 1,
-} UI_View_Flags;
-
-typedef struct UI_Label_Style {
-	SL_Font* font;
-	vec4_f32 color;
-} UI_Label_Style;
+typedef struct UI_Callback_With_View {
+	void* ctx;
+	void (*func)(void* ctx, UI_View view);
+} UI_Callback_With_View;
+#define UI_CALLBACK_WITH_VIEW_NULL ((UI_Callback_With_View) {})
 
 typedef enum UI_Window_State {
 	UI_Window_State_Inactive,
@@ -131,6 +121,62 @@ typedef struct UI_Window_Style {
 	void* ctx;
 	UI_Window_Render_Fn render;
 } UI_Window_Style;
+
+typedef u64 UI_Menu_ID;
+
+typedef struct UI_Menu_Item {
+	SL_String_View label;
+	UI_Callback_With_View action;
+} UI_Menu_Item;
+
+typedef struct UI_Menu_Item_Array {
+	UI_Menu_Item* items;
+	u32 count;
+} UI_Menu_Item_Array;
+
+typedef struct UI_Menu_Style {
+	void* ctx;
+	UI_View (*create_view)(void* ctx, UI_ID id, UI_Menu_Item_Array items);
+} UI_Menu_Style;
+
+typedef struct UI_Menu {
+	UI_Menu_ID menu_id;
+	vec2_s32 position;
+} UI_Menu;
+
+typedef struct UI_Menu_Callbacks {
+	void* ctx;
+	UI_Menu_Item_Array (*get_menu_items)(void* ctx, UI_Menu_ID menu_id, Allocator* allocator);
+} UI_Menu_Callbacks;
+
+#define UI_MENU_DEPTH_MAX 8
+typedef struct UI_Menu_Stack {
+	UI_Menu menus[UI_MENU_DEPTH_MAX];
+	u32 menu_depth;
+} UI_Menu_Stack;
+
+typedef struct UI_View_Callbacks {
+	void* ctx;
+	void (*layout_subviews)(void* ctx, UI_View view);
+	vec2_s32 (*get_intrinsic_size)(void* ctx, UI_View view);
+	void (*pre_render)(void* ctx, UI_View view);
+	void (*render)(void* ctx, UI_View view, SL_Blitter* blitter);
+} UI_View_Callbacks;
+
+typedef enum UI_View_Flags {
+	UI_View_Flags_None,
+
+	// The view will fill all available space in containers (i.e. vstack, hstack).
+	UI_View_Flags_Fill_Available_Space = 1 << 0,
+
+	// The view won't block gestures for views underneath.
+	UI_View_Flags_Passthrough_Gestures = 1 << 1,
+} UI_View_Flags;
+
+typedef struct UI_Label_Style {
+	SL_Font* font;
+	vec4_f32 color;
+} UI_Label_Style;
 
 typedef enum UI_Button_State {
 	UI_Button_State_Normal,
@@ -236,12 +282,6 @@ typedef struct UI_Tap_Gesture_Desc {
 	UI_Tap_Gesture_Callback callback;
 } UI_Tap_Gesture_Desc;
 
-typedef struct UI_Callback {
-	void* ctx;
-	void (*func)(void* ctx);
-} UI_Callback;
-#define UI_CALLBACK_NULL ((UI_Callback) {})
-
 typedef struct UI_Desc {
 	Allocator* allocator;
 } UI_Desc;
@@ -287,7 +327,7 @@ void ui_view_add_gesture(UI_View view, UI_Gesture gesture);
 UI_View ui_stack(UI_ID id, UI_Axis axis, UI_Alignment alignment, s32 spacing, UI_Padding padding);
 UI_View ui_zstack(UI_ID id, UI_Padding padding);
 UI_View ui_label(UI_ID id, SL_String_View text, const UI_Label_Style* style, UI_Padding padding);
-UI_View ui_button(UI_ID id, UI_Button_Style style, UI_Callback on_press);
+UI_View ui_button(UI_ID id, UI_Button_Style style, UI_Callback_With_View on_press);
 UI_View ui_slider(UI_ID id, const UI_Slider_Style* style, Range_f32 range, UI_Slider_Callbacks callbacks);
 UI_View ui_color(UI_ID id, vec4_f32 color);
 UI_View ui_nine_patch(UI_ID id, UI_Nine_Patch nine_patch, vec4_f32 tint);
@@ -298,6 +338,12 @@ UI_View ui_spacer(UI_ID id);
 UI_Gesture ui_custom_gesture(UI_ID id, void* ctx, const UI_Gesture_VTable* vtable);
 UI_Gesture ui_pan_gesture(UI_ID id, const UI_Pan_Gesture_Desc* desc);
 UI_Gesture ui_tap_gesture(UI_ID id, const UI_Tap_Gesture_Desc* desc);
+
+// MARK: Menu
+void ui_menu_stack_push(UI_Menu_Stack* stack, UI_Menu menu);
+void ui_menu_stack_pop(UI_Menu_Stack* stack);
+void ui_menu_stack_clear(UI_Menu_Stack* stack);
+void ui_menu_stack_create_windows(UI_ID id, UI_Menu_Stack* stack, UI_Menu_Style style, UI_Menu_Callbacks callbacks);
 
 // MARK: Storage
 // Store persistent data between lifecycles.

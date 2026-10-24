@@ -105,7 +105,7 @@ void sl_font_destroy(SL_Font* font) {
 	allocator_free(allocator, font, 1);
 }
 
-Range_s32 sl_font_get_y_range(SL_Font* font) {
+Range_s32 sl_font_get_y_range(const SL_Font* font) {
 	return font->y_range;
 }
 

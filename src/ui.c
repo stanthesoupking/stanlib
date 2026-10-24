@@ -74,7 +74,7 @@ typedef struct UI_Window_Data {
 	// Contains label, buttons and menu bar.
 	UI_View root;
 	UI_View content;
-	
+
 	UI_Gesture drag_gesture;
 
 	vec2_f32 pan_initial_location;
@@ -269,7 +269,9 @@ UI_Storage_Handle ui_storage_set_and_return_handle(UI_ID id, void* data, void (*
 	UI_Storage_Handle* existing_handle;
 	if (ui_storage_map_get_ptr(&ui.storage_map, id, &existing_handle)) {
 		UI_Storage_Data* existing_data = ui_storage_data_seq_get_ptr(&ui.storage_data, existing_handle->index);
-		existing_data->destroy(existing_data->data);
+		if (existing_data->destroy) {
+			existing_data->destroy(existing_data->data);
+		}
 		const u32 new_generation = existing_data->generation++;
 		*existing_data = (UI_Storage_Data) {
 			.generation = new_generation,
@@ -431,7 +433,7 @@ bool ui_populate_receivers_recurse(UI_Touch* touch, UI_View view) {
 	if (rect_contains_f32(cvt_rect_s32_f32(frame), touch->position)) {
 		const bool passthrough_gestures = (view.data->flags & UI_View_Flags_Passthrough_Gestures) > 0;
 		const bool consume_touch = !passthrough_gestures;
-		
+
 		const s64 child_count = ui_view_seq_get_count(&view.data->children);
 		for (s64 child_idx = child_count - 1; child_idx >= 0; child_idx--) {
 			const UI_View child = ui_view_seq_get(&view.data->children, child_idx);
@@ -445,7 +447,7 @@ bool ui_populate_receivers_recurse(UI_Touch* touch, UI_View view) {
 			UI_Gesture gesture = ui_gesture_seq_get(&view.data->gestures, gesture_idx);
 			ui_gesture_storage_handle_seq_push(&touch->receivers, gesture.data->storage_handle);
 		}
-		
+
 		return consume_touch;
 	}
 
@@ -1443,7 +1445,8 @@ void ui_button_storage_destroy(void* ctx) {
 typedef struct UI_Button_Data {
 	UI_Storage_Handle storage_handle;
 	UI_Button_Style style;
-	UI_Callback on_press;
+	UI_Callback_With_View on_press;
+	UI_View view;
 } UI_Button_Data;
 
 void ui_button_render(void* ctx, UI_View view, SL_Blitter* blitter) {
@@ -1490,7 +1493,9 @@ void ui_button_pan(void* ctx, const UI_Pan_Gesture_Frame* frame) {
 
 	const Rect_s32 view_frame = ui_view_get_frame(pan_data->view);
 	if (frame->state == UI_Gesture_State_Ended && rect_contains_f32(cvt_rect_s32_f32(view_frame), frame->position)) {
-		ui_trigger_callback(button_data->on_press);
+		if (button_data->on_press.func) {
+			button_data->on_press.func(button_data->on_press.ctx, button_data->view);
+		}
 	}
 }
 
@@ -1499,7 +1504,7 @@ vec2_s32 ui_button_get_intrinsic_size(void* ctx, UI_View view) {
 	return data->style.intrinsic_size;
 }
 
-UI_View ui_button(UI_ID id, UI_Button_Style style, UI_Callback on_press) {
+UI_View ui_button(UI_ID id, UI_Button_Style style, UI_Callback_With_View on_press) {
 	const UI_ID storage_id = ui_id_internal_auto(id);
 	UI_Storage_Handle storage_handle;
 	if (!ui_storage_get_handle(storage_id, &storage_handle)) {
@@ -1513,11 +1518,6 @@ UI_View ui_button(UI_ID id, UI_Button_Style style, UI_Callback on_press) {
 
 	UI_Button_Data* button_data;
 	allocator_new(ui_lifecycle_allocator(), button_data, 1);
-	*button_data = (UI_Button_Data) {
-		.storage_handle = storage_handle,
-		.style = style,
-		.on_press = on_press,
-	};
 
 	const UI_View_Callbacks callbacks = {
 		.ctx = button_data,
@@ -1525,6 +1525,13 @@ UI_View ui_button(UI_ID id, UI_Button_Style style, UI_Callback on_press) {
 		.render = ui_button_render,
 	};
 	UI_View view = ui_view(id, &callbacks);
+
+	*button_data = (UI_Button_Data) {
+		.storage_handle = storage_handle,
+		.style = style,
+		.on_press = on_press,
+		.view = view,
+	};
 
 	UI_Button_Pan_Data* pan_data;
 	allocator_new(ui_lifecycle_allocator(), pan_data, 1);
@@ -2036,4 +2043,69 @@ UI_Gesture ui_tap_gesture(UI_ID id, const UI_Tap_Gesture_Desc* desc) {
 	gesture_data->desc = *desc;
 
 	return ui_custom_gesture(id, gesture_data, &ui_tap_gesture_vtable);
+}
+
+// MARK: Menu
+
+void ui_menu_stack_push(UI_Menu_Stack* stack, UI_Menu menu) {
+	const bool max_menu_depth_exceeded = (stack->menu_depth >= UI_MENU_DEPTH_MAX);
+	sl_debug_assert(!max_menu_depth_exceeded, "Exceeded maximum menu depth.");
+	if (max_menu_depth_exceeded) {
+		return;
+	}
+
+	stack->menus[stack->menu_depth++] = menu;
+}
+void ui_menu_stack_pop(UI_Menu_Stack* stack) {
+	sl_debug_assert(stack->menu_depth > 0, "No menus to pop.");
+	if (stack->menu_depth > 0) {
+		stack->menu_depth--;
+	}
+}
+void ui_menu_stack_clear(UI_Menu_Stack* stack) {
+	stack->menu_depth = 0;
+}
+
+void ui_menu_stack_on_tap_off(void* ctx, const UI_Tap_Gesture_Frame* frame) {
+	UI_Menu_Stack* stack = ctx;
+	ui_menu_stack_clear(stack);
+}
+
+typedef struct UI_Menu_Stack_Context {
+
+} UI_Menu_Stack_Context;
+
+void ui_menu_stack_create_windows(UI_ID id, UI_Menu_Stack* stack, UI_Menu_Style style, UI_Menu_Callbacks callbacks) {
+	if (stack->menu_depth == 0) {
+		return;
+	}
+
+	const UI_View root = ui_view(ui_id_internal_auto(id), NULL);
+
+	const UI_Tap_Gesture_Desc tap_off_gesture_desc = {
+		.callback = {
+			.ctx = stack,
+			.func = ui_menu_stack_on_tap_off,
+		},
+		.maximum_movement = UI_TAP_GESTURE_MAXIMUM_MOVEMENT_DEFAULT,
+	};
+	ui_view_add_gesture(root, ui_tap_gesture(ui_id_internal_auto(id), &tap_off_gesture_desc));
+
+	for (u32 depth = 0; depth < stack->menu_depth; depth++) {
+		const UI_Menu_Item_Array menu_items = callbacks.get_menu_items(callbacks.ctx, stack->menus[depth].menu_id, ui_lifecycle_allocator());
+		const UI_View view = style.create_view(style.ctx, ui_id_internal_auto_i(id, depth), menu_items);
+		ui_view_add_subview(root, view);
+
+		// TODO: Prevent going outside bounds of screen.
+		const vec2_s32 position = stack->menus[depth].position;
+		const vec2_s32 size = ui_view_get_intrinsic_size(view);
+		const Rect_s32 frame = {
+			.start = position,
+			.end = add_vec2_s32(position, size),
+		};
+		ui_view_set_frame(view, frame);
+	}
+
+	UI_Window window = ui_window(ui_id_internal_auto(id), root, (UI_Window_Style) {0});
+	ui_window_set_frame(window, ui.current_lifecycle->frame);
 }

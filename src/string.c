@@ -29,6 +29,18 @@ SL_String_View sl_string_view(const SL_String* str) {
 	};
 }
 
+SL_String_View sl_string_view_copy(Allocator* allocator, SL_String_View src) {
+	char* copy;
+	allocator_new(allocator, copy, src.length + 1);
+	sl_memcpy(copy, src.str, sizeof(char) * src.length);
+	copy[src.length] = '\0';
+
+	return (SL_String_View) {
+		.str = copy,
+		.length = src.length,
+	};
+}
+
 Immutable_Buffer sl_string_view_get_immutable_buffer(SL_String_View view) {
 	return (Immutable_Buffer) {
 		.data = view.str,
