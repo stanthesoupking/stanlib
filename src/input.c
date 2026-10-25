@@ -42,6 +42,10 @@ void input_tracker_clear_events(Input_Tracker* tracker) {
 	input_event_seq_clear(&tracker->events);
 }
 
+bool input_tracker_has_event(Input_Tracker* tracker) {
+	return input_event_seq_get_count(&tracker->events) > 0;
+}
+
 bool input_tracker_get_key_down(Input_Tracker* tracker, Input_Key key) {
 	return tracker->key_down[key];
 }

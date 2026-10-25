@@ -71,6 +71,7 @@ void input_tracker_destroy(Input_Tracker* tracker);
 
 void input_tracker_push_event(Input_Tracker* tracker, Input_Event event);
 void input_tracker_clear_events(Input_Tracker* tracker);
+bool input_tracker_has_event(Input_Tracker* tracker);
 
 bool input_tracker_get_key_down(Input_Tracker* tracker, Input_Key key);
 

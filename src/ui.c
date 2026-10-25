@@ -159,6 +159,8 @@ typedef struct UI_Lifecycle {
 	UI_Window_Seq windows;
 
 	Rect_s32 frame;
+	
+	bool is_animating;
 } UI_Lifecycle;
 
 typedef struct UI {
@@ -402,6 +404,7 @@ void ui_lifecycle_begin(Rect_s32 frame, Gpu_Texture texture) {
 		.frame = frame,
 		.texture = texture,
 		.windows = ui_window_seq_new(&arena->allocator, 0),
+		.is_animating = false,
 	};
 
 	// Copy across windows from the previous lifecycle.
@@ -593,6 +596,22 @@ void ui_lifecycle_render(SL_Blitter* blitter) {
 
 	ui_layout_windows();
 	ui_render_windows(blitter);
+}
+
+void ui_lifecycle_add_animation_reason(void) {
+	if (!ui.current_lifecycle) {
+		return;
+	}
+	
+	ui.current_lifecycle->is_animating = true;
+}
+
+UI_Animation_Status ui_lifecycle_get_animating_status(void) {
+	if (!ui.current_lifecycle) {
+		return UI_Animation_Status_Stable;
+	}
+	
+	return ui.current_lifecycle->is_animating ? UI_Animation_Status_Animating : UI_Animation_Status_Stable;
 }
 
 void ui_cull_unused_windows(void) {

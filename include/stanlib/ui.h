@@ -183,6 +183,11 @@ typedef struct UI_Menu_Stack {
 	u32 menu_depth;
 } UI_Menu_Stack;
 
+typedef enum UI_Animation_Status {
+	UI_Animation_Status_Stable,
+	UI_Animation_Status_Animating,
+} UI_Animation_Status;
+
 typedef struct UI_View_Callbacks {
 	void* ctx;
 	void (*layout_subviews)(void* ctx, UI_View view);
@@ -321,10 +326,15 @@ void ui_deinit(void);
 // MARK: Lifecycle
 Allocator* ui_lifecycle_allocator(void);
 void ui_lifecycle_begin(Rect_s32 frame, Gpu_Texture texture);
+void ui_lifecycle_end(void);
 void ui_lifecycle_interact(Input_Tracker* input_tracker);
 void ui_lifecycle_pre_render(void);
 void ui_lifecycle_render(SL_Blitter* blitter);
-void ui_lifecycle_end(void);
+
+// Every lifecycle starts as `UI_Animation_Status_Stable`, but at any point a view can add an animation reason.
+// Used to keep the display awake during animations.
+void ui_lifecycle_add_animation_reason(void);
+UI_Animation_Status ui_lifecycle_get_animating_status(void);
 
 // MARK: Window
 UI_Window ui_window(UI_ID id, UI_View content, UI_Window_Style style);
