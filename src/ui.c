@@ -2047,7 +2047,17 @@ UI_Gesture ui_tap_gesture(UI_ID id, const UI_Tap_Gesture_Desc* desc) {
 
 // MARK: Menu
 
-void ui_menu_stack_push(UI_Menu_Stack* stack, UI_Menu menu) {
+void ui_menu_stack_present(UI_Menu_Stack* stack, UI_Menu_ID menu, vec2_s32 position) {
+	stack->menus[0] = menu;
+	stack->position = position;
+	stack->menu_depth = 1;
+}
+
+void ui_menu_stack_dismiss(UI_Menu_Stack* stack) {
+	stack->menu_depth = 0;
+}
+
+void ui_menu_stack_push(UI_Menu_Stack* stack, UI_Menu_ID menu) {
 	const bool max_menu_depth_exceeded = (stack->menu_depth >= UI_MENU_DEPTH_MAX);
 	sl_debug_assert(!max_menu_depth_exceeded, "Exceeded maximum menu depth.");
 	if (max_menu_depth_exceeded) {
@@ -2066,14 +2076,46 @@ void ui_menu_stack_clear(UI_Menu_Stack* stack) {
 	stack->menu_depth = 0;
 }
 
-void ui_menu_stack_on_tap_off(void* ctx, const UI_Tap_Gesture_Frame* frame) {
+void ui_menu_stack_on_tap_off(void* ctx, const UI_Pan_Gesture_Frame* frame) {
 	UI_Menu_Stack* stack = ctx;
-	ui_menu_stack_clear(stack);
+	if (frame->state == UI_Gesture_State_Ended) {
+		if (stack->menu_depth > 0) {
+			stack->menu_depth--;
+		}
+	}
 }
 
-typedef struct UI_Menu_Stack_Context {
+typedef struct UI_Menu_Item_Pan_Data {
+	UI_View view;
+	UI_Menu_Stack* stack;
+	UI_Menu_Item menu_item;
+	u32 menu_depth;
+} UI_Menu_Item_Pan_Data;
 
-} UI_Menu_Stack_Context;
+void ui_menu_item_pan(void* ctx, const UI_Pan_Gesture_Frame* frame) {
+	UI_Menu_Item_Pan_Data* pan_data = ctx;
+
+	const Rect_s32 view_frame = ui_view_get_frame(pan_data->view);
+	if (frame->state == UI_Gesture_State_Ended && rect_contains_f32(cvt_rect_s32_f32(view_frame), frame->position)) {
+		switch (pan_data->menu_item.kind) {
+			case UI_Menu_Item_Kind_Action: {
+				if (pan_data->menu_item.action.func) {
+					pan_data->menu_item.action.func(pan_data->menu_item.action.ctx, pan_data->view);
+				}
+				ui_menu_stack_dismiss(pan_data->stack);
+			} break;
+
+			case UI_Menu_Item_Kind_Submenu: {
+				pan_data->stack->menus[pan_data->menu_depth + 1] = pan_data->menu_item.submenu;
+				pan_data->stack->menu_depth = pan_data->menu_depth + 2;
+			} break;
+
+			case UI_Menu_Item_Kind_Divider: {
+				// Do nothing.
+			} break;
+		}
+	}
+}
 
 void ui_menu_stack_create_windows(UI_ID id, UI_Menu_Stack* stack, UI_Menu_Style style, UI_Menu_Callbacks callbacks) {
 	if (stack->menu_depth == 0) {
@@ -2082,28 +2124,106 @@ void ui_menu_stack_create_windows(UI_ID id, UI_Menu_Stack* stack, UI_Menu_Style 
 
 	const UI_View root = ui_view(ui_id_internal_auto(id), NULL);
 
-	const UI_Tap_Gesture_Desc tap_off_gesture_desc = {
-		.callback = {
-			.ctx = stack,
-			.func = ui_menu_stack_on_tap_off,
-		},
-		.maximum_movement = UI_TAP_GESTURE_MAXIMUM_MOVEMENT_DEFAULT,
-	};
-	ui_view_add_gesture(root, ui_tap_gesture(ui_id_internal_auto(id), &tap_off_gesture_desc));
-
+	vec2_s32 next_position = stack->position;
 	for (u32 depth = 0; depth < stack->menu_depth; depth++) {
-		const UI_Menu_Item_Array menu_items = callbacks.get_menu_items(callbacks.ctx, stack->menus[depth].menu_id, ui_lifecycle_allocator());
-		const UI_View view = style.create_view(style.ctx, ui_id_internal_auto_i(id, depth), menu_items);
+		const UI_Menu_ID menu_id = stack->menus[depth];
+		const UI_ID menu_ui_id = ui_id_internal_auto_i(id, menu_id);
+
+		if (depth == stack->menu_depth - 1) {
+			const UI_View tap_off_view = ui_view(ui_id_internal_auto(menu_ui_id), NULL);
+			const UI_Pan_Gesture_Desc tap_off_gesture_desc = {
+				.callback = {
+					.ctx = stack,
+					.func = ui_menu_stack_on_tap_off,
+				},
+				.minimum_touches = 1,
+				.maximum_touches = 1,
+				.touch_mask = Input_Touch_Kind_Mask_All,
+			};
+			ui_view_add_gesture(tap_off_view, ui_pan_gesture(ui_id_internal_auto(menu_ui_id), &tap_off_gesture_desc));
+			ui_view_set_frame(tap_off_view, ui.current_lifecycle->frame);
+			ui_view_add_subview(root, tap_off_view);
+		}
+
+		const bool has_next_menu = depth + 1 < stack->menu_depth;
+		const UI_Menu_ID next_menu = has_next_menu ? stack->menus[depth + 1] : u64_max;
+
+		const UI_Menu_Item_Array menu_items = callbacks.get_menu_items(callbacks.ctx, stack->menus[depth], ui_lifecycle_allocator());
+
+		s32 active_menu_item = -1;
+		for (s32 i = 0; i < menu_items.count; i++) {
+			const UI_Menu_Item item = menu_items.items[i];
+			if ((item.kind == UI_Menu_Item_Kind_Submenu) && has_next_menu && (item.submenu == next_menu)) {
+				active_menu_item = i;
+				break;
+			}
+		}
+
+		UI_View* menu_item_view;
+		allocator_new(ui_lifecycle_allocator(), menu_item_view, menu_items.count);
+
+		const UI_Menu_Style_Create_View_Params create_view_params = {
+			.ctx = style.ctx,
+			.id = menu_ui_id,
+
+			.active_item = active_menu_item,
+
+			.items = menu_items.items,
+			.out_item_view = menu_item_view,
+			.count = menu_items.count,
+		};
+		const UI_View view = style.create_view(&create_view_params);
 		ui_view_add_subview(root, view);
 
+		// Add gesures to views
+		for (s32 i = 0; i < menu_items.count; i++) {
+			const UI_Menu_Item item = menu_items.items[i];
+			const UI_View item_view = menu_item_view[i];
+
+			UI_Menu_Item_Pan_Data* pan_data;
+			allocator_new(ui_lifecycle_allocator(), pan_data, 1);
+			*pan_data = (UI_Menu_Item_Pan_Data) {
+				.view = item_view,
+				.stack = stack,
+				.menu_item = item,
+				.menu_depth = depth,
+			};
+
+			const UI_ID pan_gesture_id = ui_id_internal_auto_i(menu_ui_id, i);
+			const UI_Pan_Gesture_Desc pan_desc = {
+				.touch_mask = Input_Touch_Kind_Mask_All,
+				.minimum_touches = 1,
+				.maximum_touches = 1,
+				.callback = {
+					.ctx = pan_data,
+					.func = ui_menu_item_pan,
+				},
+			};
+			UI_Gesture pan_gesture = ui_pan_gesture(pan_gesture_id, &pan_desc);
+			ui_view_add_gesture(item_view, pan_gesture);
+		}
+
 		// TODO: Prevent going outside bounds of screen.
-		const vec2_s32 position = stack->menus[depth].position;
+		const vec2_s32 next_position_with_offset = add_vec2_s32(style.menu_offset, next_position);
 		const vec2_s32 size = ui_view_get_intrinsic_size(view);
 		const Rect_s32 frame = {
-			.start = position,
-			.end = add_vec2_s32(position, size),
+			.start = next_position_with_offset,
+			.end = add_vec2_s32(next_position_with_offset, size),
 		};
 		ui_view_set_frame(view, frame);
+
+		ui_view_layout(view);
+
+		if (has_next_menu) {
+			for (s32 i = 0; i < menu_items.count; i++) {
+				const UI_Menu_Item item = menu_items.items[i];
+				if ((item.kind == UI_Menu_Item_Kind_Submenu) && has_next_menu && (item.submenu == next_menu)) {
+					const Rect_s32 item_view_frame = ui_view_get_frame(menu_item_view[i]);
+					next_position = (vec2_s32) { .x = item_view_frame.end.x, .y = item_view_frame.start.y };
+					break;
+				}
+			}
+		}
 	}
 
 	UI_Window window = ui_window(ui_id_internal_auto(id), root, (UI_Window_Style) {0});

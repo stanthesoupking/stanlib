@@ -124,9 +124,21 @@ typedef struct UI_Window_Style {
 
 typedef u64 UI_Menu_ID;
 
+typedef enum UI_Menu_Item_Kind {
+	UI_Menu_Item_Kind_Action,
+	UI_Menu_Item_Kind_Submenu,
+	UI_Menu_Item_Kind_Divider,
+} UI_Menu_Item_Kind;
+
 typedef struct UI_Menu_Item {
+	UI_Menu_Item_Kind kind;
 	SL_String_View label;
+
+	// UI_Menu_Item_Kind_Action
 	UI_Callback_With_View action;
+
+	// UI_Menu_Item_Kind_Submenu
+	UI_Menu_ID submenu;
 } UI_Menu_Item;
 
 typedef struct UI_Menu_Item_Array {
@@ -134,15 +146,23 @@ typedef struct UI_Menu_Item_Array {
 	u32 count;
 } UI_Menu_Item_Array;
 
+typedef struct UI_Menu_Style_Create_View_Params {
+	void* ctx;
+	UI_ID id;
+
+	// -1 signifies that no item is active.
+	s32 active_item;
+
+	const UI_Menu_Item* items;
+	UI_View* out_item_view;
+	u32 count;
+} UI_Menu_Style_Create_View_Params;
+
 typedef struct UI_Menu_Style {
 	void* ctx;
-	UI_View (*create_view)(void* ctx, UI_ID id, UI_Menu_Item_Array items);
+	vec2_s32 menu_offset;
+	UI_View (*create_view)(const UI_Menu_Style_Create_View_Params* params);
 } UI_Menu_Style;
-
-typedef struct UI_Menu {
-	UI_Menu_ID menu_id;
-	vec2_s32 position;
-} UI_Menu;
 
 typedef struct UI_Menu_Callbacks {
 	void* ctx;
@@ -151,7 +171,8 @@ typedef struct UI_Menu_Callbacks {
 
 #define UI_MENU_DEPTH_MAX 8
 typedef struct UI_Menu_Stack {
-	UI_Menu menus[UI_MENU_DEPTH_MAX];
+	vec2_s32 position;
+	UI_Menu_ID menus[UI_MENU_DEPTH_MAX];
 	u32 menu_depth;
 } UI_Menu_Stack;
 
@@ -340,9 +361,8 @@ UI_Gesture ui_pan_gesture(UI_ID id, const UI_Pan_Gesture_Desc* desc);
 UI_Gesture ui_tap_gesture(UI_ID id, const UI_Tap_Gesture_Desc* desc);
 
 // MARK: Menu
-void ui_menu_stack_push(UI_Menu_Stack* stack, UI_Menu menu);
-void ui_menu_stack_pop(UI_Menu_Stack* stack);
-void ui_menu_stack_clear(UI_Menu_Stack* stack);
+void ui_menu_stack_present(UI_Menu_Stack* stack, UI_Menu_ID menu, vec2_s32 position);
+void ui_menu_stack_dismiss(UI_Menu_Stack* stack);
 void ui_menu_stack_create_windows(UI_ID id, UI_Menu_Stack* stack, UI_Menu_Style style, UI_Menu_Callbacks callbacks);
 
 // MARK: Storage
