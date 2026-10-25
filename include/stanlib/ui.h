@@ -71,6 +71,10 @@ typedef struct UI_Nine_Patch {
 	UI_Margins margins;
 } UI_Nine_Patch;
 
+typedef struct UI_Icon {
+	Rect_u32 atlas_region;
+} UI_Icon;
+
 typedef struct UI_ID { u64 hash; } UI_ID;
 #define UI_ID_NULL ((UI_ID) { .hash = 0ULL, })
 UI_ID _ui_id(UI_ID parent, SL_String_View name, u32 index);
@@ -133,6 +137,9 @@ typedef enum UI_Menu_Item_Kind {
 typedef struct UI_Menu_Item {
 	UI_Menu_Item_Kind kind;
 	SL_String_View label;
+
+	bool has_icon;
+	UI_Icon icon;
 
 	// UI_Menu_Item_Kind_Action
 	UI_Callback_With_View action;
